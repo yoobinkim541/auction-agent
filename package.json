@@ -1,0 +1,31 @@
+{
+  "name": "gyeongmae-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "부동산 경매 매물 크롤링 + 권리분석/입지분석 Claude 에이전트 (개인 투자용)",
+  "scripts": {
+    "crawl": "tsx crawler/index.ts",
+    "analyze": "tsx pipeline/run.ts",
+    "ingest:legal": "tsx pipeline/legal/ingest.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.104.1",
+    "@supabase/supabase-js": "^2.108.1",
+    "dotenv": "^17.4.2",
+    "playwright": "^1.60.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  }
+}

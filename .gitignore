@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+
+# Playwright 로그인 세션 상태 (절대 커밋 금지 — 계정 자격증명 포함)
+.auth/
+storage-state.json
+
+# 크롤 캐시 / 임시 산출물
+.cache/
+tmp/
+*.pdf
+
+# Playwright
+test-results/
+playwright-report/
+
+# OS
+.DS_Store
