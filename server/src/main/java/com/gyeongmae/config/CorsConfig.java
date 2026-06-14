@@ -12,8 +12,11 @@ public class CorsConfig implements WebMvcConfigurer {
 
   @Override
   public void addCorsMappings(CorsRegistry registry) {
-    registry.addMapping("/api/**")
-        .allowedOrigins(allowedOrigins)
-        .allowedMethods("GET", "POST", "OPTIONS");
+    // 개인 API(쿠키/자격증명 미사용) — Vercel 등 임의 오리진에서 호출 가능하도록 패턴 허용.
+    // 설정값이 "*"이면 전체 허용, 아니면 지정 오리진만.
+    boolean all = allowedOrigins.length == 1 && "*".equals(allowedOrigins[0]);
+    var mapping = registry.addMapping("/api/**").allowedMethods("GET", "POST", "OPTIONS");
+    if (all) mapping.allowedOriginPatterns("*");
+    else mapping.allowedOrigins(allowedOrigins);
   }
 }
