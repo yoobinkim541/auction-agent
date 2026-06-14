@@ -67,16 +67,20 @@ async function fetchLawChunks(lawName: string): Promise<Chunk[]> {
     const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; gyeongmae-agent)' } });
     if (!res.ok) return [];
     const xml = await res.text();
-    const arts = xml.match(/<조문단위>[\s\S]*?<\/조문단위>/g) ?? [];
+    const stripCdata = (s: string) => s.replace(/<!\[CDATA\[/g, '').replace(/\]\]>/g, '').replace(/\s+/g, ' ').trim();
+    // 컨테이너 <조문단위 조문키="..."> (속성 포함)
+    const arts = xml.match(/<조문단위[\s>][\s\S]*?<\/조문단위>/g) ?? [];
     const out: Chunk[] = [];
     for (const a of arts) {
-      const num = (a.match(/<조문번호>([\s\S]*?)<\/조문번호>/)?.[1] ?? '').trim();
-      const title = (a.match(/<조문제목>([\s\S]*?)<\/조문제목>/)?.[1] ?? '').trim();
-      const content = a
-        .replace(/<[^>]+>/g, ' ')
+      const num = stripCdata(a.match(/<조문번호>([\s\S]*?)<\/조문번호>/)?.[1] ?? '');
+      const title = stripCdata(a.match(/<조문제목>([\s\S]*?)<\/조문제목>/)?.[1] ?? '');
+      // 법령 본문 태그만 추출(메타데이터 제외): 조문내용/항내용/호내용/목내용
+      const content = [...a.matchAll(/<(조문내용|항내용|호내용|목내용)>([\s\S]*?)<\/\1>/g)]
+        .map((m) => stripCdata(m[2]!))
+        .join(' ')
         .replace(/\s+/g, ' ')
         .trim();
-      if (content.length > 20) {
+      if (content.length > 15) {
         out.push({ source: 'law', lawName, article: `제${num}조${title ? `(${title})` : ''}`, content: content.slice(0, 4000) });
       }
     }
