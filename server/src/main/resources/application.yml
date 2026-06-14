@@ -24,3 +24,7 @@ jobs:
 # 대시보드 CORS 허용 오리진
 cors:
   allowed-origins: ${CORS_ORIGINS:http://localhost:5174,http://localhost:5173}
+
+# 잡 트리거 보호 토큰(설정 시 /api/jobs/* 에 X-Admin-Token 필요). 공개 배포 시 권장.
+admin:
+  token: ${ADMIN_TOKEN:}

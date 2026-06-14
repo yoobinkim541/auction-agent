@@ -19,3 +19,7 @@ playwright-report/
 
 # OS
 .DS_Store
+
+# Vercel
+.vercel/
+web/.vercel/
