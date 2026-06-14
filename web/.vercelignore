@@ -1,0 +1,5 @@
+# Vercel 빌드 시 로컬 환경파일 제외 (VITE_API_BASE=localhost가 번들에 박히는 것 방지)
+.env
+.env.*
+node_modules
+dist
