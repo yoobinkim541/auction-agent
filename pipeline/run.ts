@@ -90,6 +90,15 @@ async function main() {
   const listings = await fetchListingsForAnalysis(200);
   console.log(`분석 대상 매물: ${listings.length}건`);
 
+  // 검증 모드 결정: claude CLI(Max 구독, 과금 0) 우선 → API 키 → 생략
+  let verifyMode: 'cli' | 'api' | 'none' = 'none';
+  if (withVerify) {
+    const { claudeCliAvailable } = await import('./rights/claude-verify-cli.ts');
+    if (await claudeCliAvailable()) verifyMode = 'cli';
+    else if (process.env.ANTHROPIC_API_KEY) verifyMode = 'api';
+    console.log(`[verify] 모드: ${verifyMode}${verifyMode === 'cli' ? ' (Claude Max 구독, 추가 과금 없음)' : ''}`);
+  }
+
   for (const r of listings) {
     const listing = rowToListing(r);
     try {
@@ -106,14 +115,21 @@ async function main() {
       // 4) (옵션) Claude 2차 검증
       let citations: unknown;
       let modelVersion: string | undefined;
-      if (withVerify && process.env.ANTHROPIC_API_KEY) {
-        const { verifyRights, VERIFY_MODEL } = await import('./rights/claude-verify.ts');
+      if (verifyMode !== 'none') {
         const { searchLegal } = await import('./legal/search.ts');
         try {
-          const legalContext = await searchLegal('대항력 우선변제 말소기준권리 인수 소멸 임차인');
-          const v = await verifyRights({ engineResult: rights, legalContext });
+          const legalContext = await searchLegal('대항력 우선변제 말소기준권리 인수 소멸 임차인 배당');
+          let v;
+          if (verifyMode === 'cli') {
+            const m = await import('./rights/claude-verify-cli.ts');
+            v = await m.verifyRightsCli({ engineResult: rights, legalContext });
+            modelVersion = m.VERIFY_CLI_MODEL;
+          } else {
+            const m = await import('./rights/claude-verify.ts');
+            v = await m.verifyRights({ engineResult: rights, legalContext });
+            modelVersion = m.VERIFY_MODEL;
+          }
           citations = v.citations;
-          modelVersion = VERIFY_MODEL;
           rights.warnings.push(...v.discrepancies.map((d) => `[Claude] ${d.field}: ${d.concern}`));
         } catch (e) {
           console.warn(`[verify] ${listing.caseNo} 검증 실패: ${e}`);

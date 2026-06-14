@@ -175,17 +175,22 @@ export async function insertLegalChunks(
   }
 }
 
-/** 임베딩 없이 키워드(full-text)만으로 법령 검색 — OpenAI 키 없을 때 사용 */
+/** 임베딩 없이 키워드(full-text)만으로 법령 검색 — OpenAI 키 없을 때 사용.
+ *  여러 단어를 OR로 묶어(to_tsquery '|') 관련 조문을 폭넓게 매칭. */
 export async function matchLegalChunksKeyword(
   queryText: string, matchCount = 6,
 ): Promise<{ law_name: string; article: string; content: string }[]> {
+  // 단어 추출 → "a | b | c" tsquery (특수문자 제거)
+  const terms = queryText.replace(/[^\w가-힣\s]/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return [];
+  const tsq = terms.join(' | ');
   return query<{ law_name: string; article: string; content: string }>(
     `select law_name, article, content
      from gm_legal_chunks
-     where content_tsv @@ websearch_to_tsquery('simple', $1)
-     order by ts_rank(content_tsv, websearch_to_tsquery('simple', $1)) desc
+     where content_tsv @@ to_tsquery('simple', $1)
+     order by ts_rank(content_tsv, to_tsquery('simple', $1)) desc
      limit $2`,
-    [queryText, matchCount],
+    [tsq, matchCount],
   );
 }
 
