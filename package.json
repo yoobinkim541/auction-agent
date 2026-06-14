@@ -18,13 +18,14 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",
-    "@supabase/supabase-js": "^2.108.1",
     "dotenv": "^17.4.2",
+    "pg": "^8.21.0",
     "playwright": "^1.60.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^25.9.3",
+    "@types/pg": "^8.20.0",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"

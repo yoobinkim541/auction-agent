@@ -1,7 +1,7 @@
 /**
- * 법률 RAG 검색: 질의 임베딩 → match_legal_chunks RPC(의미+키워드 하이브리드).
+ * 법률 RAG 검색: 질의 임베딩 → match_legal_chunks(의미+키워드 하이브리드).
  */
-import { db } from '../../shared/db.ts';
+import { matchLegalChunks } from '../../shared/db.ts';
 import type { LegalChunk } from '../rights/claude-verify.ts';
 
 const EMBED_MODEL = 'text-embedding-3-large';
@@ -16,22 +16,13 @@ async function embed(text: string): Promise<number[] | null> {
     body: JSON.stringify({ model: EMBED_MODEL, input: text, dimensions: EMBED_DIM }),
   });
   if (!res.ok) return null;
-  const j = (await res.json()) as { data: { embedding: number[] }[] };
-  return j.data[0]?.embedding ?? null;
+  const json = (await res.json()) as { data: { embedding: number[] }[] };
+  return json.data[0]?.embedding ?? null;
 }
 
 export async function searchLegal(query: string, matchCount = 6): Promise<LegalChunk[]> {
   const emb = await embed(query);
   if (!emb) return [];
-  const { data, error } = await db().rpc('match_legal_chunks', {
-    query_embedding: emb,
-    query_text: query,
-    match_count: matchCount,
-  });
-  if (error) return [];
-  return ((data ?? []) as { law_name: string; article: string; content: string }[]).map((r) => ({
-    lawName: r.law_name,
-    article: r.article,
-    content: r.content,
-  }));
+  const rows = await matchLegalChunks(emb, query, matchCount);
+  return rows.map((r) => ({ lawName: r.law_name, article: r.article, content: r.content }));
 }

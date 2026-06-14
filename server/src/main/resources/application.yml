@@ -1,0 +1,26 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: gyeongmae-server
+  datasource:
+    url: ${DB_JDBC_URL:jdbc:postgresql://127.0.0.1:5432/gyeongmae}
+    username: ${DB_USER:gm_app}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 5
+
+# 분석 파이프라인(TS) 위치 — Spring이 크롤/분석 잡을 실행할 디렉터리
+pipeline:
+  dir: ${PIPELINE_DIR:..}
+
+# 자동 스케줄(기본 비활성). 활성화하려면 jobs.scheduling.enabled=true
+jobs:
+  scheduling:
+    enabled: ${JOBS_SCHEDULING_ENABLED:false}
+    cron: ${JOBS_CRON:0 0 6 * * *}   # 매일 06:00
+
+# 대시보드 CORS 허용 오리진
+cors:
+  allowed-origins: ${CORS_ORIGINS:http://localhost:5174,http://localhost:5173}

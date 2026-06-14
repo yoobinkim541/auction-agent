@@ -7,30 +7,16 @@
  *   → analyzeLocation(실거래가/POI) → maxSafeBid 산정 → scoreListing → 저장.
  */
 import 'dotenv/config';
-import { db, saveRightsAnalysis, saveLocationAnalysis, saveScore } from '../shared/db.ts';
+import {
+  saveRightsAnalysis, saveLocationAnalysis, saveScore,
+  fetchListingsForAnalysis, fetchListingDocs, type ListingRow,
+} from '../shared/db.ts';
 import type { Listing, RightsInput, RegistryEntry, Tenant } from '../shared/types.ts';
 import { analyzeRights } from './rights/engine.ts';
 import { analyzeLocation } from './location/index.ts';
 import { scoreListing, maxSafeBid, DEFAULT_SCORE_CONFIG } from './select/score.ts';
 
-interface ListingRow {
-  id: number;
-  case_no: string;
-  court: string;
-  address: string;
-  road_address: string | null;
-  lat: number | null;
-  lng: number | null;
-  property_type: Listing['propertyType'];
-  appraisal_value: number | null;
-  min_bid_price: number | null;
-  fail_count: number | null;
-  sale_date: string | null;
-  demand_deadline: string | null;
-  area_m2: number | null;
-  is_collective_building: boolean | null;
-  source: Listing['source'];
-}
+const num = (v: string | number | null): number => (v == null ? 0 : typeof v === 'number' ? v : parseFloat(v));
 
 function rowToListing(r: ListingRow): Listing {
   return {
@@ -41,12 +27,12 @@ function rowToListing(r: ListingRow): Listing {
     lat: r.lat ?? undefined,
     lng: r.lng ?? undefined,
     propertyType: r.property_type,
-    appraisalValue: r.appraisal_value ?? 0,
-    minBidPrice: r.min_bid_price ?? 0,
+    appraisalValue: num(r.appraisal_value),
+    minBidPrice: num(r.min_bid_price),
     failCount: r.fail_count ?? 0,
     saleDate: r.sale_date ?? undefined,
     demandDeadline: r.demand_deadline ?? undefined,
-    areaM2: r.area_m2 ?? undefined,
+    areaM2: r.area_m2 != null ? num(r.area_m2) : undefined,
     isCollectiveBuilding: r.is_collective_building ?? false,
     source: r.source,
     crawledAt: new Date().toISOString(),
@@ -55,10 +41,7 @@ function rowToListing(r: ListingRow): Listing {
 
 /** 등기/임차인 문서(parsed_json)로 RightsInput을 구성. 없으면 빈 입력(엔진이 경고). */
 async function buildRightsInput(listingId: number, listing: Listing): Promise<RightsInput> {
-  const { data } = await db()
-    .from('gm_listing_docs')
-    .select('doc_type, parsed_json')
-    .eq('listing_id', listingId);
+  const data = await fetchListingDocs(listingId);
 
   let registry: RegistryEntry[] = [];
   let landRegistry: RegistryEntry[] | undefined;
@@ -66,7 +49,7 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<Ri
   let statementSeniorDate: string | undefined;
   const notes: string[] = [];
 
-  for (const d of (data ?? []) as { doc_type: string; parsed_json: any }[]) {
+  for (const d of data) {
     const p = d.parsed_json ?? {};
     if (d.doc_type === 'registry_summary') {
       if (Array.isArray(p.registry)) registry = p.registry as RegistryEntry[];
@@ -104,15 +87,7 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<Ri
 async function main() {
   const withVerify = process.argv.includes('--verify');
 
-  const { data: rows, error } = await db()
-    .from('gm_listings')
-    .select(
-      'id, case_no, court, address, road_address, lat, lng, property_type, appraisal_value, min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source',
-    )
-    .limit(200);
-  if (error) throw error;
-
-  const listings = (rows ?? []) as ListingRow[];
+  const listings = await fetchListingsForAnalysis(200);
   console.log(`분석 대상 매물: ${listings.length}건`);
 
   for (const r of listings) {

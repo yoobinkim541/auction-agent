@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  fetchListings, supabaseReady, won, eok,
-  type ListingRow, type RightsRow, type LocationRow, type ScoreRow,
-} from './supabase.ts';
+  fetchListings, triggerJob, apiBase, won, eok,
+  type ListingItem, type RightsObj, type LocationObj,
+} from './api.ts';
 
 const TYPE_LABEL: Record<string, string> = {
   apartment: '아파트', villa: '다세대·연립', officetel: '오피스텔',
@@ -14,35 +14,34 @@ const RISK: Record<string, { label: string; cls: string }> = {
   risky: { label: '위험', cls: 'risk-risky' },
   review_required: { label: '검토필요', cls: 'risk-review' },
 };
-
-const first = <T,>(a: T[] | null | undefined): T | undefined => (a && a.length ? a[0] : undefined);
 const pct = (n: number | null | undefined) => (n == null ? '-' : (n * 100).toFixed(1) + '%');
 
 type SortKey = 'score' | 'safety' | 'sale';
 
 export default function App() {
-  const [rows, setRows] = useState<ListingRow[]>([]);
+  const [rows, setRows] = useState<ListingItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [onlyPassed, setOnlyPassed] = useState(true);
-  const [type, setType] = useState<string>('all');
+  const [type, setType] = useState('all');
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<SortKey>('score');
-  const [selected, setSelected] = useState<ListingRow | null>(null);
+  const [selected, setSelected] = useState<ListingItem | null>(null);
 
-  useEffect(() => {
-    if (!supabaseReady) { setLoading(false); return; }
+  const load = () => {
+    setLoading(true); setErr(null);
     fetchListings().then(setRows).catch((e) => setErr(String(e))).finally(() => setLoading(false));
-  }, []);
+  };
+  useEffect(load, []);
 
   const view = useMemo(() => {
     let v = rows.slice();
-    if (onlyPassed) v = v.filter((r) => first(r.gm_scores)?.passed_filter);
+    if (onlyPassed) v = v.filter((r) => r.passed_filter);
     if (type !== 'all') v = v.filter((r) => r.property_type === type);
     if (q.trim()) v = v.filter((r) => r.address.includes(q.trim()) || r.case_no.includes(q.trim()));
     v.sort((a, b) => {
-      if (sort === 'score') return (first(b.gm_scores)?.total_score ?? -1) - (first(a.gm_scores)?.total_score ?? -1);
-      if (sort === 'safety') return (first(b.gm_location_analysis)?.safety_margin ?? -1) - (first(a.gm_location_analysis)?.safety_margin ?? -1);
+      if (sort === 'score') return (b.total_score ?? -1) - (a.total_score ?? -1);
+      if (sort === 'safety') return (b.location?.safety_margin ?? -1) - (a.location?.safety_margin ?? -1);
       return (b.sale_date ?? '').localeCompare(a.sale_date ?? '');
     });
     return v;
@@ -70,14 +69,16 @@ export default function App() {
           <option value="safety">안전마진순</option>
           <option value="sale">매각기일순</option>
         </select>
+        <button onClick={load}>새로고침</button>
+        <button onClick={() => triggerJob('crawl')} title="더낙찰옥션 크롤 실행">크롤</button>
+        <button onClick={() => triggerJob('analyze')} title="분석 파이프라인 실행">분석</button>
         <span className="count">{view.length}건</span>
       </div>
 
-      {!supabaseReady && <Notice>환경변수가 설정되지 않았습니다. <code>web/.env</code>에 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY를 넣으세요.</Notice>}
       {loading && <Notice>불러오는 중…</Notice>}
-      {err && <Notice>오류: {err}</Notice>}
-      {supabaseReady && !loading && !err && view.length === 0 && (
-        <Notice>표시할 매물이 없습니다. 크롤러(<code>npm run crawl</code>)와 분석(<code>npm run analyze</code>)을 먼저 실행하세요.</Notice>
+      {err && <Notice>API 연결 오류: {err} <br />백엔드(<code>{apiBase}</code>)가 실행 중인지 확인하세요 (<code>server/run.sh</code>).</Notice>}
+      {!loading && !err && view.length === 0 && (
+        <Notice>표시할 매물이 없습니다. 상단 <b>크롤</b>→<b>분석</b>을 실행하거나 <code>npm run crawl &amp;&amp; npm run analyze</code> 후 새로고침하세요.</Notice>
       )}
 
       {view.length > 0 && (
@@ -90,10 +91,7 @@ export default function App() {
           </thead>
           <tbody>
             {view.map((r) => {
-              const rights = first(r.gm_rights_analysis);
-              const loc = first(r.gm_location_analysis);
-              const score = first(r.gm_scores);
-              const risk = RISK[rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
+              const risk = RISK[r.rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
               return (
                 <tr key={r.id} onClick={() => setSelected(r)} className="row">
                   <td className="mono">{r.case_no}</td>
@@ -101,10 +99,10 @@ export default function App() {
                   <td className="addr">{r.address}</td>
                   <td className="num">{eok(r.appraisal_value)}</td>
                   <td className="num">{eok(r.min_bid_price)}</td>
-                  <td className="num">{pct(loc?.safety_margin)}</td>
-                  <td className="num">{rights ? (rights.assumed_amount ? eok(rights.assumed_amount) : '0') : '-'}</td>
+                  <td className="num">{pct(r.location?.safety_margin)}</td>
+                  <td className="num">{r.rights ? (r.rights.assumed_amount ? eok(r.rights.assumed_amount) : '0') : '-'}</td>
                   <td><span className={`badge ${risk.cls}`}>{risk.label}</span></td>
-                  <td className="num"><b>{score?.total_score ?? '-'}</b></td>
+                  <td className="num"><b>{r.total_score ?? '-'}</b></td>
                 </tr>
               );
             })}
@@ -121,10 +119,9 @@ function Notice({ children }: { children: React.ReactNode }) {
   return <div className="notice">{children}</div>;
 }
 
-function Detail({ row, onClose }: { row: ListingRow; onClose: () => void }) {
-  const rights: RightsRow | undefined = row.gm_rights_analysis?.[0] ?? undefined;
-  const loc: LocationRow | undefined = row.gm_location_analysis?.[0] ?? undefined;
-  const score: ScoreRow | undefined = row.gm_scores?.[0] ?? undefined;
+function Detail({ row, onClose }: { row: ListingItem; onClose: () => void }) {
+  const rights: RightsObj | null = row.rights;
+  const loc: LocationObj | null = row.location;
   const risk = RISK[rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
   return (
     <div className="drawer-bg" onClick={onClose}>
@@ -140,7 +137,7 @@ function Detail({ row, onClose }: { row: ListingRow; onClose: () => void }) {
           <div><span>안전마진</span><b>{pct(loc?.safety_margin)}</b></div>
           <div><span>총 인수금액</span><b className={rights?.assumed_amount ? 'danger' : ''}>{won(rights?.assumed_amount ?? 0)}</b></div>
           <div><span>최대안전입찰가</span><b>{won(rights?.max_safe_bid)}</b></div>
-          <div><span>점수</span><b>{score?.total_score ?? '-'}</b></div>
+          <div><span>점수</span><b>{row.total_score ?? '-'}</b></div>
         </div>
 
         <Section title="권리분석">

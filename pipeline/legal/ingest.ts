@@ -6,7 +6,7 @@
  * 법제처 OC 키가 없으면 SEED_CHUNKS(핵심 조문)만 임베딩하여 최소 동작을 보장한다.
  */
 import 'dotenv/config';
-import { db } from '../../shared/db.ts';
+import { insertLegalChunks } from '../../shared/db.ts';
 
 const EMBED_MODEL = 'text-embedding-3-large';
 const EMBED_DIM = 1536;
@@ -104,16 +104,12 @@ async function main() {
   for (let i = 0; i < chunks.length; i += BATCH) {
     const batch = chunks.slice(i, i + BATCH);
     const embs = await embedBatch(batch.map((c) => c.content));
-    const rows = batch.map((c, k) => ({
-      source: c.source,
-      law_name: c.lawName,
-      article: c.article,
-      content: c.content,
-      embedding: embs[k] as number[],
-    }));
-    const { error } = await db().from('gm_legal_chunks').insert(rows);
-    if (error) throw error;
-    inserted += rows.length;
+    await insertLegalChunks(
+      batch.map((c, k) => ({
+        source: c.source, lawName: c.lawName, article: c.article, content: c.content, embedding: embs[k] as number[],
+      })),
+    );
+    inserted += batch.length;
     console.log(`임베딩/저장 ${inserted}/${chunks.length}`);
   }
   // content_tsv는 마이그레이션의 generated 컬럼이 자동 채움.

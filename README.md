@@ -19,11 +19,23 @@ pipeline/
   select/        안전마진 + 인수0 점수화/선별
   legal/         법제처 법령 RAG 인제스트 + 하이브리드 검색
   run.ts         분석 오케스트레이터
-shared/          공용 도메인 타입 + Supabase 접근
-supabase/        스키마 마이그레이션 (gm_* 테이블, pgvector)
-web/             대시보드 (Vite + React 19 + TS) — Vercel 배포
+  eval/          모의경매 정답↔엔진 채점(평가셋) + 사례 라이브러리
+shared/          공용 도메인 타입 + DB 접근 (node-postgres)
+db/              자체호스팅 PostgreSQL 스키마 (db/schema.sql)
+server/          Spring Boot 백엔드 (REST API + JdbcTemplate + 스케줄링)
+web/             대시보드 (Vite + React 19 + TS) — Spring API 소비
+supabase/        (구) Supabase 마이그레이션 — 참고용(현재 자체호스팅 Postgres 사용)
 scripts/demo.ts  키/DB 없이 엔진 시연(스모크 테스트)
 ```
+
+## 아키텍처 (자체호스팅 on Oracle Cloud VM)
+
+```
+[크롤러/분석 (TS, tsx)] --writes--> [PostgreSQL+pgvector (로컬)] <--reads-- [Spring Boot REST API :8080] <-- [대시보드(React)]
+        ▲ npm run crawl / analyze / eval / ingest:legal              ▲ Spring @Scheduled / POST /api/jobs/* 로 트리거
+```
+
+Spring Boot가 API·스케줄링을 담당하고, 검증된 TS 크롤러/권리분석 엔진은 그대로 재사용(같은 Postgres에 적재). Supabase·Vercel 의존 제거.
 
 ## 빠른 시작
 
@@ -31,27 +43,30 @@ scripts/demo.ts  키/DB 없이 엔진 시연(스모크 테스트)
 # 1) 의존성 (이미 설치됨)
 npm install && (cd web && npm install)
 
-# 2) 환경변수
-cp .env.example .env            # ANTHROPIC/SUPABASE/더낙찰옥션/카카오/국토부/법제처 키
-cp web/.env.example web/.env    # VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
+# 2) PostgreSQL + pgvector (이미 이 VM에 설치·DB생성 완료)
+#    재설정이 필요하면: psql -d gyeongmae -f db/schema.sql
 
-# 3) Supabase 스키마 적용 (택1)
-#   - supabase/migrations/0001_init.sql 을 Supabase 대시보드 SQL Editor에 붙여넣기, 또는
-#   - supabase CLI: supabase db push, 또는
-#   - 연결된 Supabase MCP로 적용
+# 3) 환경변수
+cp .env.example .env            # DATABASE_URL(자동), ANTHROPIC/더낙찰옥션/카카오/국토부/법제처 키
+cp web/.env.example web/.env    # VITE_API_BASE=http://localhost:8080
 
-# 4) 엔진 시연 (키 불필요)
+# 4) 엔진 시연 (키/DB 불필요)
 npx tsx scripts/demo.ts
 
 # 5) 테스트 / 타입체크
 npm test && npm run typecheck
 
-# 6) 크롤 → 분석 → 대시보드
+# 6) Spring 백엔드 실행
+bash server/run.sh              # :8080 (DATABASE_URL에서 DB 비번 자동 추출)
+
+# 7) 크롤 → 분석 (또는 대시보드 상단 버튼 / Spring @Scheduled)
 CRAWL_HEADLESS=false npm run crawl -- --inspect   # 최초 1회: 로그인 후 검색 HTML 덤프 → SEL.* 셀렉터 작성
-npm run crawl                                      # 매물 수집
-npm run analyze                                     # 권리/입지/점수
+npm run crawl                                      # 매물 수집 → Postgres
+npm run analyze                                     # 권리/입지/점수 → Postgres
 npm run analyze -- --verify                         # + Claude 2차 검증(법령 인용)
-cd web && npm run dev                               # 대시보드
+
+# 8) 대시보드
+cd web && npm run dev                               # http://localhost:5174 → Spring API 소비
 ```
 
 ## 데이터 흐름
