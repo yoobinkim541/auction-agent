@@ -1,0 +1,16 @@
+[Unit]
+Description=Gyeongmae API (Spring Boot)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/home/ubuntu/projects/gyeongmae-agent/server/start-api.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/home/ubuntu/projects/gyeongmae-agent/server/api.log
+StandardError=append:/home/ubuntu/projects/gyeongmae-agent/server/api.log
+
+[Install]
+WantedBy=multi-user.target

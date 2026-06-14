@@ -1,0 +1,15 @@
+[Unit]
+Description=Gyeongmae Dashboard (vite preview)
+After=network.target gyeongmae-api.service
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/home/ubuntu/projects/gyeongmae-agent/web/start-web.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/home/ubuntu/projects/gyeongmae-agent/web/web.log
+StandardError=append:/home/ubuntu/projects/gyeongmae-agent/web/web.log
+
+[Install]
+WantedBy=multi-user.target
