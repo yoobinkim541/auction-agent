@@ -64,7 +64,7 @@ async function fetchLawChunks(lawName: string): Promise<Chunk[]> {
   if (!oc) return [];
   const url = `${LAW_API}?OC=${encodeURIComponent(oc)}&target=law&type=XML&LM=${encodeURIComponent(lawName)}`;
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; gyeongmae-agent)' } });
     if (!res.ok) return [];
     const xml = await res.text();
     const arts = xml.match(/<조문단위>[\s\S]*?<\/조문단위>/g) ?? [];
@@ -98,22 +98,24 @@ async function main() {
     chunks = SEED_CHUNKS;
   }
 
-  // 임베딩(배치) + 업서트
+  // 임베딩은 선택적: OPENAI_API_KEY 있으면 의미검색용 벡터까지, 없으면 키워드(full-text)만.
+  const hasEmbed = !!process.env.OPENAI_API_KEY;
+  if (!hasEmbed) console.warn('OPENAI_API_KEY 없음 → 임베딩 생략, 키워드 검색용으로만 적재(content_tsv).');
   const BATCH = 64;
   let inserted = 0;
   for (let i = 0; i < chunks.length; i += BATCH) {
     const batch = chunks.slice(i, i + BATCH);
-    const embs = await embedBatch(batch.map((c) => c.content));
+    const embs = hasEmbed ? await embedBatch(batch.map((c) => c.content)) : null;
     await insertLegalChunks(
       batch.map((c, k) => ({
-        source: c.source, lawName: c.lawName, article: c.article, content: c.content, embedding: embs[k] as number[],
+        source: c.source, lawName: c.lawName, article: c.article, content: c.content,
+        embedding: embs ? (embs[k] as number[]) : null,
       })),
     );
     inserted += batch.length;
-    console.log(`임베딩/저장 ${inserted}/${chunks.length}`);
+    console.log(`저장 ${inserted}/${chunks.length}`);
   }
-  // content_tsv는 마이그레이션의 generated 컬럼이 자동 채움.
-  console.log(`완료: ${inserted} chunks 저장.`);
+  console.log(`완료: ${inserted} chunks 저장 (${hasEmbed ? '임베딩+키워드' : '키워드 전용'}).`);
 }
 
 main().catch((e) => {

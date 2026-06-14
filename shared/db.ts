@@ -164,15 +164,29 @@ export async function matchLegalChunks(
 }
 
 export async function insertLegalChunks(
-  rows: { source: string; lawName: string; article: string; content: string; embedding: number[] }[],
+  rows: { source: string; lawName: string; article: string; content: string; embedding: number[] | null }[],
 ): Promise<void> {
   for (const r of rows) {
     await query(
       `insert into gm_legal_chunks (source, law_name, article, content, embedding)
        values ($1,$2,$3,$4,$5::vector)`,
-      [r.source, r.lawName, r.article, r.content, `[${r.embedding.join(',')}]`],
+      [r.source, r.lawName, r.article, r.content, r.embedding ? `[${r.embedding.join(',')}]` : null],
     );
   }
+}
+
+/** 임베딩 없이 키워드(full-text)만으로 법령 검색 — OpenAI 키 없을 때 사용 */
+export async function matchLegalChunksKeyword(
+  queryText: string, matchCount = 6,
+): Promise<{ law_name: string; article: string; content: string }[]> {
+  return query<{ law_name: string; article: string; content: string }>(
+    `select law_name, article, content
+     from gm_legal_chunks
+     where content_tsv @@ websearch_to_tsquery('simple', $1)
+     order by ts_rank(content_tsv, websearch_to_tsquery('simple', $1)) desc
+     limit $2`,
+    [queryText, matchCount],
+  );
 }
 
 export async function fetchSolvedCases(limit = 1000): Promise<

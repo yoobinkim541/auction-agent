@@ -1,7 +1,7 @@
 /**
  * 법률 RAG 검색: 질의 임베딩 → match_legal_chunks(의미+키워드 하이브리드).
  */
-import { matchLegalChunks } from '../../shared/db.ts';
+import { matchLegalChunks, matchLegalChunksKeyword } from '../../shared/db.ts';
 import type { LegalChunk } from '../rights/claude-verify.ts';
 
 const EMBED_MODEL = 'text-embedding-3-large';
@@ -22,7 +22,9 @@ async function embed(text: string): Promise<number[] | null> {
 
 export async function searchLegal(query: string, matchCount = 6): Promise<LegalChunk[]> {
   const emb = await embed(query);
-  if (!emb) return [];
-  const rows = await matchLegalChunks(emb, query, matchCount);
+  // 임베딩 가능하면 의미검색, 아니면 키워드(full-text) 검색
+  const rows = emb
+    ? await matchLegalChunks(emb, query, matchCount)
+    : await matchLegalChunksKeyword(query, matchCount);
   return rows.map((r) => ({ lawName: r.law_name, article: r.article, content: r.content }));
 }
