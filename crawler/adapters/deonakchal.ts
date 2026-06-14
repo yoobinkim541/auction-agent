@@ -34,9 +34,17 @@ const SEL = {
   loginSubmit: '#frmLogin input[type=submit]',
   loggedInMarker: 'text=로그아웃', // 로그인 성공 판별
   searchPath: '/auction/search.html',
-  resultRow: 'table.list tbody tr',  // TODO(selectors)
-  nextPage: 'a.next',                // TODO(selectors)
+  listPath: '/auction/list.html',     // 전체 결과(종결 우선 정렬)
+  themePath: '/auction/thema.html',   // 테마 = 진행 매물 (실시간, 권장 소스)
+  resultRow: 'table.tbl_act_list_wins tr[id^="tr_"]', // 결과 행 (확인됨)
 } as const;
+
+// 진행 아파트 테마 opt (확인: 2/3 = 활성 아파트, 미래 매각기일)
+const THEME_OPTS = ['2', '3'];
+// 종결/취하 등 입찰 불가 상태(건너뜀)
+const TERMINAL = /(배당종결|취하|기각|각하|낙찰|대금납부|^배당|취소)/;
+// 특수권리 플래그(목록의 [..] 표기) — 엔진 레드플래그 스캐너가 인식
+const FLAG_TOKENS = ['유치권', '법정지상권', '분묘', '대지권미등기', '토지별도등기', '임금채권', '대항력있는임차인', '선순위', '지분', '농지', '제시외'];
 
 async function ensureLogin(page: Page): Promise<void> {
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
@@ -85,33 +93,49 @@ async function newPage(browser: Browser): Promise<Page> {
   return ctx.newPage();
 }
 
-/**
- * 검색 결과 → 매물. SEL.resultRow 구조에 맞춰 cell 매핑을 채워야 함.
- * 여기서는 행 텍스트를 정규화 유틸로 best-effort 파싱한다.
- */
-async function parseSearchPage(page: Page, source: 'deonakchal'): Promise<Listing[]> {
+interface ParsedRow { listing: Listing; notes: string[] }
+
+/** 결과 행 텍스트를 정규식으로 파싱. 종결/취하 등 입찰불가 상태는 제외. */
+async function parseListPage(page: Page): Promise<ParsedRow[]> {
   const rows = page.locator(SEL.resultRow);
   const n = await rows.count();
-  const out: Listing[] = [];
+  const out: ParsedRow[] = [];
   for (let i = 0; i < n; i++) {
-    const row = rows.nth(i);
-    const cells = await row.locator('td').allInnerTexts();
-    if (cells.length < 4) continue;
-    // TODO(selectors): 컬럼 인덱스를 실제 테이블 헤더에 맞게 매핑
-    const [caseRaw, typeRaw, addrRaw, apprRaw, minRaw] = cells;
-    const caseNo = normalizeCaseNo(caseRaw);
-    if (!/타경/.test(caseNo)) continue;
+    const text = (await rows.nth(i).innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+    const head = text.match(/(\S+계)\s+(20\d\d-\d{3,6}(?:-\d+)?)\s+\[([^\]]+)\]/);
+    if (!head) continue;
+    const [, court, caseNo, typeLabel] = head;
+
+    const status = text.match(/(신건|유찰|진행|배당종결|취하|기각|각하|낙찰|변경|재진행|재매각|미진행|대금납부|배당)\s*\((\d+)%\)/);
+    if (status && TERMINAL.test(status[1]!)) continue; // 진행 매물만 수집
+
+    const am = text.match(/감정가\s*([\d,]+)\s*최저가\s*([\d,]+)/);
+    const addrM = text.match(/((?:서울특별시|인천광역시|경기도)[^[]*?)\s*(?:건물|토지|감정가)/);
+    const bldM = text.match(/건물\s*([\d.]+)\s*㎡/);
+    const dates = text.match(/20\d\d-\d\d-\d\d/g) ?? [];
+    const notes = FLAG_TOKENS
+      .filter((t) => new RegExp(`\\[[^\\]]*${t}[^\\]]*\\]`).test(text))
+      .map((t) => `목록 특수권리 표기: ${t}`);
+
     out.push({
-      caseNo,
-      court: '',
-      address: (addrRaw ?? '').trim(),
-      propertyType: mapPropertyType(typeRaw),
-      appraisalValue: parseKoreanMoney(apprRaw) ?? 0,
-      minBidPrice: parseKoreanMoney(minRaw) ?? 0,
-      failCount: 0,
-      areaM2: parseAreaToM2(addrRaw),
-      source,
-      crawledAt: new Date().toISOString(),
+      listing: {
+        caseNo: normalizeCaseNo(caseNo),
+        court: court!,
+        address: addrM ? addrM[1]!.trim() : '(소재지 미상)',
+        propertyType: mapPropertyType(typeLabel),
+        appraisalValue: parseKoreanMoney(am?.[1]) ?? 0,
+        minBidPrice: parseKoreanMoney(am?.[2]) ?? 0,
+        minBidRatio: status ? parseInt(status[2]!, 10) : undefined,
+        failCount: 0,
+        saleDate: dates.length ? dates[dates.length - 1] : undefined,
+        areaM2: bldM ? parseFloat(bldM[1]!) : parseAreaToM2(text),
+        isCollectiveBuilding: /아파트|오피스텔|다세대|연립/.test(typeLabel!),
+        source: 'deonakchal',
+        sourceUrl: BASE + SEL.listPath,
+        rawJson: { rowText: text, status: status?.[1] },
+        crawledAt: new Date().toISOString(),
+      },
+      notes,
     });
   }
   return out;
@@ -122,32 +146,41 @@ export class DeonakchalAdapter implements Adapter {
 
   async crawl(filter: CrawlFilter): Promise<ScrapedListing[]> {
     const delay = parseInt(process.env.CRAWL_DELAY_MS ?? '2500', 10);
+    const maxItems = filter.maxItems ?? 50;
+    const maxPagesPerTheme = 30;
+
     const browser = await launch();
     const results: ScrapedListing[] = [];
+    const seen = new Set<string>();
     try {
       const page = await newPage(browser);
       await ensureLogin(page);
       await page.context().storageState({ path: STORAGE }); // 세션 저장
 
-      // TODO(search): 지역/물건종류 필터를 검색 폼/쿼리스트링에 반영
-      await page.goto(BASE + SEL.searchPath, { waitUntil: 'networkidle' }).catch(() => {});
-
-      let pageNo = 1;
-      while (results.length < (filter.maxItems ?? 100)) {
-        const listings = await parseSearchPage(page, 'deonakchal');
-        for (const l of listings) {
-          if (filter.propertyTypes.length && !filter.propertyTypes.includes(l.propertyType)) continue;
-          if (filter.regions.length && !filter.regions.some((r) => l.address.includes(r))) continue;
-          // TODO(detail): 상세 페이지 진입 → 권리분석/임차인/등기요약/명세서 파싱하여 rightsInput·docs 채우기
-          results.push({ listing: l });
-          if (results.length >= (filter.maxItems ?? 100)) break;
+      // 진행 아파트 테마를 페이지네이션 → 지역/종류 클라이언트 필터
+      for (const opt of THEME_OPTS) {
+        for (let p = 1; p <= maxPagesPerTheme && results.length < maxItems; p++) {
+          const url = `${BASE}${SEL.themePath}?opt=${opt}&page=${p}`;
+          await page.goto(url, { waitUntil: 'networkidle' }).catch(() => {});
+          await page.waitForTimeout(800);
+          const rows = await parseListPage(page);
+          if (rows.length === 0) break;
+          let newOnPage = 0;
+          for (const { listing, notes } of rows) {
+            if (seen.has(listing.caseNo)) continue;
+            seen.add(listing.caseNo);
+            newOnPage++;
+            if (filter.propertyTypes.length && !filter.propertyTypes.includes(listing.propertyType)) continue;
+            if (filter.regions.length && !filter.regions.some((r) => listing.address.includes(r))) continue;
+            const docs = notes.length
+              ? [{ caseNo: listing.caseNo, docType: 'rights_summary' as const, parsedJson: { notes } }]
+              : undefined;
+            results.push({ listing, docs });
+            if (results.length >= maxItems) break;
+          }
+          if (newOnPage === 0) break; // 동일 페이지 반복 → 종료
+          await sleep(delay); // 폴라이트
         }
-        const next = page.locator(SEL.nextPage);
-        if (!(await next.count()) || pageNo >= 50) break;
-        await sleep(delay); // 폴라이트
-        await next.first().click().catch(() => {});
-        await page.waitForLoadState('networkidle').catch(() => {});
-        pageNo++;
       }
     } finally {
       await browser.close();

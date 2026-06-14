@@ -281,6 +281,7 @@ function scanRedFlags(
   if (/토지별도등기/.test(text)) add('toji_byeoldo_deungi', 'danger', '토지별도등기 — 토지상 권리 인수 위험', true);
   if (/제시\s*외|제시외/.test(text)) add('jesioe_building', 'warn', '제시외 건물 존재 — 일괄/제외 여부 확인', false);
   if (/농지취득|농취|농지자격/.test(text)) add('nongchi', 'warn', '농지취득자격증명 필요 가능성', false);
+  if (/대항력\s*있는\s*임차인/.test(text)) add('senior_tenant', 'danger', '목록상 대항력 있는 임차인 표기 — 보증금 인수 위험, 등기/명세서 확인 필요', true);
 
   for (const ta of tenants) {
     if (ta.hasOpposition) {
