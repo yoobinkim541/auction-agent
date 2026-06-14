@@ -23,6 +23,7 @@ public class ListingService {
   private static final String SELECT_BODY = """
       select l.id, l.case_no, l.court, l.address, l.property_type,
              l.appraisal_value, l.min_bid_price, l.fail_count, l.sale_date, l.area_m2, l.source,
+             l.is_favorite,
              (to_jsonb(r)   - 'id' - 'listing_id') as rights,
              (to_jsonb(loc) - 'id' - 'listing_id') as location,
              s.total_score, s.passed_filter, s.safety_margin_score, s.clean_rights_score, s.reason
@@ -53,6 +54,11 @@ public class ListingService {
         + " where l.case_no = :caseNo limit 1) t";
     List<String> rows = jdbc.queryForList(sql, new MapSqlParameterSource("caseNo", caseNo), String.class);
     return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  /** 관심(즐겨찾기) 토글 */
+  public int setFavorite(long id, boolean favorite) {
+    return jdbc.getJdbcTemplate().update("update gm_listings set is_favorite=? where id=?", favorite, id);
   }
 
   /** 최근 크롤 실행 로그 */

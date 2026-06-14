@@ -38,6 +38,15 @@ public class ListingController {
     return json == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(json);
   }
 
+  /** 관심 토글: POST /api/listings/{id}/favorite?value=true */
+  @PostMapping("/listings/{id}/favorite")
+  public ResponseEntity<Map<String, Object>> favorite(
+      @PathVariable long id, @RequestParam(defaultValue = "true") boolean value) {
+    int n = service.setFavorite(id, value);
+    return n > 0 ? ResponseEntity.ok(Map.of("id", id, "favorite", value))
+                 : ResponseEntity.notFound().build();
+  }
+
   @GetMapping("/crawl-runs")
   public List<Map<String, Object>> crawlRuns() {
     return service.crawlRuns();

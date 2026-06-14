@@ -35,6 +35,7 @@ export interface ListingItem {
   sale_date: string | null;
   area_m2: number | null;
   source: string;
+  is_favorite: boolean | null;
   rights: RightsObj | null;
   location: LocationObj | null;
   total_score: number | null;
@@ -56,6 +57,10 @@ export async function fetchListings(params: { passedOnly?: boolean; type?: strin
 
 export async function triggerJob(job: 'crawl' | 'analyze' | 'eval' | 'ingest-legal'): Promise<void> {
   await fetch(`${BASE}/api/jobs/${job}`, { method: 'POST' });
+}
+
+export async function setFavorite(id: number, value: boolean): Promise<void> {
+  await fetch(`${BASE}/api/listings/${id}/favorite?value=${value}`, { method: 'POST' });
 }
 
 export const won = (n: number | null | undefined): string =>
