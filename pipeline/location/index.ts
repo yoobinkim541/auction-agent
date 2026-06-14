@@ -2,10 +2,18 @@
  * 입지분석: 지오코딩(카카오) → 실거래가(국토부) 기반 안전마진 + 주변 POI.
  * 외부 키가 없으면 해당 신호는 null로 비우고 진행(graceful degradation).
  */
-import type { Listing, LocationAnalysis, Comparable } from '../../shared/types.ts';
+import type { Listing, LocationAnalysis, Comparable, PropertyType } from '../../shared/types.ts';
+import { addressToLawdCd } from './lawd-codes.ts';
 
 const KAKAO = 'https://dapi.kakao.com/v2/local';
-const MOLIT = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev';
+// 국토부 실거래가 — base 엔드포인트 + _type=json + User-Agent 필요(Dev 엔드포인트는 data.go.kr WAF에 차단됨)
+const MOLIT_BASE = 'https://apis.data.go.kr/1613000';
+const MOLIT_ENDPOINT: Partial<Record<PropertyType, string>> = {
+  apartment: 'RTMSDataSvcAptTrade',   // 아파트 매매
+  villa: 'RTMSDataSvcRHTrade',        // 연립다세대 매매
+  officetel: 'RTMSDataSvcOffiTrade',  // 오피스텔 매매(승인 시)
+};
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
 
 interface GeocodeResult {
   lat: number;
@@ -37,20 +45,20 @@ async function kakaoGeocode(address: string): Promise<GeocodeResult | null> {
   };
 }
 
-/** 국토부 아파트 매매 실거래가(최근 N개월). 의존성 없이 XML을 경량 파싱. */
-async function molitAptTrades(lawdCd: string, months: number): Promise<Comparable[]> {
+/** 국토부 매매 실거래가(최근 N개월) — 물건종류별 base 엔드포인트 + JSON. */
+async function molitTrades(propertyType: PropertyType, lawdCd: string, months: number): Promise<Comparable[]> {
+  const ep = MOLIT_ENDPOINT[propertyType];
   const key = process.env.MOLIT_SERVICE_KEY;
-  if (!key) return [];
-  const yms = recentYearMonths(months);
+  if (!ep || !key) return [];
   const out: Comparable[] = [];
-  for (const ym of yms) {
+  for (const ym of recentYearMonths(months)) {
     const url =
-      `${MOLIT}?serviceKey=${encodeURIComponent(key)}&LAWD_CD=${lawdCd}&DEAL_YMD=${ym}&numOfRows=200&pageNo=1`;
+      `${MOLIT_BASE}/${ep}/get${ep}?serviceKey=${encodeURIComponent(key)}&LAWD_CD=${lawdCd}&DEAL_YMD=${ym}&numOfRows=400&pageNo=1&_type=json`;
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: { 'User-Agent': UA } });
       if (!res.ok) continue;
-      const xml = await res.text();
-      out.push(...parseMolitItems(xml));
+      const json = (await res.json()) as MolitResponse;
+      out.push(...parseMolitJson(json?.response?.body?.items?.item));
     } catch {
       /* 개별 월 실패는 무시 */
     }
@@ -58,32 +66,28 @@ async function molitAptTrades(lawdCd: string, months: number): Promise<Comparabl
   return out;
 }
 
-function parseMolitItems(xml: string): Comparable[] {
-  const items = xml.match(/<item>[\s\S]*?<\/item>/g) ?? [];
-  const tag = (block: string, name: string) => {
-    const m = block.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`));
-    return m ? m[1]!.trim() : '';
-  };
+interface MolitItem {
+  dealAmount?: string; excluUseAr?: number | string;
+  dealYear?: number | string; dealMonth?: number | string; dealDay?: number | string;
+  floor?: number | string;
+  aptNm?: string; mhouseNm?: string; offiNm?: string;
+}
+interface MolitResponse { response?: { body?: { items?: { item?: MolitItem | MolitItem[] } } } }
+
+function parseMolitJson(item: MolitItem | MolitItem[] | undefined): Comparable[] {
+  const items = Array.isArray(item) ? item : item ? [item] : [];
   const comps: Comparable[] = [];
   for (const it of items) {
-    // 신/구 태그명 모두 대응(거래금액/dealAmount, 전용면적/excluUseAr 등)
-    const amountStr = tag(it, '거래금액') || tag(it, 'dealAmount');
-    const areaStr = tag(it, '전용면적') || tag(it, 'excluUseAr');
-    const y = tag(it, '년') || tag(it, 'dealYear');
-    const mo = tag(it, '월') || tag(it, 'dealMonth');
-    const da = tag(it, '일') || tag(it, 'dealDay');
-    const name = tag(it, '아파트') || tag(it, 'aptNm');
-    const floor = tag(it, '층') || tag(it, 'floor');
-    if (!amountStr || !areaStr) continue;
-    const dealAmount = parseInt(amountStr.replace(/[^0-9]/g, ''), 10) * 10_000; // 만원→원
-    const areaM2 = parseFloat(areaStr);
+    const dealAmount = parseInt(String(it.dealAmount ?? '').replace(/[^0-9]/g, ''), 10) * 10_000; // 만원→원
+    const areaM2 = parseFloat(String(it.excluUseAr ?? ''));
     if (!dealAmount || !areaM2) continue;
+    const name = it.aptNm || it.mhouseNm || it.offiNm;
     comps.push({
-      apartmentName: name || undefined,
+      apartmentName: name?.trim() || undefined,
       areaM2,
       dealAmount,
-      dealDate: `${y}-${String(mo).padStart(2, '0')}-${String(da || '1').padStart(2, '0')}`,
-      floor: floor ? parseInt(floor, 10) : undefined,
+      dealDate: `${it.dealYear}-${String(it.dealMonth ?? 1).padStart(2, '0')}-${String(it.dealDay ?? 1).padStart(2, '0')}`,
+      floor: it.floor != null ? parseInt(String(it.floor), 10) : undefined,
     });
   }
   return comps;
@@ -157,13 +161,16 @@ export interface LocationOptions {
 
 export async function analyzeLocation(listing: Listing, opts: LocationOptions = {}): Promise<LocationAnalysis> {
   const geo = listing.lat && listing.lng
-    ? { lat: listing.lat, lng: listing.lng, lawdCd: undefined as string | undefined }
+    ? { lat: listing.lat, lng: listing.lng, lawdCd: addressToLawdCd(listing.address) }
     : await kakaoGeocode(listing.roadAddress || listing.address);
+
+  // 카카오 지오코딩이 없어도 주소→법정동코드 테이블로 LAWD_CD 확보(안전마진용)
+  const lawdCd = geo?.lawdCd ?? addressToLawdCd(listing.address);
 
   let comps: Comparable[] = [];
   let marketPrice: number | null = null;
-  if (geo?.lawdCd && (listing.propertyType === 'apartment')) {
-    const all = await molitAptTrades(geo.lawdCd, opts.tradeMonths ?? 6);
+  if (lawdCd && MOLIT_ENDPOINT[listing.propertyType]) {
+    const all = await molitTrades(listing.propertyType, lawdCd, opts.tradeMonths ?? 6);
     const est = estimateMarketPrice(all, listing.areaM2, opts.buildingName);
     comps = est.used;
     marketPrice = est.marketPrice;

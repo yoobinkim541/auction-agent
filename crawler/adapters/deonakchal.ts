@@ -25,15 +25,17 @@ const AUTH_DIR = '.auth';
 const STORAGE = path.join(AUTH_DIR, 'deonakchal.json');
 const UA = 'gyeongmae-agent/0.1 (personal research; contact: owner)';
 
-/** TODO(selectors): 최초 로그인 후 실제 DOM에 맞게 채울 것 */
+/** 로그인 폼은 /members/login.html 의 #frmLogin (id/pw, action=javascript:tryLogin()) — 실제 확인됨.
+ *  검색 결과 행/페이지 셀렉터는 로그인 후 search HTML 덤프로 확정 필요(TODO). */
 const SEL = {
-  loginId: '#login_id',         // 아이디 입력
-  loginPw: '#login_pw',         // 비밀번호 입력
-  loginSubmit: 'button[type=submit]',
-  loggedInMarker: 'a:has-text("로그아웃")', // 로그인 성공 판별
+  loginPath: '/members/login.html',
+  loginId: '#id',
+  loginPw: '#pw',
+  loginSubmit: '#frmLogin input[type=submit]',
+  loggedInMarker: 'text=로그아웃', // 로그인 성공 판별
   searchPath: '/auction/search.html',
-  resultRow: 'table.list tbody tr',  // 검색 결과 행
-  nextPage: 'a.next',
+  resultRow: 'table.list tbody tr',  // TODO(selectors)
+  nextPage: 'a.next',                // TODO(selectors)
 } as const;
 
 async function ensureLogin(page: Page): Promise<void> {
@@ -42,13 +44,15 @@ async function ensureLogin(page: Page): Promise<void> {
   const id = process.env.DEONAKCHAL_ID;
   const pw = process.env.DEONAKCHAL_PW;
   if (!id || !pw) throw new Error('DEONAKCHAL_ID / DEONAKCHAL_PW 환경변수가 필요합니다');
-  // TODO(selectors): 로그인 폼 경로/셀렉터 확인 후 보정
-  await page.fill(SEL.loginId, id).catch(() => {});
-  await page.fill(SEL.loginPw, pw).catch(() => {});
+  await page.goto(BASE + SEL.loginPath, { waitUntil: 'domcontentloaded' });
+  await page.fill(SEL.loginId, id);
+  await page.fill(SEL.loginPw, pw);
   await page.click(SEL.loginSubmit).catch(() => {});
+  // tryLogin()은 AJAX → 네트워크 안정화 대기 후 마커 확인
   await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForTimeout(1500);
   if (!(await page.locator(SEL.loggedInMarker).count())) {
-    throw new Error('로그인 실패 — SEL.login* 셀렉터를 실제 DOM에 맞게 수정하세요 (CRAWL_HEADLESS=false로 점검)');
+    throw new Error('로그인 실패 — 계정/셀렉터 확인 필요 (CRAWL_HEADLESS=false로 점검)');
   }
 }
 
