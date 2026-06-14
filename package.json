@@ -8,6 +8,7 @@
     "crawl": "tsx crawler/index.ts",
     "analyze": "tsx pipeline/run.ts",
     "ingest:legal": "tsx pipeline/legal/ingest.ts",
+    "eval": "tsx pipeline/eval/run.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
