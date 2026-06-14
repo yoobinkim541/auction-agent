@@ -1,7 +1,9 @@
 /** Spring 백엔드(REST API) 클라이언트. Supabase 제거. */
 
-const BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8080';
-export const apiBase = BASE;
+// VITE_API_BASE 미설정 시 상대경로('') → Vercel은 vercel.json의 /api 프록시 사용.
+// 로컬 개발/프리뷰는 web/.env 에서 http://localhost:8080 지정.
+const BASE = (import.meta.env.VITE_API_BASE as string | undefined) || '';
+export const apiBase = BASE || '(상대경로 /api → Vercel 프록시)';
 
 // Spring /api/listings 가 반환하는 행 형태 (Postgres가 조립한 중첩 JSON)
 export interface RightsObj {
