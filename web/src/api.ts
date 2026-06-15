@@ -35,6 +35,7 @@ export interface LocationObj {
   building?: BuildingObj | null;
   land_use_flags?: LandUseFlagObj[] | null;
   admin_offices?: Record<string, string> | null;
+  report?: ReportObj | null;
 }
 export interface AcquisitionCostObj {
   bidPrice: number; bidBasis: string;
@@ -49,6 +50,21 @@ export interface LandUseFlagObj {
 export interface SiteCompObj { name: string; areaM2: number; pyeong?: number; dealYm: string; dealManwon: number; floor?: number }
 export interface SaleRoundObj { round: number; date: string; minPrice: number; ratioPct?: number }
 export interface BuildingObj { mainUse?: string; households?: number; approvalDate?: string; floorsAbove?: number; floorsBelow?: number; far?: number; bcr?: number }
+export interface PreBidItemObj {
+  id: string; label: string;
+  category: '등기인수' | '임차인배당' | '물건하자' | '공법규제' | '절차비용';
+  severity: 'danger' | 'warn' | 'info';
+  detail: string; source: string; verify?: string;
+}
+export interface ReportObj {
+  headline: string;
+  recommendation: 'consider' | 'caution' | 'avoid';
+  summary: string[];
+  rightsSummary: string; locationSummary: string; costSummary: string;
+  checklist: PreBidItemObj[];
+  dangerCount: number; warnCount: number;
+  sourceUrl?: string;
+}
 export interface ListingItem {
   id: number;
   case_no: string;
@@ -61,6 +77,7 @@ export interface ListingItem {
   sale_date: string | null;
   area_m2: number | null;
   source: string;
+  source_url: string | null;
   is_favorite: boolean | null;
   rights: RightsObj | null;
   location: LocationObj | null;

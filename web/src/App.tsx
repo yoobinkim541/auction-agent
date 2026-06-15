@@ -229,6 +229,9 @@ function Detail({ row, onClose, onFav }: { row: ListingItem; onClose: () => void
           {row.case_no} <span className={`badge ${risk.cls}`}>{risk.label}</span>
         </h2>
         <p className="addr">{row.address} · {TYPE_LABEL[row.property_type]} · {row.court}</p>
+        {row.source_url && (
+          <p className="srclink"><a href={row.source_url} target="_blank" rel="noopener noreferrer">🔗 원본 상세페이지에서 더블체크 ↗</a></p>
+        )}
 
         <div className="kv">
           <div><span>감정가</span><b>{eok(row.appraisal_value)}</b></div>
@@ -240,6 +243,8 @@ function Detail({ row, onClose, onFav }: { row: ListingItem; onClose: () => void
           <div><span>총 인수금액</span><b className={rights?.assumed_amount ? 'danger' : ''}>{won(rights?.assumed_amount ?? 0)}</b></div>
           <div><span>최대안전입찰가</span><b>{won(rights?.max_safe_bid)}</b></div>
         </div>
+
+        {loc?.report && <ReportBlock report={loc.report} />}
 
         <Section title="권리분석">
           <p className="muted">말소기준권리: {rights?.malso_basis?.note ?? '-'}</p>
@@ -359,6 +364,52 @@ function Detail({ row, onClose, onFav }: { row: ListingItem; onClose: () => void
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return <section className="sect"><h3>{title}</h3>{children}</section>;
+}
+
+const RECO: Record<string, { label: string; cls: string }> = {
+  consider: { label: '검토 권장', cls: 'reco-consider' },
+  caution: { label: '주의 검토', cls: 'reco-caution' },
+  avoid: { label: '신중·회피', cls: 'reco-avoid' },
+};
+const CAT_LABEL: Record<string, string> = {
+  등기인수: '등기·인수', 임차인배당: '임차인·배당', 물건하자: '물건 하자', 공법규제: '공법 규제', 절차비용: '절차·비용',
+};
+const SEV_ICON: Record<string, string> = { danger: '🔴', warn: '🟡', info: 'ℹ️' };
+
+/** 매물별 종합 보고서 + 입찰 전 필수 확인사항 */
+function ReportBlock({ report }: { report: import('./api.ts').ReportObj }) {
+  const reco = RECO[report.recommendation] ?? RECO.caution!;
+  const danger = report.checklist.filter((c) => c.severity === 'danger');
+  const warn = report.checklist.filter((c) => c.severity === 'warn');
+  const info = report.checklist.filter((c) => c.severity === 'info');
+  return (
+    <>
+      <section className="sect report-sect">
+        <h3>종합 보고서 <span className={`badge ${reco.cls}`}>{reco.label}</span></h3>
+        <p className="report-head">{report.headline}</p>
+        <ul className="report-sum">{report.summary.map((s, i) => <li key={i}>{s}</li>)}</ul>
+        <p className="muted"><b>권리</b> {report.rightsSummary}</p>
+        <p className="muted"><b>입지</b> {report.locationSummary}</p>
+        <p className="muted"><b>비용</b> {report.costSummary}</p>
+      </section>
+
+      <Section title={`입찰 전 필수 확인사항 (위험 ${report.dangerCount} · 주의 ${report.warnCount})`}>
+        {[...danger, ...warn, ...info].map((c) => (
+          <div key={c.id} className={`chk chk-${c.severity}`}>
+            <div className="chk-head">
+              <span className="chk-sev">{SEV_ICON[c.severity]}</span>
+              <b>{c.label}</b>
+              <span className="chk-cat">{CAT_LABEL[c.category] ?? c.category}</span>
+            </div>
+            <div className="chk-detail">{c.detail}</div>
+            <div className="chk-verify">📋 출처 {c.source}{c.verify ? ` · 확인: ${c.verify}` : ''}</div>
+          </div>
+        ))}
+        {!report.checklist.length && <p className="muted">특이 확인사항 없음.</p>}
+        <p className="muted" style={{ marginTop: 10 }}>※ 참고용 자동 분석. 입찰 전 원본 공부서류(등기부·매각물건명세서·현황조사서)를 반드시 직접 확인하세요.</p>
+      </Section>
+    </>
+  );
 }
 
 /** 희망 낙찰가 입력 → 취득세·총취득비용·진짜 안전마진 실시간 계산기 (더낙찰옥션 추가비용표 + 순마진). */
