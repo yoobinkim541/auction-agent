@@ -159,6 +159,32 @@ function extractSeniorDate(notes: string[]): string | undefined {
   return undefined;
 }
 
+/** 목록 1건 → 상세(view.html) 파싱 → ScrapedListing. 워커 풀에서 페이지별로 병렬 호출. */
+async function scrapeOne(page: Page, c: ParsedRow): Promise<ScrapedListing> {
+  const docs: ListingDoc[] = [];
+  let listing = c.listing;
+  if (c.productId) {
+    try {
+      const d = await parseDetail(page, c.productId);
+      const allNotes = [...c.notes, ...d.notes];
+      listing = { ...listing, sourceUrl: `${BASE}/auction/view.html?product_id=${c.productId}` };
+      docs.push({
+        caseNo: listing.caseNo, docType: 'registry_summary',
+        parsedJson: { registry: d.registry, siteAssumedAmount: d.siteAssumedAmount, statementSeniorDate: extractSeniorDate(allNotes) },
+      });
+      docs.push({ caseNo: listing.caseNo, docType: 'sale_statement', parsedJson: { tenants: d.tenants, notes: allNotes } });
+      if (d.appraisal) docs.push({ caseNo: listing.caseNo, docType: 'appraisal_report', parsedJson: d.appraisal });
+      if (d.siteMetrics && Object.keys(d.siteMetrics).length) docs.push({ caseNo: listing.caseNo, docType: 'site_metrics', parsedJson: d.siteMetrics });
+    } catch (e) {
+      console.warn(`[deonakchal] 상세 파싱 실패 ${c.listing.caseNo}: ${e}`);
+      if (c.notes.length) docs.push({ caseNo: listing.caseNo, docType: 'rights_summary', parsedJson: { notes: c.notes } });
+    }
+  } else if (c.notes.length) {
+    docs.push({ caseNo: listing.caseNo, docType: 'rights_summary', parsedJson: { notes: c.notes } });
+  }
+  return { listing, docs: docs.length ? docs : undefined };
+}
+
 export class DeonakchalAdapter implements Adapter {
   name = 'deonakchal' as const;
 
@@ -197,35 +223,31 @@ export class DeonakchalAdapter implements Adapter {
           await sleep(delay);
         }
       }
-      console.log(`[deonakchal] 목록 ${collected.length}건 수집, 상세 파싱 시작...`);
+      const concurrency = Math.max(1, parseInt(process.env.CRAWL_CONCURRENCY ?? '4', 10));
+      console.log(`[deonakchal] 목록 ${collected.length}건 수집, 상세 파싱 시작 (병렬 ${concurrency}, 간격 ${delay}ms/워커)...`);
 
-      // Phase 2: 매물별 상세(view.html) 파싱 → 등기·임차인·명세서·사이트 인수금액
-      const results: ScrapedListing[] = [];
-      for (const c of collected) {
-        const docs: ListingDoc[] = [];
-        let listing = c.listing;
-        if (c.productId) {
-          try {
-            const d = await parseDetail(page, c.productId);
-            const allNotes = [...c.notes, ...d.notes];
-            listing = { ...listing, sourceUrl: `${BASE}/auction/view.html?product_id=${c.productId}` };
-            docs.push({
-              caseNo: listing.caseNo, docType: 'registry_summary',
-              parsedJson: { registry: d.registry, siteAssumedAmount: d.siteAssumedAmount, statementSeniorDate: extractSeniorDate(allNotes) },
-            });
-            docs.push({ caseNo: listing.caseNo, docType: 'sale_statement', parsedJson: { tenants: d.tenants, notes: allNotes } });
-            if (d.appraisal) docs.push({ caseNo: listing.caseNo, docType: 'appraisal_report', parsedJson: d.appraisal });
-            if (d.siteMetrics && Object.keys(d.siteMetrics).length) docs.push({ caseNo: listing.caseNo, docType: 'site_metrics', parsedJson: d.siteMetrics });
-            await sleep(delay);
-          } catch (e) {
-            console.warn(`[deonakchal] 상세 파싱 실패 ${c.listing.caseNo}: ${e}`);
-            if (c.notes.length) docs.push({ caseNo: listing.caseNo, docType: 'rights_summary', parsedJson: { notes: c.notes } });
-          }
-        } else if (c.notes.length) {
-          docs.push({ caseNo: listing.caseNo, docType: 'rights_summary', parsedJson: { notes: c.notes } });
+      // Phase 2: 매물별 상세(view.html) 파싱 — 같은 세션 컨텍스트의 페이지 N개로 동시성 제한 워커 풀.
+      //   폴라이트: 동시성은 CRAWL_CONCURRENCY로 제한(기본 4), 각 워커는 요청 사이 CRAWL_DELAY_MS 지연.
+      const ctx = page.context();
+      const results: ScrapedListing[] = new Array(collected.length);
+      const workerCount = Math.min(concurrency, collected.length) || 1;
+      const pages: Page[] = [page];
+      for (let i = 1; i < workerCount; i++) pages.push(await ctx.newPage());
+
+      let cursor = 0;
+      let done = 0;
+      const runWorker = async (wp: Page): Promise<void> => {
+        for (;;) {
+          const i = cursor++;
+          if (i >= collected.length) break;
+          results[i] = await scrapeOne(wp, collected[i]!);
+          done++;
+          if (done % 10 === 0 || done === collected.length) console.log(`[deonakchal] 상세 ${done}/${collected.length}`);
+          await sleep(delay);
         }
-        results.push({ listing, docs: docs.length ? docs : undefined });
-      }
+      };
+      await Promise.all(pages.map((wp) => runWorker(wp)));
+      for (let i = 1; i < pages.length; i++) await pages[i]!.close().catch(() => {}); // 추가 페이지 정리(첫 page는 browser.close가 처리)
       return results;
     } finally {
       await browser.close();
