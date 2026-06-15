@@ -154,6 +154,16 @@ export default function App() {
 }
 
 const REGIONS = ['서울', '경기', '인천'];
+// 가격대 프리셋(최저매각가, 억 단위). max=0 = 상한 없음.
+const PRICE_BANDS: { label: string; min: number; max: number }[] = [
+  { label: '5천만 미만', min: 0, max: 0.5 },
+  { label: '5천~1억', min: 0.5, max: 1 },
+  { label: '1억~1.5억', min: 1, max: 1.5 },
+  { label: '1.5억~2억', min: 1.5, max: 2 },
+  { label: '2억~3억', min: 2, max: 3 },
+  { label: '3억~5억', min: 3, max: 5 },
+  { label: '5억 이상', min: 5, max: 0 },
+];
 
 function ConfigPanel({ cfg, setCfg }: { cfg: ScoreConfig; setCfg: (c: ScoreConfig) => void }) {
   const safetyPct = Math.round(cfg.wSafety * 100);
@@ -169,6 +179,19 @@ function ConfigPanel({ cfg, setCfg }: { cfg: ScoreConfig; setCfg: (c: ScoreConfi
           <label key={r}><input type="checkbox" checked={cfg.regionKeywords.includes(r)} onChange={() => toggleRegion(r)} /> {r}</label>
         ))}
         <span className="muted">(전체 해제 = 제한 없음)</span>
+      </div>
+      <div className="cfg-row cfg-checks">
+        <span className="cfg-label">가격대</span>
+        {PRICE_BANDS.map((b) => {
+          const active = cfg.priceMinEok === b.min && cfg.priceMaxEok === b.max;
+          return (
+            <button key={b.label} className={`band-chip${active ? ' on' : ''}`}
+              onClick={() => setCfg({ ...cfg, priceMinEok: active ? 0 : b.min, priceMaxEok: active ? 0 : b.max })}>
+              {b.label}
+            </button>
+          );
+        })}
+        <span className="muted">(최저매각가 기준)</span>
       </div>
       <div className="cfg-row cfg-checks">
         <span className="cfg-label">최저매각가</span>
