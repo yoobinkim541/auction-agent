@@ -113,6 +113,31 @@ export interface AcquisitionCost {
   notes: string[];
 }
 
+/** 입찰 전 반드시 확인할 사항(법률문서 스캔 결과) */
+export interface PreBidItem {
+  id: string;
+  label: string;
+  category: '등기인수' | '임차인배당' | '물건하자' | '공법규제' | '절차비용';
+  severity: 'danger' | 'warn' | 'info';
+  detail: string; // 무엇이 왜 문제/확인대상인지
+  source: string; // 탐지 근거 문서(등기현황/매각물건명세서/현황조사서/감정평가요항/예상배당/토지규제/목록)
+  verify?: string; // 더블체크 방법(어느 공부서류/기관)
+}
+
+/** 매물별 종합 보고서 */
+export interface ListingReport {
+  headline: string; // 한 줄 결론
+  recommendation: 'consider' | 'caution' | 'avoid';
+  summary: string[]; // 핵심 지표 bullet
+  rightsSummary: string;
+  locationSummary: string;
+  costSummary: string;
+  checklist: PreBidItem[]; // 입찰 전 필수 확인사항
+  dangerCount: number;
+  warnCount: number;
+  sourceUrl?: string; // 원본 상세페이지(더블체크용)
+}
+
 export interface SiteMetrics {
   transit?: TransitStation[];
   saleRounds?: SaleRound[];
@@ -354,6 +379,8 @@ export interface LocationAnalysis {
   landUseFlags?: LandUseFlag[];
   /** 관할 행정기관 */
   adminOffices?: Record<string, string>;
+  /** 매물별 종합 보고서 + 입찰 전 체크리스트 */
+  report?: ListingReport;
 }
 
 export interface Score {

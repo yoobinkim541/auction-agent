@@ -16,6 +16,7 @@ import { analyzeRights } from './rights/engine.ts';
 import { analyzeLocation } from './location/index.ts';
 import { scoreListing, maxSafeBid, DEFAULT_SCORE_CONFIG } from './select/score.ts';
 import { computeAcquisitionCost, expectedBid, marketFromSiteComps, classifyLandUseFlags } from './cost/acquisition.ts';
+import { buildReport } from './report/build.ts';
 
 /** 사용자 취득세 가정(개인 1주택 기본). 다주택/법인이면 여기 또는 향후 설정에서 조정. */
 const TAX_ASSUMPTION = { homeCountAfter: 1 } as const;
@@ -39,12 +40,13 @@ function rowToListing(r: ListingRow): Listing {
     areaM2: r.area_m2 != null ? num(r.area_m2) : undefined,
     isCollectiveBuilding: r.is_collective_building ?? false,
     source: r.source,
+    sourceUrl: r.source_url ?? undefined,
     crawledAt: new Date().toISOString(),
   };
 }
 
 /** 등기/임차인 문서(parsed_json)로 RightsInput을 구성. 없으면 빈 입력(엔진이 경고). */
-async function buildRightsInput(listingId: number, listing: Listing): Promise<{ input: RightsInput; siteAssumed: number | null; appraisalHighlights: string[]; siteMetrics: SiteMetrics; gongPrice?: number }> {
+async function buildRightsInput(listingId: number, listing: Listing): Promise<{ input: RightsInput; siteAssumed: number | null; appraisalHighlights: string[]; siteMetrics: SiteMetrics; gongPrice?: number; scanNotes: string[]; appraisalText: string }> {
   const data = await fetchListingDocs(listingId);
 
   let registry: RegistryEntry[] = [];
@@ -55,6 +57,7 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<{ 
   let appraisalHighlights: string[] = [];
   let siteMetrics: SiteMetrics = {};
   let gongPrice: number | undefined;
+  let appraisalText = '';
   const notes: string[] = [];
 
   for (const d of data) {
@@ -62,6 +65,7 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<{ 
     if (d.doc_type === 'appraisal_report') {
       if (Array.isArray(p.highlights)) appraisalHighlights = p.highlights as string[];
       if (typeof p.gongPrice === 'number') gongPrice = p.gongPrice;
+      if (typeof p.text === 'string') appraisalText = p.text as string;
     }
     if (d.doc_type === 'site_metrics') siteMetrics = p as SiteMetrics;
     if (d.doc_type === 'registry_summary') {
@@ -102,6 +106,8 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<{ 
     appraisalHighlights,
     siteMetrics,
     gongPrice,
+    scanNotes: notes,
+    appraisalText,
   };
 }
 
@@ -132,7 +138,7 @@ async function main() {
     const listing = rowToListing(r);
     try {
       // 1) 권리분석 (결정형 엔진) + 사이트 예상 낙찰자인수(권위값) 반영
-      const { input, siteAssumed, appraisalHighlights, siteMetrics, gongPrice } = await buildRightsInput(r.id, listing);
+      const { input, siteAssumed, appraisalHighlights, siteMetrics, gongPrice, scanNotes, appraisalText } = await buildRightsInput(r.id, listing);
       const rights = analyzeRights(input);
       if (siteAssumed != null) {
         if (siteAssumed !== rights.assumedAmount) {
@@ -196,6 +202,10 @@ async function main() {
 
       // 3) 최대 안전 입찰가
       rights.maxSafeBid = maxSafeBid(loc.marketPrice, rights.assumedAmount, 0.1);
+
+      // 3-b) 매물별 보고서 + 입찰 전 필수 확인사항(법률문서 스캔)
+      const scanText = `${appraisalText} ${siteMetrics.landUseText ?? ''} ${appraisalHighlights.join(' ')}`;
+      loc.report = buildReport({ rights, loc, listing, notes: scanNotes, scanText });
 
       // 4) (옵션) Claude 2차 검증
       let citations: unknown;

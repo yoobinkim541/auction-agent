@@ -23,7 +23,7 @@ public class ListingService {
   private static final String SELECT_BODY = """
       select l.id, l.case_no, l.court, l.address, l.property_type,
              l.appraisal_value, l.min_bid_price, l.fail_count, l.sale_date, l.area_m2, l.source,
-             l.is_favorite,
+             l.source_url, l.is_favorite,
              (to_jsonb(r)   - 'id' - 'listing_id') as rights,
              (to_jsonb(loc) - 'id' - 'listing_id') as location,
              s.total_score, s.passed_filter, s.safety_margin_score, s.clean_rights_score, s.reason

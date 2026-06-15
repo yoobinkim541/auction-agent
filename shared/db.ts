@@ -95,9 +95,9 @@ export async function saveLocationAnalysis(listingId: number, loc: LocationAnaly
   await query(
     `insert into gm_location_analysis
        (listing_id,market_price,comps,safety_margin,transit,schools,amenities,dev_signals,market_confidence,comp_basis,
-        expected_bid_price,expected_bid_basis,acquisition_cost,site_comps,sale_rounds,building,land_use_flags,admin_offices,analyzed_at)
+        expected_bid_price,expected_bid_basis,acquisition_cost,site_comps,sale_rounds,building,land_use_flags,admin_offices,report,analyzed_at)
      values ($1,$2,$3::jsonb,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9,$10,
-        $11,$12,$13::jsonb,$14::jsonb,$15::jsonb,$16::jsonb,$17::jsonb,$18::jsonb,now())
+        $11,$12,$13::jsonb,$14::jsonb,$15::jsonb,$16::jsonb,$17::jsonb,$18::jsonb,$19::jsonb,now())
      on conflict (listing_id) do update set
        market_price=excluded.market_price, comps=excluded.comps, safety_margin=excluded.safety_margin,
        transit=excluded.transit, schools=excluded.schools, amenities=excluded.amenities,
@@ -105,11 +105,11 @@ export async function saveLocationAnalysis(listingId: number, loc: LocationAnaly
        comp_basis=excluded.comp_basis, expected_bid_price=excluded.expected_bid_price,
        expected_bid_basis=excluded.expected_bid_basis, acquisition_cost=excluded.acquisition_cost,
        site_comps=excluded.site_comps, sale_rounds=excluded.sale_rounds, building=excluded.building,
-       land_use_flags=excluded.land_use_flags, admin_offices=excluded.admin_offices, analyzed_at=now()`,
+       land_use_flags=excluded.land_use_flags, admin_offices=excluded.admin_offices, report=excluded.report, analyzed_at=now()`,
     [listingId, loc.marketPrice, j(loc.comps), loc.safetyMargin, j(loc.transit), j(loc.schools),
      j(loc.amenities), j(loc.devSignals), loc.marketConfidence ?? null, loc.compBasis ?? null,
      loc.expectedBidPrice ?? null, loc.expectedBidBasis ?? null, j(loc.acquisitionCost), j(loc.siteComps),
-     j(loc.saleRounds), j(loc.building), j(loc.landUseFlags), j(loc.adminOffices)],
+     j(loc.saleRounds), j(loc.building), j(loc.landUseFlags), j(loc.adminOffices), j(loc.report)],
   );
 }
 
@@ -147,7 +147,7 @@ export interface ListingRow {
   lat: number | null; lng: number | null; property_type: Listing['propertyType'];
   appraisal_value: string | null; min_bid_price: string | null; fail_count: number | null;
   sale_date: string | null; demand_deadline: string | null; area_m2: string | null;
-  is_collective_building: boolean | null; source: Listing['source'];
+  is_collective_building: boolean | null; source: Listing['source']; source_url: string | null;
 }
 
 export async function fetchListingsForAnalysis(limit = 200, onlyNew = false): Promise<ListingRow[]> {
@@ -156,7 +156,7 @@ export async function fetchListingsForAnalysis(limit = 200, onlyNew = false): Pr
     : '';
   return query<ListingRow>(
     `select id, case_no, court, address, road_address, lat, lng, property_type, appraisal_value,
-            min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source
+            min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url
      from gm_listings ${where} order by crawled_at desc limit $1`,
     [limit],
   );

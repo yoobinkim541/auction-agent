@@ -1,0 +1,75 @@
+/**
+ * 매물별 종합 보고서 생성 — 권리·입지·취득비용·입찰전 체크리스트를 재가공해 한 건의 리포트로.
+ * 더블체크용 원본 상세페이지 링크를 포함한다.
+ */
+import type {
+  ListingReport, PreBidItem, RightsAnalysisResult, LocationAnalysis, Listing,
+} from '../../shared/types.ts';
+import { buildPreBidChecklist } from './checklist.ts';
+
+const eok = (n: number | null | undefined) => (n == null ? '-' : (n / 1e8).toFixed(2) + '억');
+const pct = (n: number | null | undefined) => (n == null ? '-' : (n * 100).toFixed(1) + '%');
+const won = (n: number) => n.toLocaleString('ko-KR') + '원';
+
+export function buildReport(args: {
+  rights: RightsAnalysisResult;
+  loc: LocationAnalysis;
+  listing: Listing;
+  notes: string[];
+  scanText: string;
+}): ListingReport {
+  const { rights, loc, listing } = args;
+  const checklist: PreBidItem[] = buildPreBidChecklist(args);
+  const dangerCount = checklist.filter((c) => c.severity === 'danger').length;
+  const warnCount = checklist.filter((c) => c.severity === 'warn').length;
+  const trueMargin = loc.acquisitionCost?.trueSafetyMargin ?? null;
+
+  // 종합 권고: 인수금액/위험등급/danger 항목/진짜마진 기준
+  let recommendation: ListingReport['recommendation'];
+  if (rights.assumedAmount > 0 || dangerCount > 0 || rights.riskGrade === 'review_required' || (trueMargin != null && trueMargin < 0)) {
+    recommendation = 'avoid';
+  } else if (warnCount > 0 || (trueMargin != null && trueMargin < 0.1) || rights.riskGrade === 'risky' || rights.riskGrade === 'caution') {
+    recommendation = 'caution';
+  } else {
+    recommendation = 'consider';
+  }
+
+  const recLabel = { consider: '검토 권장', caution: '주의 검토', avoid: '신중/회피' }[recommendation];
+  const headline =
+    `[${recLabel}] 시세 ${eok(loc.marketPrice)} · 최저가 ${eok(listing.minBidPrice)}` +
+    ` · 안전마진 ${pct(loc.safetyMargin)}` +
+    (trueMargin != null ? ` · 진짜마진 ${pct(trueMargin)}` : '') +
+    (rights.assumedAmount > 0 ? ` · 인수 ${eok(rights.assumedAmount)}` : ' · 인수 없음') +
+    ` · 위험 ${dangerCount}/주의 ${warnCount}건`;
+
+  const summary: string[] = [];
+  summary.push(`감정가 ${eok(listing.appraisalValue)} → 최저가 ${eok(listing.minBidPrice)}${listing.minBidRatio ? ` (${listing.minBidRatio}%)` : ''}`);
+  if (loc.expectedBidPrice) summary.push(`예상낙찰가 ${eok(loc.expectedBidPrice)} (${loc.expectedBidBasis})`);
+  summary.push(`추정시세 ${eok(loc.marketPrice)}${loc.marketConfidence ? ` (신뢰도 ${loc.marketConfidence})` : ''} → 안전마진 ${pct(loc.safetyMargin)}`);
+  if (loc.acquisitionCost) summary.push(`총취득비용 ${eok(loc.acquisitionCost.totalCost)} → 진짜 안전마진 ${pct(trueMargin)}`);
+  if (rights.assumedAmount > 0) summary.push(`⚠️ 낙찰자 인수금액 ${won(rights.assumedAmount)}`);
+
+  const rightsSummary =
+    `말소기준권리: ${rights.malsoBasis.note || '-'}. ` +
+    `위험등급 ${rights.riskGrade}. ` +
+    `인수금액 ${won(rights.assumedAmount)}. ` +
+    (rights.redFlags.length ? `특수권리/플래그 ${rights.redFlags.length}건(${rights.redFlags.map((f) => f.message.split(' — ')[0]).join(', ')}).` : '특수권리 플래그 없음.');
+
+  const locationSummary =
+    `${loc.transit?.nearestStation ? `최근접 ${loc.transit.nearestStation}. ` : ''}` +
+    `${loc.building ? `${loc.building.mainUse ?? ''} ${loc.building.households ?? '?'}세대${loc.building.approvalDate ? ` · ${loc.building.approvalDate.slice(0, 4)}년 사용승인` : ''}. ` : ''}` +
+    `${loc.compBasis ? `시세근거: ${loc.compBasis}.` : ''}` +
+    `${(loc.landUseFlags ?? []).length ? ` 토지규제 ${loc.landUseFlags!.map((f) => f.label).join(', ')}.` : ''}`;
+
+  const ac = loc.acquisitionCost;
+  const costSummary = ac
+    ? `가정 낙찰가 ${won(ac.bidPrice)}(${ac.bidBasis}) + 취득세 ${won(ac.acqTax)}(${ac.acqTaxRatePct}%) + 명도비 ${won(ac.moveOutCost)} + 채권 ${won(ac.bondCost)}` +
+      (ac.assumedAmount > 0 ? ` + 인수 ${won(ac.assumedAmount)}` : '') +
+      ` = 총 ${won(ac.totalCost)}. 진짜 안전마진 ${pct(ac.trueSafetyMargin)}.`
+    : '취득비용 산정 불가(시세/공시가격 부족).';
+
+  return {
+    headline, recommendation, summary, rightsSummary, locationSummary, costSummary,
+    checklist, dangerCount, warnCount, sourceUrl: listing.sourceUrl,
+  };
+}
