@@ -211,6 +211,7 @@ export class DeonakchalAdapter implements Adapter {
               parsedJson: { registry: d.registry, siteAssumedAmount: d.siteAssumedAmount, statementSeniorDate: extractSeniorDate(allNotes) },
             });
             docs.push({ caseNo: listing.caseNo, docType: 'sale_statement', parsedJson: { tenants: d.tenants, notes: allNotes } });
+            if (d.appraisal) docs.push({ caseNo: listing.caseNo, docType: 'appraisal_report', parsedJson: d.appraisal });
             await sleep(delay);
           } catch (e) {
             console.warn(`[deonakchal] 상세 파싱 실패 ${c.listing.caseNo}: ${e}`);
@@ -244,20 +245,29 @@ export interface DetailData {
   tenants: Tenant[];
   notes: string[];
   siteAssumedAmount: number | null; // 사이트 예상배당의 '낙찰자인수' 합계(미배당금액)
+  appraisal: { text: string; highlights: string[]; zoning?: string } | null; // 감정평가요항
 }
 
 /** 상세 페이지(view.html?product_id=) → 등기·임차인·명세서·예상배당 추출. 헤더 키워드로 테이블 탐색. */
 export async function parseDetail(page: Page, productId: string): Promise<DetailData> {
   await page.goto(`${BASE}/auction/view.html?product_id=${productId}`, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(1200);
+  // 감정평가요항 등 '더보기'로 접힌 영역 펼치기(토지이용계획·용도지역 노출)
+  await page.evaluate(() => {
+    document.querySelectorAll('a, button, span').forEach((e) => {
+      if ((e.textContent || '').trim() === '더보기') (e as HTMLElement).click();
+    });
+  }).catch(() => {});
+  await page.waitForTimeout(700);
   // 주의: page.evaluate 내부에 '명명된' 화살표함수(const f = () =>)를 두면 tsx/esbuild가
   // __name 래퍼를 삽입해 브라우저에서 ReferenceError가 난다. 익명 인라인 콜백만 사용한다.
   const raw = (await page.evaluate(() => {
     const tables = Array.from(document.querySelectorAll('table'));
     const wants: Record<string, string[]> = {
-      deunggi: ['접수일', '권리종류'], imcha: ['임차인', '대항력'], baedang: ['낙찰자인수'], myungse: ['매각효력'],
+      deunggi: ['접수일', '권리종류'], imcha: ['임차인', '대항력'], baedang: ['낙찰자인수'],
+      myungse: ['매각효력'], gamjeong: ['감정평가요항'],
     };
-    const out: Record<string, string[][]> = { deunggi: [], imcha: [], baedang: [], myungse: [] };
+    const out: Record<string, string[][]> = { deunggi: [], imcha: [], baedang: [], myungse: [], gamjeong: [] };
     for (const key of Object.keys(wants)) {
       for (const t of tables) {
         const h = (t as HTMLElement).innerText.replace(/\s+/g, ' ');
@@ -269,7 +279,7 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
       }
     }
     return out;
-  })) as { deunggi: string[][]; imcha: string[][]; baedang: string[][]; myungse: string[][] };
+  })) as { deunggi: string[][]; imcha: string[][]; baedang: string[][]; myungse: string[][]; gamjeong: string[][] };
 
   const registry: RegistryEntry[] = [];
   for (const row of raw.deunggi) {
@@ -317,5 +327,27 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
     if (amt) siteAssumedAmount = (siteAssumedAmount ?? 0) + amt;
   }
 
-  return { registry, tenants, notes, siteAssumedAmount };
+  // 감정평가요항: 교통·이용상태·토지이용계획(용도지역/규제) 추출
+  let appraisal: DetailData['appraisal'] = null;
+  const apprText = raw.gamjeong.map((r) => r.join(' ')).join(' ').replace(/\s+/g, ' ').trim();
+  if (apprText) {
+    const grab = (re: RegExp) => apprText.match(re)?.[1]?.trim();
+    const traffic = grab(/교통상황\s*(.+?)(?=\s*\d\)\s*건물|건물의\s*구조|$)/);
+    const useState = grab(/이용상태\s*(.+?)(?=\s*\d\)\s*설비|설비내역|$)/);
+    const landPlan = grab(/토지이용계획[^)]*\)?\s*(.+?)(?=\s*\d\)\s*공부|공부와의\s*차이|기타참고|$)/);
+    void landPlan;
+    const zoning = apprText.match(
+      /(중심상업지역|일반상업지역|근린상업지역|유통상업지역|준주거지역|제3종일반주거지역|제[12]종일반주거지역|제[12]종전용주거지역|전용주거지역|일반공업지역|준공업지역|전용공업지역|자연녹지지역|생산녹지지역|보전녹지지역)/,
+    )?.[1];
+    const highlights: string[] = [];
+    if (zoning) highlights.push(`용도지역: ${zoning}`);
+    if (useState) highlights.push(`이용상태: ${useState.slice(0, 40)}`);
+    if (traffic) highlights.push(`교통: ${traffic.slice(0, 70)}`);
+    for (const kw of ['지구단위계획', '재개발', '재건축', '정비구역', '역세권', '개발제한', '과밀억제권역']) {
+      if (apprText.includes(kw)) highlights.push(kw);
+    }
+    appraisal = { text: apprText.slice(0, 4000), highlights, zoning };
+  }
+
+  return { registry, tenants, notes, siteAssumedAmount, appraisal };
 }

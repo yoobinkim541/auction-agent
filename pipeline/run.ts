@@ -40,7 +40,7 @@ function rowToListing(r: ListingRow): Listing {
 }
 
 /** 등기/임차인 문서(parsed_json)로 RightsInput을 구성. 없으면 빈 입력(엔진이 경고). */
-async function buildRightsInput(listingId: number, listing: Listing): Promise<{ input: RightsInput; siteAssumed: number | null }> {
+async function buildRightsInput(listingId: number, listing: Listing): Promise<{ input: RightsInput; siteAssumed: number | null; appraisalHighlights: string[] }> {
   const data = await fetchListingDocs(listingId);
 
   let registry: RegistryEntry[] = [];
@@ -48,10 +48,12 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<{ 
   let tenants: Tenant[] = [];
   let statementSeniorDate: string | undefined;
   let siteAssumed: number | null = null;
+  let appraisalHighlights: string[] = [];
   const notes: string[] = [];
 
   for (const d of data) {
     const p = d.parsed_json ?? {};
+    if (d.doc_type === 'appraisal_report' && Array.isArray(p.highlights)) appraisalHighlights = p.highlights as string[];
     if (d.doc_type === 'registry_summary') {
       if (Array.isArray(p.registry)) registry = p.registry as RegistryEntry[];
       if (Array.isArray(p.landRegistry)) landRegistry = p.landRegistry as RegistryEntry[];
@@ -87,6 +89,7 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<{ 
       notes,
     },
     siteAssumed,
+    appraisalHighlights,
   };
 }
 
@@ -110,7 +113,7 @@ async function main() {
     const listing = rowToListing(r);
     try {
       // 1) 권리분석 (결정형 엔진) + 사이트 예상 낙찰자인수(권위값) 반영
-      const { input, siteAssumed } = await buildRightsInput(r.id, listing);
+      const { input, siteAssumed, appraisalHighlights } = await buildRightsInput(r.id, listing);
       const rights = analyzeRights(input);
       if (siteAssumed != null) {
         if (siteAssumed !== rights.assumedAmount) {
@@ -122,8 +125,9 @@ async function main() {
         if (siteAssumed > 0 && (rights.riskGrade === 'clean' || rights.riskGrade === 'caution')) rights.riskGrade = 'risky';
       }
 
-      // 2) 입지분석
-      const loc = await analyzeLocation(listing, { tradeMonths: 6 });
+      // 2) 입지분석 (+ 감정평가요항 하이라이트)
+      const loc = await analyzeLocation(listing, { tradeMonths: 12 });
+      if (appraisalHighlights.length) loc.devSignals = appraisalHighlights;
 
       // 3) 최대 안전 입찰가
       rights.maxSafeBid = maxSafeBid(loc.marketPrice, rights.assumedAmount, 0.1);

@@ -292,6 +292,9 @@ function Detail({ row, onClose, onFav }: { row: ListingItem; onClose: () => void
           {loc?.amenities && (
             <div className="amen">{Object.entries(loc.amenities).map(([k, v]) => <span key={k}>{k}: {v}</span>)}</div>
           )}
+          {loc?.dev_signals && loc.dev_signals.length > 0 && (
+            <div className="amen">{loc.dev_signals.map((s, i) => <span key={i}>{s}</span>)}</div>
+          )}
         </Section>
       </aside>
     </div>

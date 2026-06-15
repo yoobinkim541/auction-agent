@@ -26,6 +26,7 @@ export interface LocationObj {
   transit?: { nearestStation?: string; walkMinutes?: number } | null;
   schools?: { academyCount?: number; schoolCount?: number } | null;
   amenities?: Record<string, number> | null;
+  dev_signals?: string[] | null;
 }
 export interface ListingItem {
   id: number;
