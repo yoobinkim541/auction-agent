@@ -579,5 +579,21 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
     ?? bodyText.match(/[가-힣]+(?:팰리스|아파트|빌라|타워|캐슬|자이|푸르지오|힐스테이트|더샵|e편한세상|센트럴|센텀)\S*/)?.[0];
   const siteMetrics = extractSiteMetrics(bodyText, rawBody, subjectName);
 
+  // 매물 사진 URL 추출(감정평가 현황 사진 등) — 로고/아이콘/배너 제외, 일정 크기 이상만.
+  const photos = await page.evaluate(() => {
+    const out: string[] = [];
+    document.querySelectorAll('img').forEach((im) => {
+      const el = im as HTMLImageElement;
+      const s = el.currentSrc || el.src || '';
+      if (!s || /^data:/.test(s)) return;
+      if (/logo|icon|btn|button|blank|spacer|bg[_-]|banner|sprite|\.svg(\?|$)/i.test(s)) return;
+      const w = el.naturalWidth || el.width, h = el.naturalHeight || el.height;
+      if (w < 150 || h < 100) return;
+      out.push(s.startsWith('//') ? 'https:' + s : s);
+    });
+    return [...new Set(out)].slice(0, 15);
+  }).catch(() => [] as string[]);
+  if (photos.length) siteMetrics.photos = photos;
+
   return { registry, tenants, notes, siteAssumedAmount, appraisal, siteMetrics };
 }

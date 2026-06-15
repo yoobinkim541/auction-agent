@@ -161,6 +161,7 @@ async function main() {
       loc.building = siteMetrics.building;
       loc.adminOffices = siteMetrics.adminOffices;
       loc.siteComps = siteMetrics.siteComps;
+      loc.photos = siteMetrics.photos;
       loc.landUseFlags = classifyLandUseFlags(siteMetrics.landUseText);
       if (siteMetrics.transit?.length) {
         const nearest = [...siteMetrics.transit].sort((a, b) => a.distanceM - b.distanceM)[0]!;

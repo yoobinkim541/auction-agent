@@ -88,6 +88,7 @@ create table if not exists gm_location_analysis (
   land_use_flags     jsonb,         -- 토지이용 규제 flags
   admin_offices      jsonb,         -- 관할 행정기관
   report             jsonb,         -- 매물별 보고서 + 입찰 전 체크리스트
+  photos             jsonb,         -- 매물 사진 URL
   analyzed_at   timestamptz not null default now(),
   unique (listing_id)
 );

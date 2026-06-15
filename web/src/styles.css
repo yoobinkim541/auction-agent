@@ -170,10 +170,33 @@ table.mini td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .cfg input[type=number] { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
   border-radius: 6px; padding: 5px 8px; font-size: 12.5px; }
 
+/* 매물 사진 갤러리 (가로 스크롤) */
+.gallery { display: flex; gap: 8px; overflow-x: auto; margin: 12px 0 4px; padding-bottom: 6px; -webkit-overflow-scrolling: touch; scroll-snap-type: x mandatory; }
+.gphoto { flex: 0 0 auto; scroll-snap-align: start; }
+.gphoto img { height: 160px; width: auto; border-radius: 10px; border: 1px solid var(--line); object-fit: cover; display: block; background: var(--panel2); }
+
+/* 하단 탭바 (모바일 전용) */
+.tabbar { display: none; }
+
 /* ───────────────── 모바일 (≤760px) ───────────────── */
 @media (max-width: 760px) {
-  .app { padding: 12px 12px calc(20px + env(safe-area-inset-bottom)); }
+  .app { padding: 12px 12px calc(78px + env(safe-area-inset-bottom)); }
   header h1 { font-size: 19px; }
+
+  /* 하단 탭바 — 추천/전체/관심/조건 */
+  .tabbar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+    background: rgba(20,23,30,.96); backdrop-filter: blur(10px); border-top: 1px solid var(--line);
+    padding: 7px 4px calc(7px + env(safe-area-inset-bottom)); }
+  .tabbar button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    background: none; border: none; color: var(--muted); font-size: 11px; font-weight: 600;
+    padding: 3px; cursor: pointer; position: relative; -webkit-tap-highlight-color: transparent; }
+  .tabbar button.on { color: var(--accent); }
+  .tb-ico { font-size: 19px; line-height: 1; }
+  .tabbar .tb-badge { position: absolute; top: -3px; right: calc(50% - 22px); background: var(--risky);
+    color: #fff; font-size: 9px; font-style: normal; font-weight: 700; padding: 0 4px; border-radius: 8px; min-width: 14px; text-align: center; }
+
+  /* 상단의 통과만/관심만 체크박스는 탭바로 대체 → 숨김 */
+  .controls > label { display: none; }
   .disclaimer { font-size: 11.5px; padding: 9px 11px; }
 
   /* 상단 컨트롤: 검색 풀폭 + 칩처럼 가로 스크롤 */

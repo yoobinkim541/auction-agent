@@ -79,6 +79,7 @@ export default function App() {
   }, [rows, cfg, onlyPassed, onlyFavorite, type, q, sort]);
 
   const favCount = rows.filter((r) => r.is_favorite).length;
+  const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
 
   return (
     <div className="app">
@@ -190,6 +191,21 @@ export default function App() {
       )}
 
       {selected && <Detail row={selected} onClose={() => setSelected(null)} onFav={() => toggleFav(selected)} />}
+
+      <nav className="tabbar">
+        <button className={activeTab === 'recommend' ? 'on' : ''} onClick={() => { setShowCfg(false); setOnlyFavorite(false); setOnlyPassed(true); window.scrollTo(0, 0); }}>
+          <span className="tb-ico">🎯</span>추천
+        </button>
+        <button className={activeTab === 'all' ? 'on' : ''} onClick={() => { setShowCfg(false); setOnlyFavorite(false); setOnlyPassed(false); window.scrollTo(0, 0); }}>
+          <span className="tb-ico">📋</span>전체
+        </button>
+        <button className={activeTab === 'fav' ? 'on' : ''} onClick={() => { setShowCfg(false); setOnlyFavorite(true); window.scrollTo(0, 0); }}>
+          <span className="tb-ico">★</span>관심{favCount > 0 && <i className="tb-badge">{favCount}</i>}
+        </button>
+        <button className={activeTab === 'config' ? 'on' : ''} onClick={() => setShowCfg((s) => !s)}>
+          <span className="tb-ico">⚙</span>조건
+        </button>
+      </nav>
     </div>
   );
 }
@@ -295,6 +311,15 @@ function Detail({ row, onClose, onFav }: { row: ListingItem; onClose: () => void
         <p className="addr">{row.address} · {TYPE_LABEL[row.property_type]} · {row.court}</p>
         {row.source_url && (
           <p className="srclink"><a href={row.source_url} target="_blank" rel="noopener noreferrer">🔗 원본 상세페이지에서 더블체크 ↗</a></p>
+        )}
+        {loc?.photos && loc.photos.length > 0 && (
+          <div className="gallery">
+            {loc.photos.map((src, i) => (
+              <a key={i} href={src} target="_blank" rel="noopener noreferrer" className="gphoto">
+                <img src={src} loading="lazy" alt={`매물 사진 ${i + 1}`} />
+              </a>
+            ))}
+          </div>
         )}
 
         <div className="kv">

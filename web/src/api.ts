@@ -35,6 +35,7 @@ export interface LocationObj {
   building?: BuildingObj | null;
   land_use_flags?: LandUseFlagObj[] | null;
   admin_offices?: Record<string, string> | null;
+  photos?: string[] | null;
   report?: ReportObj | null;
 }
 export interface AcquisitionCostObj {

@@ -177,6 +177,7 @@ export interface SiteMetrics {
   landUseText?: string; // 토지이용계획 원문
   landUseFlags?: LandUseFlag[];
   adminOffices?: Record<string, string>; // 법원/등기소/세무서/주민센터
+  photos?: string[]; // 매물 사진 URL(감정평가 현황 사진 등)
 }
 
 export interface ListingDoc {
@@ -406,6 +407,8 @@ export interface LocationAnalysis {
   landUseFlags?: LandUseFlag[];
   /** 관할 행정기관 */
   adminOffices?: Record<string, string>;
+  /** 매물 사진 URL */
+  photos?: string[];
   /** 매물별 종합 보고서 + 입찰 전 체크리스트 */
   report?: ListingReport;
 }
