@@ -69,7 +69,7 @@ async function molitTrades(propertyType: PropertyType, lawdCd: string, months: n
 interface MolitItem {
   dealAmount?: string; excluUseAr?: number | string;
   dealYear?: number | string; dealMonth?: number | string; dealDay?: number | string;
-  floor?: number | string;
+  floor?: number | string; buildYear?: number | string; umdNm?: string;
   aptNm?: string; mhouseNm?: string; offiNm?: string;
 }
 interface MolitResponse { response?: { body?: { items?: { item?: MolitItem | MolitItem[] } } } }
@@ -84,13 +84,30 @@ function parseMolitJson(item: MolitItem | MolitItem[] | undefined): Comparable[]
     const name = it.aptNm || it.mhouseNm || it.offiNm;
     comps.push({
       apartmentName: name?.trim() || undefined,
+      dong: it.umdNm?.trim() || undefined,
       areaM2,
       dealAmount,
       dealDate: `${it.dealYear}-${String(it.dealMonth ?? 1).padStart(2, '0')}-${String(it.dealDay ?? 1).padStart(2, '0')}`,
       floor: it.floor != null ? parseInt(String(it.floor), 10) : undefined,
+      buildYear: it.buildYear != null ? parseInt(String(it.buildYear), 10) : undefined,
     });
   }
   return comps;
+}
+
+/** 주소에서 법정동(예: 천호동) 추출 */
+function extractDong(addr: string): string | undefined {
+  const parts = addr.replace(/[,()]/g, ' ').split(/\s+/).filter(Boolean);
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (/[구군]$/.test(parts[i]!) && /[동읍면리가]$/.test(parts[i + 1]!)) return parts[i + 1];
+  }
+  return parts.find((p) => /[동읍면]$/.test(p) && p.length >= 2 && !/[구군시]$/.test(p));
+}
+
+/** 주소의 "(동,단지명)" 패턴에서 건물명 추출 */
+function extractBuildingName(addr: string): string | undefined {
+  const m = addr.match(/\([^,)]*,\s*([^)]+)\)/);
+  return m ? m[1]!.trim() : undefined;
 }
 
 function recentYearMonths(months: number): string[] {
@@ -110,23 +127,36 @@ function median(nums: number[]): number | null {
   return s.length % 2 ? s[mid]! : Math.round((s[mid - 1]! + s[mid]!) / 2);
 }
 
-/** 면적·단지명으로 비교군 선별 후 시세 추정 */
-function estimateMarketPrice(comps: Comparable[], areaM2?: number, buildingName?: string): {
-  marketPrice: number | null;
-  used: Comparable[];
-} {
-  let pool = comps;
-  if (buildingName) {
-    const nameMatched = pool.filter((c) => c.apartmentName && c.apartmentName.includes(buildingName));
-    if (nameMatched.length >= 3) pool = nameMatched;
+interface Estimate { marketPrice: number | null; used: Comparable[]; confidence: 'high' | 'medium' | 'low' | null; basis: string }
+
+/**
+ * 비교군을 동일건물 → 법정동+면적 → 법정동 → 구+면적 순으로 좁혀 시세 추정.
+ * 빌라(연립다세대)는 단지가 이질적이라 '구 전체 중위값'은 부정확 → 법정동·면적 매칭을 우선하고
+ * 매칭 수준을 confidence로 표기. 최근 거래 우선.
+ */
+function estimateMarketPrice(
+  comps: Comparable[],
+  opts: { areaM2?: number; dong?: string; buildingName?: string },
+): Estimate {
+  const recent = [...comps].sort((a, b) => (a.dealDate < b.dealDate ? 1 : -1)); // 최근 우선
+  const areaOk = (c: Comparable) => !opts.areaM2 || Math.abs(c.areaM2 - opts.areaM2) <= opts.areaM2 * 0.15;
+  const dongOk = (c: Comparable) => !!opts.dong && !!c.dong && c.dong.includes(opts.dong);
+  const nameOk = (c: Comparable) =>
+    !!opts.buildingName && !!c.apartmentName && c.apartmentName.replace(/\s/g, '').includes(opts.buildingName.replace(/\s/g, ''));
+
+  const tiers: { basis: string; conf: 'high' | 'medium' | 'low'; sel: Comparable[]; need: number }[] = [];
+  if (opts.buildingName) tiers.push({ basis: `'${opts.buildingName}' 동일건물·면적`, conf: 'high', need: 2, sel: recent.filter((c) => nameOk(c) && areaOk(c)) });
+  if (opts.dong) tiers.push({ basis: `${opts.dong}·면적`, conf: 'high', need: 3, sel: recent.filter((c) => dongOk(c) && areaOk(c)) });
+  if (opts.dong) tiers.push({ basis: `${opts.dong} 전체`, conf: 'medium', need: 3, sel: recent.filter((c) => dongOk(c)) });
+  tiers.push({ basis: '구 전체·면적', conf: 'low', need: 3, sel: recent.filter((c) => areaOk(c)) });
+
+  for (const t of tiers) {
+    if (t.sel.length >= t.need) {
+      const used = t.sel.slice(0, 20);
+      return { marketPrice: median(used.map((c) => c.dealAmount)), used, confidence: t.conf, basis: `${t.basis} ${used.length}건` };
+    }
   }
-  if (areaM2) {
-    const tol = areaM2 * 0.1;
-    const areaMatched = pool.filter((c) => Math.abs(c.areaM2 - areaM2) <= tol);
-    if (areaMatched.length >= 3) pool = areaMatched;
-  }
-  const used = pool.slice(0, 30);
-  return { marketPrice: median(used.map((c) => c.dealAmount)), used };
+  return { marketPrice: null, used: [], confidence: null, basis: '비교군 부족' };
 }
 
 async function kakaoCategoryCount(code: string, lat: number, lng: number, radius: number): Promise<number> {
@@ -169,11 +199,17 @@ export async function analyzeLocation(listing: Listing, opts: LocationOptions = 
 
   let comps: Comparable[] = [];
   let marketPrice: number | null = null;
+  let marketConfidence: LocationAnalysis['marketConfidence'] = null;
+  let compBasis: string | undefined;
   if (lawdCd && MOLIT_ENDPOINT[listing.propertyType]) {
-    const all = await molitTrades(listing.propertyType, lawdCd, opts.tradeMonths ?? 6);
-    const est = estimateMarketPrice(all, listing.areaM2, opts.buildingName);
+    const all = await molitTrades(listing.propertyType, lawdCd, opts.tradeMonths ?? 12);
+    const dong = extractDong(listing.address);
+    const buildingName = opts.buildingName ?? extractBuildingName(listing.address);
+    const est = estimateMarketPrice(all, { areaM2: listing.areaM2, dong, buildingName });
     comps = est.used;
     marketPrice = est.marketPrice;
+    marketConfidence = est.confidence;
+    compBasis = est.basis;
   }
 
   const safetyMargin =
@@ -202,6 +238,8 @@ export async function analyzeLocation(listing: Listing, opts: LocationOptions = 
     caseNo: listing.caseNo,
     marketPrice,
     comps,
+    marketConfidence,
+    compBasis,
     safetyMargin,
     transit,
     schools,

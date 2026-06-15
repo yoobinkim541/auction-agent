@@ -15,6 +15,8 @@ export interface ScoreConfig {
   regionKeywords: string[];
   priceMinEok: number; // 최저매각가 하한(억), 0=무제한
   priceMaxEok: number; // 최저매각가 상한(억), 0=무제한
+  apprMinEok: number; // 감정가 하한(억), 0=무제한
+  apprMaxEok: number; // 감정가 상한(억), 0=무제한
 }
 
 export const DEFAULT_CONFIG: ScoreConfig = {
@@ -28,6 +30,8 @@ export const DEFAULT_CONFIG: ScoreConfig = {
   regionKeywords: ['서울', '경기', '인천'],
   priceMinEok: 0,
   priceMaxEok: 0,
+  apprMinEok: 0,
+  apprMaxEok: 0,
 };
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
@@ -61,6 +65,9 @@ export function scoreClient(item: ListingItem, cfg: ScoreConfig): ClientScore {
   const minBid = item.min_bid_price ?? 0;
   if (cfg.priceMinEok > 0 && minBid < cfg.priceMinEok * 1e8) { passed = false; reasons.push(`최저가 ${(minBid / 1e8).toFixed(1)}억<${cfg.priceMinEok}억`); }
   if (cfg.priceMaxEok > 0 && minBid > cfg.priceMaxEok * 1e8) { passed = false; reasons.push(`최저가 ${(minBid / 1e8).toFixed(1)}억>${cfg.priceMaxEok}억`); }
+  const appr = item.appraisal_value ?? 0;
+  if (cfg.apprMinEok > 0 && appr < cfg.apprMinEok * 1e8) { passed = false; reasons.push(`감정가<${cfg.apprMinEok}억`); }
+  if (cfg.apprMaxEok > 0 && appr > cfg.apprMaxEok * 1e8) { passed = false; reasons.push(`감정가>${cfg.apprMaxEok}억`); }
   if (cfg.requireCleanRights && assumed > 0) { passed = false; reasons.push(`인수금액 ${(assumed / 1e8).toFixed(1)}억`); }
   if (grade === 'review_required' && !cfg.includeReviewRequired) { passed = false; reasons.push('검토필요(특수권리)'); }
   if (margin != null && margin < cfg.minSafetyMargin) { passed = false; reasons.push(`안전마진 ${(margin * 100).toFixed(0)}%<${(cfg.minSafetyMargin * 100).toFixed(0)}%`); }

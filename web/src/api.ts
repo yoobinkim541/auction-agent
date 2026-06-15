@@ -20,6 +20,8 @@ export interface RightsObj {
 }
 export interface LocationObj {
   market_price?: number | null;
+  market_confidence?: 'high' | 'medium' | 'low' | null;
+  comp_basis?: string | null;
   safety_margin?: number | null;
   transit?: { nearestStation?: string; walkMinutes?: number } | null;
   schools?: { academyCount?: number; schoolCount?: number } | null;

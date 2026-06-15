@@ -16,6 +16,7 @@ const RISK: Record<string, { label: string; cls: string }> = {
   review_required: { label: '검토필요', cls: 'risk-review' },
 };
 const pct = (n: number | null | undefined) => (n == null ? '-' : (n * 100).toFixed(1) + '%');
+const CONF: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' };
 
 type SortKey = 'score' | 'safety' | 'sale';
 const CFG_KEY = 'gm_score_config';
@@ -62,6 +63,8 @@ export default function App() {
     if (cfg.regionKeywords.length) v = v.filter((x) => cfg.regionKeywords.some((k) => x.item.address.includes(k)));
     if (cfg.priceMinEok > 0) v = v.filter((x) => (x.item.min_bid_price ?? 0) >= cfg.priceMinEok * 1e8);
     if (cfg.priceMaxEok > 0) v = v.filter((x) => (x.item.min_bid_price ?? 0) <= cfg.priceMaxEok * 1e8);
+    if (cfg.apprMinEok > 0) v = v.filter((x) => (x.item.appraisal_value ?? 0) >= cfg.apprMinEok * 1e8);
+    if (cfg.apprMaxEok > 0) v = v.filter((x) => (x.item.appraisal_value ?? 0) <= cfg.apprMaxEok * 1e8);
     if (onlyPassed) v = v.filter((x) => x.sc.passed);
     if (onlyFavorite) v = v.filter((x) => x.item.is_favorite);
     if (type !== 'all') v = v.filter((x) => x.item.property_type === type);
@@ -175,6 +178,15 @@ function ConfigPanel({ cfg, setCfg }: { cfg: ScoreConfig; setCfg: (c: ScoreConfi
           onChange={(e) => setCfg({ ...cfg, priceMaxEok: Number(e.target.value) || 0 })} /> 억
         <span className="muted">(0 = 무제한)</span>
       </div>
+      <div className="cfg-row cfg-checks">
+        <span className="cfg-label">감정가</span>
+        <input type="number" min={0} placeholder="최소" value={cfg.apprMinEok || ''} style={{ width: 72 }}
+          onChange={(e) => setCfg({ ...cfg, apprMinEok: Number(e.target.value) || 0 })} /> 억
+        <span>~</span>
+        <input type="number" min={0} placeholder="최대" value={cfg.apprMaxEok || ''} style={{ width: 72 }}
+          onChange={(e) => setCfg({ ...cfg, apprMaxEok: Number(e.target.value) || 0 })} /> 억
+        <span className="muted">(0 = 무제한)</span>
+      </div>
       <div className="cfg-row">
         <label>가중치 — 안전마진 {safetyPct}% : 권리 {100 - safetyPct}%</label>
         <input type="range" min={0} max={100} value={safetyPct}
@@ -220,7 +232,7 @@ function Detail({ row, onClose, onFav }: { row: ListingItem; onClose: () => void
         <div className="kv">
           <div><span>감정가</span><b>{eok(row.appraisal_value)}</b></div>
           <div><span>최저매각가</span><b>{eok(row.min_bid_price)}</b></div>
-          <div><span>추정시세</span><b>{eok(loc?.market_price)}</b></div>
+          <div><span>추정시세</span><b>{eok(loc?.market_price)}{loc?.market_confidence ? ` · 신뢰도 ${CONF[loc.market_confidence]}` : ''}</b></div>
           <div><span>안전마진</span><b>{pct(loc?.safety_margin)}</b></div>
           <div><span>총 인수금액</span><b className={rights?.assumed_amount ? 'danger' : ''}>{won(rights?.assumed_amount ?? 0)}</b></div>
           <div><span>최대안전입찰가</span><b>{won(rights?.max_safe_bid)}</b></div>
@@ -272,6 +284,7 @@ function Detail({ row, onClose, onFav }: { row: ListingItem; onClose: () => void
         </Section>
 
         <Section title="입지분석">
+          {loc?.comp_basis && <p className="muted">시세 비교군: {loc.comp_basis}</p>}
           <div className="kv">
             <div><span>최근접역</span><b>{loc?.transit?.nearestStation ?? '-'}{loc?.transit?.walkMinutes ? ` (도보 ${loc.transit.walkMinutes}분)` : ''}</b></div>
             <div><span>학교/학원</span><b>{loc?.schools?.schoolCount ?? '-'} / {loc?.schools?.academyCount ?? '-'}</b></div>

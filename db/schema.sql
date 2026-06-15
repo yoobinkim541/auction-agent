@@ -72,6 +72,8 @@ create table if not exists gm_location_analysis (
   listing_id    bigint references gm_listings(id) on delete cascade,
   market_price  bigint,
   comps         jsonb,
+  market_confidence text,
+  comp_basis    text,
   safety_margin numeric,
   transit       jsonb,
   schools       jsonb,

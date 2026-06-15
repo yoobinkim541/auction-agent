@@ -234,10 +234,12 @@ export interface RightsAnalysisResult {
 
 export interface Comparable {
   apartmentName?: string;
+  dong?: string; // 법정동(예: 천호동)
   areaM2: number;
   dealAmount: number; // 실거래가 (원)
   dealDate: string; // ISO
   floor?: number;
+  buildYear?: number;
   distanceM?: number;
 }
 
@@ -245,6 +247,10 @@ export interface LocationAnalysis {
   caseNo: string;
   marketPrice: number | null; // 추정 시세 (원)
   comps: Comparable[];
+  /** 시세 추정 신뢰도 (비교군 매칭 수준) */
+  marketConfidence?: 'high' | 'medium' | 'low' | null;
+  /** 비교군 선정 근거(예: "천호동·면적 매칭 7건") */
+  compBasis?: string;
   /** 안전마진 = (시세 − 최저매각가) / 시세 */
   safetyMargin: number | null;
   transit?: { nearestStation?: string; walkMinutes?: number; lines?: number };
