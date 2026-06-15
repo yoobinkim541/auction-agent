@@ -207,7 +207,9 @@ async function main() {
 
       // 3-b) 매물별 보고서 + 입찰 전 필수 확인사항(법률문서 스캔)
       const scanText = `${appraisalText} ${siteMetrics.landUseText ?? ''} ${appraisalHighlights.join(' ')}`;
-      loc.report = buildReport({ rights, loc, listing, notes: scanNotes, scanText });
+      // 등기 미수집(빈 배열 = 사이트 접속차단/로드실패)이면 분석 보류 처리
+      const dataComplete = input.registry.length > 0 || siteAssumed != null || input.tenants.length > 0;
+      loc.report = buildReport({ rights, loc, listing, notes: scanNotes, scanText, dataComplete });
       // 3-c) 초보자 용어 풀이 + 법령 근거 리스크 평가
       loc.report.glossary = attachGlossary([
         loc.report.headline, loc.report.rightsSummary, loc.report.locationSummary, loc.report.costSummary,

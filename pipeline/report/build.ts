@@ -17,21 +17,34 @@ export function buildReport(args: {
   listing: Listing;
   notes: string[];
   scanText: string;
+  dataComplete?: boolean;
 }): ListingReport {
   const { rights, loc, listing } = args;
+  const dataComplete = args.dataComplete !== false;
   const checklist: PreBidItem[] = buildPreBidChecklist(args);
   const dangerCount = checklist.filter((c) => c.severity === 'danger').length;
   const warnCount = checklist.filter((c) => c.severity === 'warn').length;
   const trueMargin = loc.acquisitionCost?.trueSafetyMargin ?? null;
 
-  // 종합 권고: 인수금액/위험등급/danger 항목/진짜마진 기준
+  // 종합 권고: 인수금액/위험등급/danger 항목/진짜마진 기준 (데이터 불완전은 보류=caution)
   let recommendation: ListingReport['recommendation'];
-  if (rights.assumedAmount > 0 || dangerCount > 0 || rights.riskGrade === 'review_required' || (trueMargin != null && trueMargin < 0)) {
+  if (!dataComplete) {
+    recommendation = 'caution';
+  } else if (rights.assumedAmount > 0 || dangerCount > 0 || rights.riskGrade === 'review_required' || (trueMargin != null && trueMargin < 0)) {
     recommendation = 'avoid';
   } else if (warnCount > 0 || (trueMargin != null && trueMargin < 0.1) || rights.riskGrade === 'risky' || rights.riskGrade === 'caution') {
     recommendation = 'caution';
   } else {
     recommendation = 'consider';
+  }
+
+  if (!dataComplete) {
+    return {
+      headline: `[데이터 불완전] 등기 미수집(접속차단/로드실패) — 재수집 후 분석 필요. 시세 ${eok(loc.marketPrice)} · 최저가 ${eok(listing.minBidPrice)}`,
+      recommendation, summary: ['⚠️ 원천 데이터(등기·명세서) 미수집으로 권리분석 보류', `감정가 ${eok(listing.appraisalValue)} · 최저가 ${eok(listing.minBidPrice)}`],
+      rightsSummary: '등기 미수집 — 권리분석 불가(재수집 필요).', locationSummary: loc.compBasis ?? '', costSummary: '',
+      checklist, dangerCount, warnCount, sourceUrl: listing.sourceUrl,
+    };
   }
 
   const recLabel = { consider: '검토 권장', caution: '주의 검토', avoid: '신중/회피' }[recommendation];

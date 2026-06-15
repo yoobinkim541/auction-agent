@@ -78,6 +78,40 @@ describe('토지규제 flags', () => {
     expect(flags.find((f) => f.label.includes('가축사육'))?.kind).toBe('info');
     expect(Object.keys(byLabel).length).toBeGreaterThanOrEqual(5);
   });
+
+  it('신규 공법상 제한: 군사·도시계획시설·농지·보전산지·녹지·상수원·문화재', () => {
+    const text = [
+      '군사기지및군사시설보호구역(제한보호구역)', '비행안전구역',
+      '도시계획시설 공원 저촉', '농업진흥구역', '보전산지(임업용산지)',
+      '자연녹지지역', '상수원보호구역', '문화재보호구역',
+    ].join(', ');
+    const flags = classifyLandUseFlags(text);
+    const find = (s: string) => flags.find((f) => f.label.includes(s));
+    expect(find('군사시설보호구역')).toMatchObject({ kind: 'risk', severity: 'medium' });
+    expect(find('도시계획시설 저촉')).toMatchObject({ kind: 'risk', severity: 'medium' });
+    expect(find('농지')).toMatchObject({ kind: 'risk', severity: 'medium' });
+    expect(find('보전산지')).toMatchObject({ kind: 'risk', severity: 'high' });
+    expect(find('녹지지역')).toMatchObject({ kind: 'risk', severity: 'medium' });
+    expect(find('상수원보호구역')).toMatchObject({ kind: 'risk', severity: 'high' });
+    expect(find('문화재보호구역')).toMatchObject({ kind: 'risk', severity: 'medium' });
+  });
+
+  it('통제보호구역/비행안전구역 단독 표기도 군사시설 flag로 탐지', () => {
+    expect(classifyLandUseFlags('통제보호구역').find((f) => f.label.includes('군사시설'))?.severity).toBe('medium');
+    expect(classifyLandUseFlags('비행안전구역').find((f) => f.label.includes('군사시설'))?.severity).toBe('medium');
+  });
+
+  it('보전관리지역/자연환경보전지역 → 보전산지 flag(high)', () => {
+    expect(classifyLandUseFlags('보전관리지역').find((f) => f.label.includes('보전산지'))?.severity).toBe('high');
+    expect(classifyLandUseFlags('자연환경보전지역').find((f) => f.label.includes('보전산지'))?.kind).toBe('risk');
+  });
+
+  it('정비구역 flag impact는 권리산정기준일·현금청산(입주권 불가) 경고 포함', () => {
+    const f = classifyLandUseFlags('재개발 정비구역').find((x) => x.label.includes('정비구역'));
+    expect(f?.impact).toContain('권리산정기준일');
+    expect(f?.impact).toContain('현금청산');
+    expect(f?.impact).toContain('입주권 불가');
+  });
 });
 
 describe('총취득비용', () => {

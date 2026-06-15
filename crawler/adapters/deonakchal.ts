@@ -177,6 +177,7 @@ async function scrapeOne(page: Page, c: ParsedRow): Promise<ScrapedListing> {
       if (d.appraisal) docs.push({ caseNo: listing.caseNo, docType: 'appraisal_report', parsedJson: d.appraisal });
       if (d.siteMetrics && Object.keys(d.siteMetrics).length) docs.push({ caseNo: listing.caseNo, docType: 'site_metrics', parsedJson: d.siteMetrics });
     } catch (e) {
+      if (e instanceof SiteBlockedError) throw e; // 차단은 상위로 전파해 전체 중단
       console.warn(`[deonakchal] 상세 파싱 실패 ${c.listing.caseNo}: ${e}`);
       if (c.notes.length) docs.push({ caseNo: listing.caseNo, docType: 'rights_summary', parsedJson: { notes: c.notes } });
     }
@@ -237,19 +238,31 @@ export class DeonakchalAdapter implements Adapter {
 
       let cursor = 0;
       let done = 0;
+      let blocked = false;
       const runWorker = async (wp: Page): Promise<void> => {
         for (;;) {
+          if (blocked) break;
           const i = cursor++;
           if (i >= collected.length) break;
-          results[i] = await scrapeOne(wp, collected[i]!);
+          try {
+            results[i] = await scrapeOne(wp, collected[i]!);
+          } catch (e) {
+            if (e instanceof SiteBlockedError) {
+              blocked = true;
+              console.error(`[deonakchal] ⛔ 사이트 접속 차단 감지 — 크롤 중단(${done}/${collected.length} 수집). 폴라이트 정책으로 재시도 필요.`);
+              break;
+            }
+            throw e;
+          }
           done++;
           if (done % 10 === 0 || done === collected.length) console.log(`[deonakchal] 상세 ${done}/${collected.length}`);
           await sleep(delay);
         }
       };
       await Promise.all(pages.map((wp) => runWorker(wp)));
-      for (let i = 1; i < pages.length; i++) await pages[i]!.close().catch(() => {}); // 추가 페이지 정리(첫 page는 browser.close가 처리)
-      return results;
+      const out = results.filter(Boolean); // 차단으로 미수집된 뒤쪽 인덱스 제거
+      for (let i = 1; i < pages.length; i++) await pages[i]!.close().catch(() => {});
+      return out;
     } finally {
       await browser.close();
     }
@@ -389,9 +402,27 @@ export function extractSiteMetrics(body: string, raw: string, subjectName?: stri
 }
 
 /** 상세 페이지(view.html?product_id=) → 등기·임차인·명세서·예상배당 추출. 헤더 키워드로 테이블 탐색. */
+/** 사이트 이상접속 차단 감지 시 던지는 에러 — 크롤 전체 중단 신호 */
+export class SiteBlockedError extends Error {
+  constructor() { super('SITE_BLOCKED: 더낙찰옥션 비정상접속 차단'); this.name = 'SiteBlockedError'; }
+}
+
 export async function parseDetail(page: Page, productId: string): Promise<DetailData> {
   await page.goto(`${BASE}/auction/view.html?product_id=${productId}`, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
   await page.waitForTimeout(1200);
+  // 차단/빈 페이지 감지: 이상접속 차단 시 빈 데이터 저장을 막고 즉시 중단
+  const probe = await page.evaluate(() => ({ html: document.documentElement.innerHTML.slice(0, 500), tables: document.querySelectorAll('table').length })).catch(() => ({ html: '', tables: 0 }));
+  if (/비정상접속|접속을\s*차단|abuse|blocked/i.test(probe.html)) throw new SiteBlockedError();
+  // 표가 하나도 없으면 콘텐츠 로드 대기(느린 페이지/병렬 부하 대비, 최대 ~6초)
+  if (probe.tables === 0) {
+    for (let i = 0; i < 12; i++) {
+      await page.waitForTimeout(500);
+      const n = await page.evaluate(() => document.querySelectorAll('table').length).catch(() => 0);
+      if (n > 0) break;
+      const blk = await page.evaluate(() => /비정상접속|접속을\s*차단/.test(document.documentElement.innerHTML)).catch(() => false);
+      if (blk) throw new SiteBlockedError();
+    }
+  }
   // 감정평가요항 등 '더보기'로 접힌 영역 펼치기(토지이용계획·용도지역 노출)
   await page.evaluate(() => {
     document.querySelectorAll('a, button, span').forEach((e) => {
