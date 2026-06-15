@@ -79,6 +79,15 @@ table.mini th, table.mini td { text-align: left; padding: 5px 6px; border-bottom
 table.mini tr.total td { border-top: 2px solid var(--line); }
 table.mini td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .sect h4 { margin: 12px 0 4px; font-size: 12.5px; color: var(--muted); }
+.good { color: var(--clean, #4bc98c); }
+.calc-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: 13px; }
+.calc-row label { min-width: 76px; color: var(--muted); }
+.calc-row input[type=number], .calc-row select { background: var(--panel2); color: var(--text, #eee); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-size: 13px; width: 150px; }
+.calc-row .chk { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.calc-presets { display: flex; gap: 6px; margin: 4px 0 8px; flex-wrap: wrap; }
+.mini-btn { background: var(--panel2); color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: 11.5px; cursor: pointer; }
+.mini-btn:hover { color: var(--text, #eee); }
+.etc-in { background: var(--panel2); color: var(--text, #eee); border: 1px solid var(--line); border-radius: 5px; padding: 2px 6px; width: 110px; text-align: right; font-size: 12px; }
 .amen span { background: var(--panel2); padding: 3px 8px; border-radius: 6px; }
 
 /* 관심 별표 */
