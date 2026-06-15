@@ -109,8 +109,9 @@ async function main() {
   const withVerify = process.argv.includes('--verify');
 
   const reanalyzeAll = process.argv.includes('--all');
-  const listings = await fetchListingsForAnalysis(200, !reanalyzeAll);
-  console.log(`분석 대상 매물: ${listings.length}건 ${reanalyzeAll ? '(전체 재분석)' : '(신규만 — 전체는 --all)'}`);
+  const listings = await fetchListingsForAnalysis(2000, !reanalyzeAll);
+  const concurrency = Math.max(1, parseInt(process.env.ANALYZE_CONCURRENCY ?? '6', 10));
+  console.log(`분석 대상 매물: ${listings.length}건 ${reanalyzeAll ? '(전체 재분석)' : '(신규만 — 전체는 --all)'} | 병렬 ${concurrency}`);
 
   // 검증 모드 결정: claude CLI(Max 구독, 과금 0) 우선 → API 키 → 생략
   let verifyMode: 'cli' | 'api' | 'none' = 'none';
@@ -121,7 +122,13 @@ async function main() {
     console.log(`[verify] 모드: ${verifyMode}${verifyMode === 'cli' ? ' (Claude Max 구독, 추가 과금 없음)' : ''}`);
   }
 
-  for (const r of listings) {
+  let cursor = 0;
+  let done = 0;
+  const worker = async (): Promise<void> => {
+   for (;;) {
+    const idx = cursor++;
+    if (idx >= listings.length) break;
+    const r = listings[idx]!;
     const listing = rowToListing(r);
     try {
       // 1) 권리분석 (결정형 엔진) + 사이트 예상 낙찰자인수(권위값) 반영
@@ -222,7 +229,9 @@ async function main() {
       await saveLocationAnalysis(r.id, loc);
       await saveScore(r.id, score);
 
+      done++;
       const tm = loc.acquisitionCost?.trueSafetyMargin;
+      if (done % 25 === 0 || done === listings.length) console.log(`[analyze] ${done}/${listings.length}`);
       console.log(
         `✓ ${listing.caseNo} | 위험:${rights.riskGrade} 인수:${rights.assumedAmount.toLocaleString('ko-KR')} ` +
           `안전마진:${loc.safetyMargin !== null ? (loc.safetyMargin * 100).toFixed(1) + '%' : 'N/A'} ` +
@@ -231,7 +240,9 @@ async function main() {
     } catch (e) {
       console.error(`✗ ${listing.caseNo}: ${e}`);
     }
-  }
+   }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, listings.length) || 1 }, () => worker()));
 }
 
 main().catch((e) => {

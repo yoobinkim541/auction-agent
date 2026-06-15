@@ -43,10 +43,11 @@ const SEL = {
 } as const;
 
 // 진행 매물 테마 opt (전부 미래 매각기일=활성). 테마는 물건종류가 아니라 큐레이션이라,
-// 아파트(2,3) + 혼합형(26 오늘공고신건, 27 역세권물건, 25 특수물건)을 모아 클라이언트에서 종류 필터.
-//  - 27(역세권): 다세대(빌라)·도시형생활주택 포함 / 26·25: 오피스텔·상가 등 혼합
-//  혼합/빌라 테마를 앞에 두어 maxItems가 아파트로만 채워지지 않게 함.
-const THEME_OPTS = ['27', '26', '25', '2', '3'];
+// 수도권 아파트/빌라/오피스텔/다가구가 담길 만한 테마를 폭넓게 모아 클라이언트에서 종류 필터.
+//  opt 의미: 2 수도권APT, 3 임대수익50선, 5 반값아파트, 6 역세권아파트(3~5억), 7 서울3억미만,
+//            9 임대수익다가구, 12 반값빌라, 25 특수물건, 26 오늘공고신건, 27 역세권물건, 11 유치권
+//  혼합/빌라 테마를 앞에 두어 maxItems가 아파트로만 채워지지 않게 함. (전원주택1·고가4·토지8/10 제외)
+const THEME_OPTS = ['12', '3', '9', '27', '26', '25', '5', '6', '7', '2', '11'];
 // 종결/취하 등 입찰 불가 상태(건너뜀)
 const TERMINAL = /(배당종결|취하|기각|각하|낙찰|대금납부|^배당|취소)/;
 // 특수권리 플래그(목록의 [..] 표기) — 엔진 레드플래그 스캐너가 인식
@@ -191,7 +192,7 @@ export class DeonakchalAdapter implements Adapter {
   async crawl(filter: CrawlFilter): Promise<ScrapedListing[]> {
     const delay = parseInt(process.env.CRAWL_DELAY_MS ?? '2500', 10);
     const maxItems = filter.maxItems ?? 50;
-    const maxPagesPerTheme = 30;
+    const maxPagesPerTheme = parseInt(process.env.CRAWL_MAX_PAGES ?? '80', 10);
 
     const browser = await launch();
     const collected: ParsedRow[] = [];
