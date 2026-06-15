@@ -1,0 +1,9 @@
+[Unit]
+Description=매일 06:00 경매 매물 파싱(크롤+분석)
+
+[Timer]
+OnCalendar=*-*-* 06:00:00 Asia/Seoul
+Persistent=true
+
+[Install]
+WantedBy=timers.target
