@@ -40,13 +40,14 @@ function rowToListing(r: ListingRow): Listing {
 }
 
 /** 등기/임차인 문서(parsed_json)로 RightsInput을 구성. 없으면 빈 입력(엔진이 경고). */
-async function buildRightsInput(listingId: number, listing: Listing): Promise<RightsInput> {
+async function buildRightsInput(listingId: number, listing: Listing): Promise<{ input: RightsInput; siteAssumed: number | null }> {
   const data = await fetchListingDocs(listingId);
 
   let registry: RegistryEntry[] = [];
   let landRegistry: RegistryEntry[] | undefined;
   let tenants: Tenant[] = [];
   let statementSeniorDate: string | undefined;
+  let siteAssumed: number | null = null;
   const notes: string[] = [];
 
   for (const d of data) {
@@ -54,6 +55,8 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<Ri
     if (d.doc_type === 'registry_summary') {
       if (Array.isArray(p.registry)) registry = p.registry as RegistryEntry[];
       if (Array.isArray(p.landRegistry)) landRegistry = p.landRegistry as RegistryEntry[];
+      if (typeof p.siteAssumedAmount === 'number') siteAssumed = p.siteAssumedAmount;
+      if (typeof p.statementSeniorDate === 'string') statementSeniorDate = p.statementSeniorDate;
     }
     if (d.doc_type === 'sale_statement') {
       if (Array.isArray(p.tenants)) tenants = p.tenants as Tenant[];
@@ -67,20 +70,23 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<Ri
   }
 
   return {
-    listing: {
-      caseNo: listing.caseNo,
-      court: listing.court,
-      address: listing.address,
-      minBidPrice: listing.minBidPrice,
-      appraisalValue: listing.appraisalValue,
-      demandDeadline: listing.demandDeadline,
-      isCollectiveBuilding: listing.isCollectiveBuilding,
+    input: {
+      listing: {
+        caseNo: listing.caseNo,
+        court: listing.court,
+        address: listing.address,
+        minBidPrice: listing.minBidPrice,
+        appraisalValue: listing.appraisalValue,
+        demandDeadline: listing.demandDeadline,
+        isCollectiveBuilding: listing.isCollectiveBuilding,
+      },
+      registry,
+      landRegistry,
+      tenants,
+      statementSeniorDate,
+      notes,
     },
-    registry,
-    landRegistry,
-    tenants,
-    statementSeniorDate,
-    notes,
+    siteAssumed,
   };
 }
 
@@ -103,9 +109,18 @@ async function main() {
   for (const r of listings) {
     const listing = rowToListing(r);
     try {
-      // 1) 권리분석 (결정형 엔진)
-      const rightsInput = await buildRightsInput(r.id, listing);
-      const rights = analyzeRights(rightsInput);
+      // 1) 권리분석 (결정형 엔진) + 사이트 예상 낙찰자인수(권위값) 반영
+      const { input, siteAssumed } = await buildRightsInput(r.id, listing);
+      const rights = analyzeRights(input);
+      if (siteAssumed != null) {
+        if (siteAssumed !== rights.assumedAmount) {
+          rights.warnings.push(`인수금액: 엔진추정 ${rights.assumedAmount.toLocaleString('ko-KR')}원 / 사이트 ${siteAssumed.toLocaleString('ko-KR')}원(예상배당 기준 적용)`);
+        }
+        rights.assumedAmount = siteAssumed;
+        if (siteAssumed > 0) rights.assumedBreakdown = [{ label: '사이트 예상 낙찰자인수', amount: siteAssumed, reason: '더낙찰옥션 예상배당표 기준' }];
+        rights.isClean = siteAssumed === 0 && rights.riskGrade !== 'review_required' && !rights.redFlags.some((f) => f.severity === 'danger');
+        if (siteAssumed > 0 && (rights.riskGrade === 'clean' || rights.riskGrade === 'caution')) rights.riskGrade = 'risky';
+      }
 
       // 2) 입지분석
       const loc = await analyzeLocation(listing, { tradeMonths: 6 });

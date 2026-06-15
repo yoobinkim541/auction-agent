@@ -9,7 +9,7 @@ import 'dotenv/config';
 import type { PropertyType } from '../shared/types.ts';
 import type { Adapter, CrawlFilter } from './adapters/types.ts';
 import { DeonakchalAdapter, inspectAndDump } from './adapters/deonakchal.ts';
-import { upsertListing, upsertListingDoc, startCrawlRun, finishCrawlRun } from '../shared/db.ts';
+import { upsertListing, upsertListingDoc, deleteListingDocs, startCrawlRun, finishCrawlRun } from '../shared/db.ts';
 
 const DEFAULT_FILTER: CrawlFilter = {
   regions: ['서울', '경기', '인천'],
@@ -39,7 +39,10 @@ async function main() {
     for (const s of scraped) {
       const id = await upsertListing(s.listing);
       nNew++;
-      for (const doc of s.docs ?? []) await upsertListingDoc(id, doc);
+      if (s.docs?.length) {
+        await deleteListingDocs(id); // 재크롤 시 문서 중복 방지
+        for (const doc of s.docs) await upsertListingDoc(id, doc);
+      }
     }
     await finishCrawlRun(runId, { nFound: scraped.length, nNew, status: 'ok' });
     console.log(`수집 완료: ${scraped.length}건 (저장 ${nNew})`);

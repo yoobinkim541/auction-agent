@@ -8,7 +8,7 @@ create extension if not exists vector;
 create table if not exists gm_listings (
   id            bigint generated always as identity primary key,
   case_no       text not null,
-  item_no       text,
+  item_no       text not null default '',  -- NULL이면 unique(case_no,item_no,source)가 중복 허용 → '' 사용
   court         text not null,
   address       text not null,
   road_address  text,

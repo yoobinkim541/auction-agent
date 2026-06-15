@@ -46,7 +46,7 @@ export async function upsertListing(l: Listing): Promise<number> {
        raw_json=excluded.raw_json, crawled_at=excluded.crawled_at
      returning id`,
     [
-      l.caseNo, l.itemNo ?? null, l.court, l.address, l.roadAddress ?? null, l.lat ?? null, l.lng ?? null,
+      l.caseNo, l.itemNo ?? '', l.court, l.address, l.roadAddress ?? null, l.lat ?? null, l.lng ?? null,
       l.propertyType, l.appraisalValue ?? null, l.minBidPrice ?? null, l.minBidRatio ?? null,
       l.failCount ?? 0, l.saleDate ?? null, l.demandDeadline ?? null, l.areaM2 ?? null,
       l.buildingAreaM2 ?? null, l.isCollectiveBuilding ?? false, l.source, l.sourceUrl ?? null,
@@ -54,6 +54,10 @@ export async function upsertListing(l: Listing): Promise<number> {
     ],
   );
   return rows[0]!.id;
+}
+
+export async function deleteListingDocs(listingId: number): Promise<void> {
+  await query(`delete from gm_listing_docs where listing_id=$1`, [listingId]);
 }
 
 export async function upsertListingDoc(listingId: number, doc: ListingDoc): Promise<void> {

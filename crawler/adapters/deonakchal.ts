@@ -12,7 +12,7 @@
 import { chromium, type Browser, type Page } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Listing } from '../../shared/types.ts';
+import type { Listing, RegistryEntry, Tenant, ListingDoc } from '../../shared/types.ts';
 import type { Adapter, CrawlFilter, ScrapedListing } from './types.ts';
 import { sleep } from './types.ts';
 import {
@@ -96,7 +96,7 @@ async function newPage(browser: Browser): Promise<Page> {
   return ctx.newPage();
 }
 
-interface ParsedRow { listing: Listing; notes: string[] }
+interface ParsedRow { listing: Listing; notes: string[]; productId?: string }
 
 /** 결과 행 텍스트를 정규식으로 파싱. 종결/취하 등 입찰불가 상태는 제외. */
 async function parseListPage(page: Page): Promise<ParsedRow[]> {
@@ -104,6 +104,8 @@ async function parseListPage(page: Page): Promise<ParsedRow[]> {
   const n = await rows.count();
   const out: ParsedRow[] = [];
   for (let i = 0; i < n; i++) {
+    const rid = (await rows.nth(i).getAttribute('id').catch(() => '')) ?? '';
+    const productId = rid.startsWith('tr_') ? rid.slice(3) : undefined;
     const text = (await rows.nth(i).innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
     const head = text.match(/(\S+계)\s+(20\d\d-\d{3,6}(?:-\d+)?)\s+\[([^\]]+)\]/);
     if (!head) continue;
@@ -139,9 +141,19 @@ async function parseListPage(page: Page): Promise<ParsedRow[]> {
         crawledAt: new Date().toISOString(),
       },
       notes,
+      productId,
     });
   }
   return out;
+}
+
+/** 명세서 notes에서 "최선순위설정: 2023.09.06" → ISO 추출 */
+function extractSeniorDate(notes: string[]): string | undefined {
+  for (const n of notes) {
+    const m = n.match(/최선순위[^0-9]*(\d{4})[.\-](\d{1,2})[.\-](\d{1,2})/);
+    if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+  }
+  return undefined;
 }
 
 export class DeonakchalAdapter implements Adapter {
@@ -153,42 +165,66 @@ export class DeonakchalAdapter implements Adapter {
     const maxPagesPerTheme = 30;
 
     const browser = await launch();
-    const results: ScrapedListing[] = [];
+    const collected: ParsedRow[] = [];
     const seen = new Set<string>();
     try {
       const page = await newPage(browser);
       await ensureLogin(page);
       await page.context().storageState({ path: STORAGE }); // 세션 저장
 
-      // 진행 아파트 테마를 페이지네이션 → 지역/종류 클라이언트 필터
+      // Phase 1: 테마 페이지네이션 → 지역/종류 필터 → 목록 수집
       for (const opt of THEME_OPTS) {
-        for (let p = 1; p <= maxPagesPerTheme && results.length < maxItems; p++) {
+        for (let p = 1; p <= maxPagesPerTheme && collected.length < maxItems; p++) {
           const url = `${BASE}${SEL.themePath}?opt=${opt}&page=${p}`;
           await page.goto(url, { waitUntil: 'networkidle' }).catch(() => {});
           await page.waitForTimeout(800);
           const rows = await parseListPage(page);
           if (rows.length === 0) break;
           let newOnPage = 0;
-          for (const { listing, notes } of rows) {
-            if (seen.has(listing.caseNo)) continue;
-            seen.add(listing.caseNo);
+          for (const r of rows) {
+            if (seen.has(r.listing.caseNo)) continue;
+            seen.add(r.listing.caseNo);
             newOnPage++;
-            if (filter.propertyTypes.length && !filter.propertyTypes.includes(listing.propertyType)) continue;
-            if (filter.regions.length && !filter.regions.some((r) => listing.address.includes(r))) continue;
-            const docs = notes.length
-              ? [{ caseNo: listing.caseNo, docType: 'rights_summary' as const, parsedJson: { notes } }]
-              : undefined;
-            results.push({ listing, docs });
-            if (results.length >= maxItems) break;
+            if (filter.propertyTypes.length && !filter.propertyTypes.includes(r.listing.propertyType)) continue;
+            if (filter.regions.length && !filter.regions.some((rg) => r.listing.address.includes(rg))) continue;
+            collected.push(r);
+            if (collected.length >= maxItems) break;
           }
-          if (newOnPage === 0) break; // 동일 페이지 반복 → 종료
-          await sleep(delay); // 폴라이트
+          if (newOnPage === 0) break;
+          await sleep(delay);
         }
       }
+      console.log(`[deonakchal] 목록 ${collected.length}건 수집, 상세 파싱 시작...`);
+
+      // Phase 2: 매물별 상세(view.html) 파싱 → 등기·임차인·명세서·사이트 인수금액
+      const results: ScrapedListing[] = [];
+      for (const c of collected) {
+        const docs: ListingDoc[] = [];
+        let listing = c.listing;
+        if (c.productId) {
+          try {
+            const d = await parseDetail(page, c.productId);
+            const allNotes = [...c.notes, ...d.notes];
+            listing = { ...listing, sourceUrl: `${BASE}/auction/view.html?product_id=${c.productId}` };
+            docs.push({
+              caseNo: listing.caseNo, docType: 'registry_summary',
+              parsedJson: { registry: d.registry, siteAssumedAmount: d.siteAssumedAmount, statementSeniorDate: extractSeniorDate(allNotes) },
+            });
+            docs.push({ caseNo: listing.caseNo, docType: 'sale_statement', parsedJson: { tenants: d.tenants, notes: allNotes } });
+            await sleep(delay);
+          } catch (e) {
+            console.warn(`[deonakchal] 상세 파싱 실패 ${c.listing.caseNo}: ${e}`);
+            if (c.notes.length) docs.push({ caseNo: listing.caseNo, docType: 'rights_summary', parsedJson: { notes: c.notes } });
+          }
+        } else if (c.notes.length) {
+          docs.push({ caseNo: listing.caseNo, docType: 'rights_summary', parsedJson: { notes: c.notes } });
+        }
+        results.push({ listing, docs: docs.length ? docs : undefined });
+      }
+      return results;
     } finally {
       await browser.close();
     }
-    return results;
   }
 }
 
@@ -201,4 +237,85 @@ export function extractRegistryRowsFromText(lines: string[]): { kind: ReturnType
       amount: parseKoreanMoney(ln),
     }))
     .filter((r) => r.kind !== 'other' && r.receiptDate);
+}
+
+export interface DetailData {
+  registry: RegistryEntry[];
+  tenants: Tenant[];
+  notes: string[];
+  siteAssumedAmount: number | null; // 사이트 예상배당의 '낙찰자인수' 합계(미배당금액)
+}
+
+/** 상세 페이지(view.html?product_id=) → 등기·임차인·명세서·예상배당 추출. 헤더 키워드로 테이블 탐색. */
+export async function parseDetail(page: Page, productId: string): Promise<DetailData> {
+  await page.goto(`${BASE}/auction/view.html?product_id=${productId}`, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(1500);
+  // 주의: page.evaluate 내부에 '명명된' 화살표함수(const f = () =>)를 두면 tsx/esbuild가
+  // __name 래퍼를 삽입해 브라우저에서 ReferenceError가 난다. 익명 인라인 콜백만 사용한다.
+  const raw = (await page.evaluate(() => {
+    const tables = Array.from(document.querySelectorAll('table'));
+    const wants: Record<string, string[]> = {
+      deunggi: ['접수일', '권리종류'], imcha: ['임차인', '대항력'], baedang: ['낙찰자인수'], myungse: ['매각효력'],
+    };
+    const out: Record<string, string[][]> = { deunggi: [], imcha: [], baedang: [], myungse: [] };
+    for (const key of Object.keys(wants)) {
+      for (const t of tables) {
+        const h = (t as HTMLElement).innerText.replace(/\s+/g, ' ');
+        if (wants[key]!.every((k) => h.includes(k))) {
+          out[key] = Array.from(t.querySelectorAll('tr')).map((tr) =>
+            Array.from(tr.querySelectorAll('th,td')).map((c) => (c as HTMLElement).innerText.replace(/\s+/g, ' ').trim()));
+          break;
+        }
+      }
+    }
+    return out;
+  })) as { deunggi: string[][]; imcha: string[][]; baedang: string[][]; myungse: string[][] };
+
+  const registry: RegistryEntry[] = [];
+  for (const row of raw.deunggi) {
+    const joined = row.join(' ');
+    const date = parseKoreanDate(row[1] ?? '');
+    const kind = mapRightKind(row[2] ?? '');
+    if (!date || kind === 'other') continue; // 헤더/소유권/무효 행 제외
+    registry.push({
+      kind, receiptDate: date,
+      amount: parseKoreanMoney(row[4] ?? '') ?? undefined,
+      demandedDistribution: /배당요구/.test(joined),
+      raw: joined,
+    });
+  }
+
+  const tenants: Tenant[] = [];
+  for (const row of raw.imcha) {
+    if (!/^\d+$/.test(row[0] ?? '')) continue; // 데이터 행(번호 시작)만
+    const joined = row.join(' ');
+    const moveIn = joined.match(/전입일자\s*:\s*(\d{4}-\d{2}-\d{2})/)?.[1];
+    const fixed = joined.match(/확정일자\s*:\s*(\d{4}-\d{2}-\d{2})/)?.[1];
+    const demand = joined.match(/배당요구\s*:\s*(\d{4}-\d{2}-\d{2})/)?.[1];
+    tenants.push({
+      name: row[1],
+      moveInDate: moveIn, occupancyDate: moveIn, fixedDate: fixed,
+      deposit: parseKoreanMoney(joined.match(/보증금\s*:?\s*([\d,]+)/)?.[1]) ?? 0,
+      demandedDistribution: !!demand, demandDate: demand, occupied: true,
+      raw: joined,
+    });
+  }
+
+  const notes: string[] = [];
+  for (const row of raw.myungse) {
+    const j = row.join(': ');
+    if (j && !/해당\s*사항\s*없음|해당없음/.test(j)) notes.push(j);
+  }
+
+  let siteAssumedAmount: number | null = null;
+  const header = raw.baedang.find((r) => r.includes('미배당금액'));
+  const unrecIdx = header ? header.findIndex((c) => c.includes('미배당금액')) : -1;
+  for (const row of raw.baedang) {
+    if (row === header || row[0] === '순위') continue;
+    if (!row.some((c) => /낙찰자인수/.test(c))) continue;
+    const amt = unrecIdx >= 0 ? parseKoreanMoney(row[unrecIdx] ?? '') : null;
+    if (amt) siteAssumedAmount = (siteAssumedAmount ?? 0) + amt;
+  }
+
+  return { registry, tenants, notes, siteAssumedAmount };
 }
