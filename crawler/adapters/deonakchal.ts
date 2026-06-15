@@ -245,7 +245,7 @@ export interface DetailData {
   tenants: Tenant[];
   notes: string[];
   siteAssumedAmount: number | null; // 사이트 예상배당의 '낙찰자인수' 합계(미배당금액)
-  appraisal: { text: string; highlights: string[]; zoning?: string } | null; // 감정평가요항
+  appraisal: { text: string; highlights: string[]; zoning?: string; gongPrice?: number; landPrice?: number } | null; // 감정평가요항 + 공시가격
 }
 
 /** 상세 페이지(view.html?product_id=) → 등기·임차인·명세서·예상배당 추출. 헤더 키워드로 테이블 탐색. */
@@ -327,10 +327,15 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
     if (amt) siteAssumedAmount = (siteAssumedAmount ?? 0) + amt;
   }
 
+  // 공시가격(공동주택공시가격 / 개별공시지가) — 상세 본문에서 직접 추출
+  const bodyText = (await page.evaluate(() => document.body.innerText).catch(() => '')).replace(/\s+/g, ' ');
+  const gongPrice = parseKoreanMoney(bodyText.match(/공동주택공시가격[^:]*:?\s*([\d,]{6,})/)?.[1]) ?? undefined;
+  const landPrice = parseKoreanMoney(bodyText.match(/개별공시지가[^\d]{0,15}([\d,]{6,})/)?.[1]) ?? undefined;
+
   // 감정평가요항: 교통·이용상태·토지이용계획(용도지역/규제) 추출
   let appraisal: DetailData['appraisal'] = null;
   const apprText = raw.gamjeong.map((r) => r.join(' ')).join(' ').replace(/\s+/g, ' ').trim();
-  if (apprText) {
+  if (apprText || gongPrice || landPrice) {
     const grab = (re: RegExp) => apprText.match(re)?.[1]?.trim();
     const traffic = grab(/교통상황\s*(.+?)(?=\s*\d\)\s*건물|건물의\s*구조|$)/);
     const useState = grab(/이용상태\s*(.+?)(?=\s*\d\)\s*설비|설비내역|$)/);
@@ -346,7 +351,9 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
     for (const kw of ['지구단위계획', '재개발', '재건축', '정비구역', '역세권', '개발제한', '과밀억제권역']) {
       if (apprText.includes(kw)) highlights.push(kw);
     }
-    appraisal = { text: apprText.slice(0, 4000), highlights, zoning };
+    if (gongPrice) highlights.push(`공동주택공시가격: ${(gongPrice / 1e8).toFixed(2)}억`);
+    if (landPrice) highlights.push(`개별공시지가: ${landPrice.toLocaleString('ko-KR')}원/㎡`);
+    appraisal = { text: apprText.slice(0, 4000), highlights, zoning, gongPrice, landPrice };
   }
 
   return { registry, tenants, notes, siteAssumedAmount, appraisal };
