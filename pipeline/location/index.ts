@@ -27,7 +27,7 @@ async function kakaoGeocode(address: string): Promise<GeocodeResult | null> {
   const key = process.env.KAKAO_REST_KEY;
   if (!key) return null;
   const res = await fetch(`${KAKAO}/search/address.json?query=${encodeURIComponent(address)}`, {
-    headers: { Authorization: `KakaoAK ${key}` },
+    headers: { Authorization: `KakaoAK ${key}` }, signal: AbortSignal.timeout(12000),
   });
   if (!res.ok) return null;
   const j = (await res.json()) as {
@@ -55,7 +55,7 @@ async function molitTrades(propertyType: PropertyType, lawdCd: string, months: n
     const url =
       `${MOLIT_BASE}/${ep}/get${ep}?serviceKey=${encodeURIComponent(key)}&LAWD_CD=${lawdCd}&DEAL_YMD=${ym}&numOfRows=400&pageNo=1&_type=json`;
     try {
-      const res = await fetch(url, { headers: { 'User-Agent': UA } });
+      const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(12000) });
       if (!res.ok) continue;
       const json = (await res.json()) as MolitResponse;
       out.push(...parseMolitJson(json?.response?.body?.items?.item));
@@ -164,7 +164,7 @@ async function kakaoCategoryCount(code: string, lat: number, lng: number, radius
   if (!key) return 0;
   const res = await fetch(
     `${KAKAO}/search/category.json?category_group_code=${code}&x=${lng}&y=${lat}&radius=${radius}&size=15`,
-    { headers: { Authorization: `KakaoAK ${key}` } },
+    { headers: { Authorization: `KakaoAK ${key}` }, signal: AbortSignal.timeout(12000) },
   );
   if (!res.ok) return 0;
   const j = (await res.json()) as { meta?: { total_count?: number } };
@@ -176,7 +176,7 @@ async function nearestStation(lat: number, lng: number): Promise<{ name?: string
   if (!key) return null;
   const res = await fetch(
     `${KAKAO}/search/category.json?category_group_code=SW8&x=${lng}&y=${lat}&radius=1500&sort=distance&size=1`,
-    { headers: { Authorization: `KakaoAK ${key}` } },
+    { headers: { Authorization: `KakaoAK ${key}` }, signal: AbortSignal.timeout(12000) },
   );
   if (!res.ok) return null;
   const j = (await res.json()) as { documents: { place_name: string; distance: string }[] };
