@@ -53,6 +53,24 @@ const TERMINAL = /(배당종결|취하|기각|각하|낙찰|대금납부|^배당
 // 특수권리 플래그(목록의 [..] 표기) — 엔진 레드플래그 스캐너가 인식
 const FLAG_TOKENS = ['유치권', '법정지상권', '분묘', '대지권미등기', '토지별도등기', '임금채권', '대항력있는임차인', '선순위', '지분', '농지', '제시외'];
 
+// ── 휴먼 페이싱: 사람이 매물을 '보는' 것처럼 수집(차단 임계치 회피용 폴라이트 정책) ──
+//   가변 지연 + 페이지 스크롤(읽기) + 중간 휴식 + 기본 직렬(1건씩). IP/UA 위장·봇탐지 우회 없음.
+const rnd = (min: number, max: number) => min + Math.random() * (max - min);
+const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.round(ms)));
+/** 한 매물을 '읽는' 시간: 보통 4~10초, 가끔(12%)은 15~28초(딴짓하듯) */
+const humanDwellMs = () => (Math.random() < 0.12 ? rnd(15000, 28000) : rnd(4000, 10000));
+/** 사람처럼 페이지를 천천히 스크롤(지연 로드 콘텐츠도 함께 뜸) */
+async function humanScroll(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const h = Math.max(document.body.scrollHeight, 1500);
+    for (let y = 0; y < h; y += 250 + Math.random() * 450) {
+      window.scrollTo(0, y);
+      await new Promise((r) => setTimeout(r, 150 + Math.random() * 350));
+    }
+    window.scrollTo(0, Math.random() * 300);
+  }).catch(() => {});
+}
+
 async function ensureLogin(page: Page): Promise<void> {
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
   if (await page.locator(SEL.loggedInMarker).count()) return; // 세션 유효
@@ -203,12 +221,15 @@ export class DeonakchalAdapter implements Adapter {
       await ensureLogin(page);
       await page.context().storageState({ path: STORAGE }); // 세션 저장
 
-      // Phase 1: 테마 페이지네이션 → 지역/종류 필터 → 목록 수집
+      // Phase 1: 테마 페이지네이션 → 지역/종류 필터 → 목록 수집 (사람처럼 페이지마다 쉬며)
       for (const opt of THEME_OPTS) {
         for (let p = 1; p <= maxPagesPerTheme && collected.length < maxItems; p++) {
           const url = `${BASE}${SEL.themePath}?opt=${opt}&page=${p}`;
           await page.goto(url, { waitUntil: 'networkidle' }).catch(() => {});
-          await page.waitForTimeout(800);
+          await wait(rnd(1200, 2600));
+          const blk = await page.evaluate(() => /비정상접속|접속을\s*차단/.test(document.documentElement.innerHTML)).catch(() => false);
+          if (blk) throw new SiteBlockedError();
+          await humanScroll(page);
           const rows = await parseListPage(page);
           if (rows.length === 0) break;
           let newOnPage = 0;
@@ -222,14 +243,15 @@ export class DeonakchalAdapter implements Adapter {
             if (collected.length >= maxItems) break;
           }
           if (newOnPage === 0) break;
-          await sleep(delay);
+          await wait(rnd(3000, 7000)); // 다음 목록 페이지로 넘어가기 전 사람처럼 텀
         }
       }
-      const concurrency = Math.max(1, parseInt(process.env.CRAWL_CONCURRENCY ?? '4', 10));
-      console.log(`[deonakchal] 목록 ${collected.length}건 수집, 상세 파싱 시작 (병렬 ${concurrency}, 간격 ${delay}ms/워커)...`);
 
-      // Phase 2: 매물별 상세(view.html) 파싱 — 같은 세션 컨텍스트의 페이지 N개로 동시성 제한 워커 풀.
-      //   폴라이트: 동시성은 CRAWL_CONCURRENCY로 제한(기본 4), 각 워커는 요청 사이 CRAWL_DELAY_MS 지연.
+      // Phase 2: 매물별 상세 — 기본 1건씩(사람처럼) 순차. CRAWL_CONCURRENCY>1 설정 시에만 소수 동시.
+      const concurrency = Math.max(1, parseInt(process.env.CRAWL_CONCURRENCY ?? '1', 10));
+      console.log(`[deonakchal] 목록 ${collected.length}건 수집, 상세 파싱 시작 (사람처럼 ${concurrency === 1 ? '1건씩 순차' : `동시 ${concurrency}`}, 읽기지연·중간휴식)...`);
+      void delay;
+
       const ctx = page.context();
       const results: ScrapedListing[] = new Array(collected.length);
       const workerCount = Math.min(concurrency, collected.length) || 1;
@@ -239,6 +261,7 @@ export class DeonakchalAdapter implements Adapter {
       let cursor = 0;
       let done = 0;
       let blocked = false;
+      let nextBreakAt = Math.round(rnd(30, 45)); // ~30~45건마다 1~2.5분 휴식(사람처럼)
       const runWorker = async (wp: Page): Promise<void> => {
         for (;;) {
           if (blocked) break;
@@ -249,14 +272,21 @@ export class DeonakchalAdapter implements Adapter {
           } catch (e) {
             if (e instanceof SiteBlockedError) {
               blocked = true;
-              console.error(`[deonakchal] ⛔ 사이트 접속 차단 감지 — 크롤 중단(${done}/${collected.length} 수집). 폴라이트 정책으로 재시도 필요.`);
+              console.error(`[deonakchal] ⛔ 사이트 접속 차단 감지 — 크롤 중단(${done}/${collected.length} 수집). 사람처럼 더 천천히/내일 재시도 권장.`);
               break;
             }
             throw e;
           }
           done++;
           if (done % 10 === 0 || done === collected.length) console.log(`[deonakchal] 상세 ${done}/${collected.length}`);
-          await sleep(delay);
+          if (done >= nextBreakAt && done < collected.length) {
+            const br = rnd(60000, 150000);
+            console.log(`[deonakchal] ☕ 잠시 휴식 ${Math.round(br / 1000)}s (사람처럼)...`);
+            await wait(br);
+            nextBreakAt = done + Math.round(rnd(30, 45));
+          } else {
+            await wait(humanDwellMs()); // 다음 매물 '읽기' 전 지연
+          }
         }
       };
       await Promise.all(pages.map((wp) => runWorker(wp)));
@@ -408,28 +438,31 @@ export class SiteBlockedError extends Error {
 }
 
 export async function parseDetail(page: Page, productId: string): Promise<DetailData> {
-  await page.goto(`${BASE}/auction/view.html?product_id=${productId}`, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-  await page.waitForTimeout(1200);
-  // 차단/빈 페이지 감지: 이상접속 차단 시 빈 데이터 저장을 막고 즉시 중단
-  const probe = await page.evaluate(() => ({ html: document.documentElement.innerHTML.slice(0, 500), tables: document.querySelectorAll('table').length })).catch(() => ({ html: '', tables: 0 }));
-  if (/비정상접속|접속을\s*차단|abuse|blocked/i.test(probe.html)) throw new SiteBlockedError();
-  // 표가 하나도 없으면 콘텐츠 로드 대기(느린 페이지/병렬 부하 대비, 최대 ~6초)
-  if (probe.tables === 0) {
-    for (let i = 0; i < 12; i++) {
-      await page.waitForTimeout(500);
-      const n = await page.evaluate(() => document.querySelectorAll('table').length).catch(() => 0);
-      if (n > 0) break;
-      const blk = await page.evaluate(() => /비정상접속|접속을\s*차단/.test(document.documentElement.innerHTML)).catch(() => false);
-      if (blk) throw new SiteBlockedError();
+  // 사람처럼: 페이지를 열고 → 잠시 보고 → 천천히 스크롤(읽기). 빈 페이지면 1회 새로고침 재시도.
+  let loaded = false;
+  for (let attempt = 1; attempt <= 2 && !loaded; attempt++) {
+    await page.goto(`${BASE}/auction/view.html?product_id=${productId}`, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+    await wait(rnd(900, 1900)); // 페이지 훑어보는 텀
+    const probe = await page.evaluate(() => ({ html: document.documentElement.innerHTML.slice(0, 600), tables: document.querySelectorAll('table').length })).catch(() => ({ html: '', tables: 0 }));
+    if (/비정상접속|접속을\s*차단|abuse|blocked/i.test(probe.html)) throw new SiteBlockedError();
+    if (probe.tables > 0) { loaded = true; break; }
+    // 표 미로딩: 사람처럼 잠깐 더 기다렸다 확인(최대 ~6초)
+    for (let i = 0; i < 12 && !loaded; i++) {
+      await wait(500);
+      const r2 = await page.evaluate(() => ({ blk: /비정상접속|접속을\s*차단/.test(document.documentElement.innerHTML), n: document.querySelectorAll('table').length })).catch(() => ({ blk: false, n: 0 }));
+      if (r2.blk) throw new SiteBlockedError();
+      if (r2.n > 0) loaded = true;
     }
+    if (!loaded && attempt === 1) await wait(rnd(4000, 8000)); // 새로고침 전 사람처럼 텀
   }
+  await humanScroll(page); // 읽듯이 스크롤(지연 콘텐츠 로드 + 자연스러운 패턴)
   // 감정평가요항 등 '더보기'로 접힌 영역 펼치기(토지이용계획·용도지역 노출)
   await page.evaluate(() => {
     document.querySelectorAll('a, button, span').forEach((e) => {
       if ((e.textContent || '').trim() === '더보기') (e as HTMLElement).click();
     });
   }).catch(() => {});
-  await page.waitForTimeout(700);
+  await wait(rnd(600, 1200));
   // 주의: page.evaluate 내부에 '명명된' 화살표함수(const f = () =>)를 두면 tsx/esbuild가
   // __name 래퍼를 삽입해 브라우저에서 ReferenceError가 난다. 익명 인라인 콜백만 사용한다.
   const raw = (await page.evaluate(() => {
