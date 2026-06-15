@@ -17,6 +17,8 @@ import { analyzeLocation } from './location/index.ts';
 import { scoreListing, maxSafeBid, DEFAULT_SCORE_CONFIG } from './select/score.ts';
 import { computeAcquisitionCost, expectedBid, marketFromSiteComps, classifyLandUseFlags } from './cost/acquisition.ts';
 import { buildReport } from './report/build.ts';
+import { attachGlossary } from './report/glossary.ts';
+import { assessLegalRisk } from './legal/risk.ts';
 
 /** 사용자 취득세 가정(개인 1주택 기본). 다주택/법인이면 여기 또는 향후 설정에서 조정. */
 const TAX_ASSUMPTION = { homeCountAfter: 1 } as const;
@@ -206,6 +208,12 @@ async function main() {
       // 3-b) 매물별 보고서 + 입찰 전 필수 확인사항(법률문서 스캔)
       const scanText = `${appraisalText} ${siteMetrics.landUseText ?? ''} ${appraisalHighlights.join(' ')}`;
       loc.report = buildReport({ rights, loc, listing, notes: scanNotes, scanText });
+      // 3-c) 초보자 용어 풀이 + 법령 근거 리스크 평가
+      loc.report.glossary = attachGlossary([
+        loc.report.headline, loc.report.rightsSummary, loc.report.locationSummary, loc.report.costSummary,
+        ...loc.report.summary, ...loc.report.checklist.flatMap((c) => [c.label, c.detail]),
+      ]);
+      loc.report.legalRisk = await assessLegalRisk(rights, loc, loc.report.checklist);
 
       // 4) (옵션) Claude 2차 검증
       let citations: unknown;

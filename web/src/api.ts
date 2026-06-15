@@ -56,6 +56,13 @@ export interface PreBidItemObj {
   severity: 'danger' | 'warn' | 'info';
   detail: string; source: string; verify?: string;
 }
+export interface GlossaryObj { term: string; easy: string; why: string; category: string }
+export interface LegalRiskFactorObj { label: string; itemRisk: 'manageable' | 'caution' | 'severe'; laws: { name: string; article?: string; gist: string }[]; action?: string }
+export interface LegalRiskObj {
+  grade: 'manageable' | 'caution' | 'severe' | 'avoid';
+  manageable: boolean; headline: string; reasoning: string;
+  factors: LegalRiskFactorObj[];
+}
 export interface ReportObj {
   headline: string;
   recommendation: 'consider' | 'caution' | 'avoid';
@@ -64,6 +71,8 @@ export interface ReportObj {
   checklist: PreBidItemObj[];
   dangerCount: number; warnCount: number;
   sourceUrl?: string;
+  glossary?: GlossaryObj[];
+  legalRisk?: LegalRiskObj;
 }
 export interface ListingItem {
   id: number;

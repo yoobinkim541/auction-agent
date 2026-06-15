@@ -124,6 +124,31 @@ export interface PreBidItem {
   verify?: string; // 더블체크 방법(어느 공부서류/기관)
 }
 
+/** 초보자용 용어 풀이 */
+export interface GlossaryEntry {
+  term: string;
+  easy: string; // 초보자 눈높이 설명
+  why: string; // 왜 중요한지
+  category: string;
+}
+
+/** 법령 근거 기반 리스크 평가 한 요소 */
+export interface LegalRiskFactor {
+  label: string;
+  itemRisk: 'manageable' | 'caution' | 'severe';
+  laws: { name: string; article?: string; gist: string }[]; // 근거 법령(법제처)
+  action?: string; // 초보자 대응
+}
+
+/** 매물 종합 법적 리스크 평가 */
+export interface LegalRisk {
+  grade: 'manageable' | 'caution' | 'severe' | 'avoid';
+  manageable: boolean; // 개인 투자자가 감당할 만한가
+  headline: string;
+  reasoning: string;
+  factors: LegalRiskFactor[];
+}
+
 /** 매물별 종합 보고서 */
 export interface ListingReport {
   headline: string; // 한 줄 결론
@@ -136,6 +161,8 @@ export interface ListingReport {
   dangerCount: number;
   warnCount: number;
   sourceUrl?: string; // 원본 상세페이지(더블체크용)
+  glossary?: GlossaryEntry[]; // 이 매물에 등장한 용어 풀이(초보자용)
+  legalRisk?: LegalRisk; // 법령 근거 리스크 평가
 }
 
 export interface SiteMetrics {
