@@ -14,7 +14,7 @@ import { upsertListing, upsertListingDoc, startCrawlRun, finishCrawlRun } from '
 const DEFAULT_FILTER: CrawlFilter = {
   regions: ['서울', '경기', '인천'],
   propertyTypes: ['apartment', 'villa', 'officetel'] as PropertyType[],
-  maxItems: 50,
+  maxItems: 100,
 };
 
 async function main() {

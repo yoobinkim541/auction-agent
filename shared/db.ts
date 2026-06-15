@@ -137,11 +137,14 @@ export interface ListingRow {
   is_collective_building: boolean | null; source: Listing['source'];
 }
 
-export async function fetchListingsForAnalysis(limit = 200): Promise<ListingRow[]> {
+export async function fetchListingsForAnalysis(limit = 200, onlyNew = false): Promise<ListingRow[]> {
+  const where = onlyNew
+    ? 'where not exists (select 1 from gm_scores s where s.listing_id = gm_listings.id)'
+    : '';
   return query<ListingRow>(
     `select id, case_no, court, address, road_address, lat, lng, property_type, appraisal_value,
             min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source
-     from gm_listings order by crawled_at desc limit $1`,
+     from gm_listings ${where} order by crawled_at desc limit $1`,
     [limit],
   );
 }

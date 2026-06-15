@@ -87,8 +87,9 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<Ri
 async function main() {
   const withVerify = process.argv.includes('--verify');
 
-  const listings = await fetchListingsForAnalysis(200);
-  console.log(`분석 대상 매물: ${listings.length}건`);
+  const reanalyzeAll = process.argv.includes('--all');
+  const listings = await fetchListingsForAnalysis(200, !reanalyzeAll);
+  console.log(`분석 대상 매물: ${listings.length}건 ${reanalyzeAll ? '(전체 재분석)' : '(신규만 — 전체는 --all)'}`);
 
   // 검증 모드 결정: claude CLI(Max 구독, 과금 0) 우선 → API 키 → 생략
   let verifyMode: 'cli' | 'api' | 'none' = 'none';

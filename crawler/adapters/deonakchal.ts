@@ -39,8 +39,11 @@ const SEL = {
   resultRow: 'table.tbl_act_list_wins tr[id^="tr_"]', // 결과 행 (확인됨)
 } as const;
 
-// 진행 아파트 테마 opt (확인: 2/3 = 활성 아파트, 미래 매각기일)
-const THEME_OPTS = ['2', '3'];
+// 진행 매물 테마 opt (전부 미래 매각기일=활성). 테마는 물건종류가 아니라 큐레이션이라,
+// 아파트(2,3) + 혼합형(26 오늘공고신건, 27 역세권물건, 25 특수물건)을 모아 클라이언트에서 종류 필터.
+//  - 27(역세권): 다세대(빌라)·도시형생활주택 포함 / 26·25: 오피스텔·상가 등 혼합
+//  혼합/빌라 테마를 앞에 두어 maxItems가 아파트로만 채워지지 않게 함.
+const THEME_OPTS = ['27', '26', '25', '2', '3'];
 // 종결/취하 등 입찰 불가 상태(건너뜀)
 const TERMINAL = /(배당종결|취하|기각|각하|낙찰|대금납부|^배당|취소)/;
 // 특수권리 플래그(목록의 [..] 표기) — 엔진 레드플래그 스캐너가 인식
@@ -129,7 +132,7 @@ async function parseListPage(page: Page): Promise<ParsedRow[]> {
         failCount: 0,
         saleDate: dates.length ? dates[dates.length - 1] : undefined,
         areaM2: bldM ? parseFloat(bldM[1]!) : parseAreaToM2(text),
-        isCollectiveBuilding: /아파트|오피스텔|다세대|연립/.test(typeLabel!),
+        isCollectiveBuilding: /아파트|오피스텔|다세대|연립|도시형생활/.test(typeLabel!),
         source: 'deonakchal',
         sourceUrl: BASE + SEL.listPath,
         rawJson: { rowText: text, status: status?.[1] },

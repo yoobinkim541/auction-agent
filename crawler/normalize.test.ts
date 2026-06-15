@@ -20,6 +20,7 @@ describe('mapPropertyType', () => {
   it('아파트', () => expect(mapPropertyType('아파트')).toBe('apartment'));
   it('빌라', () => expect(mapPropertyType('다세대(빌라)')).toBe('villa'));
   it('오피스텔', () => expect(mapPropertyType('오피스텔')).toBe('officetel'));
+  it('도시형생활주택→villa', () => expect(mapPropertyType('도시형생활주택')).toBe('villa'));
   it('상가', () => expect(mapPropertyType('근린상가')).toBe('commercial'));
 });
 

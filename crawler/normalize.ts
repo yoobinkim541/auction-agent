@@ -39,7 +39,7 @@ export function parseKoreanDate(input: string | null | undefined): string | unde
 const TYPE_RULES: [RegExp, PropertyType][] = [
   [/아파트/, 'apartment'],
   [/오피스텔/, 'officetel'],
-  [/다세대|연립|빌라/, 'villa'],
+  [/다세대|연립|빌라|도시형생활/, 'villa'],
   [/단독|다가구|주택/, 'house'],
   [/근린|상가|상업|점포|사무|공장|숙박/, 'commercial'],
   [/대지|토지|임야|전$|답$|과수|잡종/, 'land'],
