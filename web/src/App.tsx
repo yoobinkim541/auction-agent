@@ -58,6 +58,10 @@ export default function App() {
   const view = useMemo(() => {
     const scored = rows.map((item) => ({ item, sc: scoreClient(item, cfg) }));
     let v = scored;
+    // 조건 필터(통과 여부와 무관하게 항상 적용): 지역 · 가격대
+    if (cfg.regionKeywords.length) v = v.filter((x) => cfg.regionKeywords.some((k) => x.item.address.includes(k)));
+    if (cfg.priceMinEok > 0) v = v.filter((x) => (x.item.min_bid_price ?? 0) >= cfg.priceMinEok * 1e8);
+    if (cfg.priceMaxEok > 0) v = v.filter((x) => (x.item.min_bid_price ?? 0) <= cfg.priceMaxEok * 1e8);
     if (onlyPassed) v = v.filter((x) => x.sc.passed);
     if (onlyFavorite) v = v.filter((x) => x.item.is_favorite);
     if (type !== 'all') v = v.filter((x) => x.item.property_type === type);
@@ -95,7 +99,7 @@ export default function App() {
           <option value="safety">안전마진순</option>
           <option value="sale">매각기일순</option>
         </select>
-        <button onClick={() => setShowCfg((s) => !s)}>{showCfg ? '기준 닫기' : '⚙ 기준 설정'}</button>
+        <button onClick={() => setShowCfg((s) => !s)}>{showCfg ? '조건 닫기' : '⚙ 조건·기준'}</button>
         <button onClick={load}>새로고침</button>
         <button onClick={() => triggerJob('crawl')} title="더낙찰옥션 크롤">크롤</button>
         <button onClick={() => triggerJob('analyze')} title="분석 실행">분석</button>
@@ -145,10 +149,32 @@ export default function App() {
   );
 }
 
+const REGIONS = ['서울', '경기', '인천'];
+
 function ConfigPanel({ cfg, setCfg }: { cfg: ScoreConfig; setCfg: (c: ScoreConfig) => void }) {
   const safetyPct = Math.round(cfg.wSafety * 100);
+  const toggleRegion = (r: string) => {
+    const has = cfg.regionKeywords.includes(r);
+    setCfg({ ...cfg, regionKeywords: has ? cfg.regionKeywords.filter((x) => x !== r) : [...cfg.regionKeywords, r] });
+  };
   return (
     <div className="cfg">
+      <div className="cfg-row cfg-checks">
+        <span className="cfg-label">지역</span>
+        {REGIONS.map((r) => (
+          <label key={r}><input type="checkbox" checked={cfg.regionKeywords.includes(r)} onChange={() => toggleRegion(r)} /> {r}</label>
+        ))}
+        <span className="muted">(전체 해제 = 제한 없음)</span>
+      </div>
+      <div className="cfg-row cfg-checks">
+        <span className="cfg-label">최저매각가</span>
+        <input type="number" min={0} placeholder="최소" value={cfg.priceMinEok || ''} style={{ width: 72 }}
+          onChange={(e) => setCfg({ ...cfg, priceMinEok: Number(e.target.value) || 0 })} /> 억
+        <span>~</span>
+        <input type="number" min={0} placeholder="최대" value={cfg.priceMaxEok || ''} style={{ width: 72 }}
+          onChange={(e) => setCfg({ ...cfg, priceMaxEok: Number(e.target.value) || 0 })} /> 억
+        <span className="muted">(0 = 무제한)</span>
+      </div>
       <div className="cfg-row">
         <label>가중치 — 안전마진 {safetyPct}% : 권리 {100 - safetyPct}%</label>
         <input type="range" min={0} max={100} value={safetyPct}

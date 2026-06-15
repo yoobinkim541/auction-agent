@@ -13,6 +13,8 @@ export interface ScoreConfig {
   includeReviewRequired: boolean; // 검토필요도 통과에 포함
   allowedTypes: string[];
   regionKeywords: string[];
+  priceMinEok: number; // 최저매각가 하한(억), 0=무제한
+  priceMaxEok: number; // 최저매각가 상한(억), 0=무제한
 }
 
 export const DEFAULT_CONFIG: ScoreConfig = {
@@ -24,6 +26,8 @@ export const DEFAULT_CONFIG: ScoreConfig = {
   includeReviewRequired: false,
   allowedTypes: ['apartment', 'villa', 'officetel'],
   regionKeywords: ['서울', '경기', '인천'],
+  priceMinEok: 0,
+  priceMaxEok: 0,
 };
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
@@ -54,6 +58,9 @@ export function scoreClient(item: ListingItem, cfg: ScoreConfig): ClientScore {
   let passed = true;
   if (!cfg.allowedTypes.includes(item.property_type)) { passed = false; reasons.push('물건종류 제외'); }
   if (cfg.regionKeywords.length && !cfg.regionKeywords.some((k) => item.address.includes(k))) { passed = false; reasons.push('관심지역 외'); }
+  const minBid = item.min_bid_price ?? 0;
+  if (cfg.priceMinEok > 0 && minBid < cfg.priceMinEok * 1e8) { passed = false; reasons.push(`최저가 ${(minBid / 1e8).toFixed(1)}억<${cfg.priceMinEok}억`); }
+  if (cfg.priceMaxEok > 0 && minBid > cfg.priceMaxEok * 1e8) { passed = false; reasons.push(`최저가 ${(minBid / 1e8).toFixed(1)}억>${cfg.priceMaxEok}억`); }
   if (cfg.requireCleanRights && assumed > 0) { passed = false; reasons.push(`인수금액 ${(assumed / 1e8).toFixed(1)}억`); }
   if (grade === 'review_required' && !cfg.includeReviewRequired) { passed = false; reasons.push('검토필요(특수권리)'); }
   if (margin != null && margin < cfg.minSafetyMargin) { passed = false; reasons.push(`안전마진 ${(margin * 100).toFixed(0)}%<${(cfg.minSafetyMargin * 100).toFixed(0)}%`); }

@@ -89,3 +89,6 @@ table.mini th, table.mini td { text-align: left; padding: 5px 6px; border-bottom
 .cfg-checks button, .controls button { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
   border-radius: 7px; padding: 6px 10px; font-size: 12.5px; cursor: pointer; }
 .cfg-checks button:hover, .controls button:hover { border-color: var(--accent); }
+.cfg-label { color: var(--muted); font-size: 12.5px; min-width: 72px; font-weight: 600; }
+.cfg input[type=number] { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 5px 8px; font-size: 12.5px; }
