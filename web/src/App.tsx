@@ -148,6 +148,47 @@ export default function App() {
         </table>
       )}
 
+      {view.length > 0 && (
+        <ul className="cards">
+          {view.map(({ item: r, sc }, i) => {
+            const risk = RISK[r.rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
+            const reco = r.location?.report?.recommendation;
+            const tm = r.location?.acquisition_cost?.trueSafetyMargin;
+            const assumed = r.rights?.assumed_amount ?? 0;
+            return (
+              <li
+                key={r.id}
+                className={`card reco-edge-${reco ?? 'none'}`}
+                style={{ animationDelay: `${Math.min(i, 12) * 28}ms` }}
+                onClick={() => setSelected(r)}
+              >
+                <div className="card-top">
+                  <span className="card-addr">{r.address}</span>
+                  <span className="card-star" onClick={(e) => { e.stopPropagation(); toggleFav(r); }}>{r.is_favorite ? '★' : '☆'}</span>
+                </div>
+                <div className="card-sub">
+                  <span>{TYPE_LABEL[r.property_type] ?? r.property_type}</span>
+                  <span className="mono">{r.case_no}</span>
+                  <span className={`badge ${risk.cls}`}>{risk.label}</span>
+                  {reco && <span className={`badge ${RECO[reco]?.cls ?? ''}`}>{RECO[reco]?.label ?? reco}</span>}
+                </div>
+                <div className="card-metrics">
+                  <div><span>감정가</span><b>{eok(r.appraisal_value)}</b></div>
+                  <div><span>최저가</span><b>{eok(r.min_bid_price)}</b></div>
+                  <div><span>안전마진</span><b>{pct(r.location?.safety_margin)}</b></div>
+                  <div><span>진짜마진</span><b className={(tm ?? 0) < 0 ? 'danger' : 'good'}>{pct(tm)}</b></div>
+                </div>
+                <div className="card-foot">
+                  <span className="card-score">점수 <b>{sc.totalScore}</b></span>
+                  {assumed > 0 && <span className="card-assumed">인수 {eok(assumed)}</span>}
+                  <span className="card-go">자세히 ›</span>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
       {selected && <Detail row={selected} onClose={() => setSelected(null)} onFav={() => toggleFav(selected)} />}
     </div>
   );

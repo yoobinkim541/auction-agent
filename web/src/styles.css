@@ -5,8 +5,32 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', sans-serif; }
+  font-family: 'Pretendard', 'Pretendard Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', sans-serif;
+  -webkit-font-smoothing: antialiased; }
 .app { max-width: 1280px; margin: 0 auto; padding: 20px; }
+
+/* ── 모바일 카드 리스트 (데스크톱에선 숨김, 표 사용) ── */
+.cards { display: none; list-style: none; margin: 0; padding: 0; flex-direction: column; gap: 10px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--line);
+  border-radius: 12px; padding: 13px 14px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  animation: cardin .34s cubic-bezier(.2,.7,.3,1) both; }
+.card:active { background: var(--panel2); }
+.card-top { display: flex; align-items: flex-start; gap: 10px; }
+.card-addr { flex: 1; font-size: 14.5px; font-weight: 600; line-height: 1.35; word-break: keep-all; }
+.card-star { color: var(--caution); font-size: 20px; line-height: 1; padding: 0 2px; user-select: none; }
+.card-sub { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 7px 0 11px; font-size: 11.5px; color: var(--muted); }
+.card-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 14px; }
+.card-metrics div { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px dotted var(--line); padding-bottom: 5px; }
+.card-metrics span { color: var(--muted); font-size: 11.5px; }
+.card-metrics b { font-size: 14px; font-variant-numeric: tabular-nums; }
+.card-foot { display: flex; align-items: center; gap: 10px; margin-top: 11px; font-size: 12px; }
+.card-score b { font-size: 16px; color: var(--accent); }
+.card-assumed { color: var(--risky); font-size: 11.5px; }
+.card-go { margin-left: auto; color: var(--muted); }
+.reco-edge-consider { border-left-color: var(--clean); }
+.reco-edge-caution { border-left-color: var(--caution); }
+.reco-edge-avoid { border-left-color: var(--risky); }
+@keyframes cardin { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 
 header h1 { margin: 0 0 6px; font-size: 22px; }
 header .sub { color: var(--muted); font-size: 14px; font-weight: 400; }
@@ -40,7 +64,7 @@ table.grid td { padding: 9px 10px; border-bottom: 1px solid var(--line); }
 .risk-risky { background: rgba(255,107,107,.15); color: var(--risky); }
 .risk-review { background: rgba(179,136,255,.15); color: var(--review); }
 
-.drawer-bg { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; justify-content: flex-end; }
+.drawer-bg { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.5); display: flex; justify-content: flex-end; }
 .drawer { width: min(620px, 100%); height: 100%; overflow-y: auto; background: var(--panel);
   border-left: 1px solid var(--line); padding: 22px; position: relative; }
 .close { position: absolute; top: 16px; right: 16px; background: none; border: none; color: var(--muted);
@@ -145,3 +169,45 @@ table.mini td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .cfg-label { color: var(--muted); font-size: 12.5px; min-width: 72px; font-weight: 600; }
 .cfg input[type=number] { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
   border-radius: 6px; padding: 5px 8px; font-size: 12.5px; }
+
+/* ───────────────── 모바일 (≤760px) ───────────────── */
+@media (max-width: 760px) {
+  .app { padding: 12px 12px calc(20px + env(safe-area-inset-bottom)); }
+  header h1 { font-size: 19px; }
+  .disclaimer { font-size: 11.5px; padding: 9px 11px; }
+
+  /* 상단 컨트롤: 검색 풀폭 + 칩처럼 가로 스크롤 */
+  .controls { position: sticky; top: 0; z-index: 20; gap: 8px; margin: 0 -12px 12px;
+    padding: 10px 12px; background: rgba(15,17,21,.92); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line); }
+  .controls input[placeholder] { order: -1; flex: 1 1 100%; padding: 10px 12px; font-size: 15px; }
+  .controls select, .controls button { padding: 8px 10px; font-size: 13px; }
+  .controls .count { margin-left: 0; }
+
+  /* 표 숨기고 카드 표시 */
+  table.grid { display: none; }
+  .cards { display: flex; }
+
+  /* 상세: 하단에서 올라오는 풀스크린 시트 */
+  .drawer-bg { justify-content: stretch; align-items: stretch; }
+  .drawer { width: 100%; height: 100%; border-left: none; border-radius: 0;
+    padding: 18px 16px calc(28px + env(safe-area-inset-bottom));
+    animation: sheetup .3s cubic-bezier(.2,.7,.3,1) both; }
+  .drawer h2 { font-size: 17px; padding-right: 34px; }
+  .close { top: 12px; right: 12px; font-size: 24px; width: 40px; height: 40px; }
+  .kv { grid-template-columns: 1fr; gap: 0; }
+  .kv div { padding: 8px 0; }
+  .kv span { font-size: 13px; }
+
+  /* 계산기·체크리스트 터치 친화 */
+  .calc-row { flex-wrap: wrap; }
+  .calc-row input[type=number], .calc-row select { width: 100%; flex: 1; padding: 9px 10px; font-size: 15px; }
+  .calc-row label { min-width: 64px; }
+  .band-chip, .mini-btn { padding: 7px 12px; font-size: 13px; }
+  table.mini { font-size: 12.5px; }
+  .cfg { grid-template-columns: 1fr; }
+
+  /* 데스크톱 hover 효과 무력화(터치) */
+  .row:hover { background: none; }
+}
+@keyframes sheetup { from { opacity: .4; transform: translateY(28px); } to { opacity: 1; transform: none; } }
