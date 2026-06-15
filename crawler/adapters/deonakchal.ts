@@ -59,6 +59,17 @@ const rnd = (min: number, max: number) => min + Math.random() * (max - min);
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.round(ms)));
 /** 한 매물을 '읽는' 시간: 보통 4~10초, 가끔(12%)은 15~28초(딴짓하듯) */
 const humanDwellMs = () => (Math.random() < 0.12 ? rnd(15000, 28000) : rnd(4000, 10000));
+// 전역 최소 요청 간격(하드코딩 백스톱) — CRAWL_CONCURRENCY를 높여도 사이트 부하가
+//   이 이하로 절대 못 내려가게 보장(분석 결과: 차단은 IP·세션당 요청 '속도/양' 기반).
+const MIN_REQ_INTERVAL_MS = 2500;
+let _nextReqAt = 0;
+async function rateGate(): Promise<void> {
+  const now = Date.now();
+  const w = Math.max(0, _nextReqAt - now);
+  _nextReqAt = Math.max(now, _nextReqAt) + MIN_REQ_INTERVAL_MS;
+  if (w > 0) await wait(w);
+}
+
 /** 사람처럼 페이지를 천천히 스크롤(지연 로드 콘텐츠도 함께 뜸) */
 async function humanScroll(page: Page): Promise<void> {
   await page.evaluate(async () => {
@@ -225,6 +236,7 @@ export class DeonakchalAdapter implements Adapter {
       for (const opt of THEME_OPTS) {
         for (let p = 1; p <= maxPagesPerTheme && collected.length < maxItems; p++) {
           const url = `${BASE}${SEL.themePath}?opt=${opt}&page=${p}`;
+          await rateGate(); // 전역 속도 상한
           await page.goto(url, { waitUntil: 'networkidle' }).catch(() => {});
           await wait(rnd(1200, 2600));
           const blk = await page.evaluate(() => /비정상접속|접속을\s*차단/.test(document.documentElement.innerHTML)).catch(() => false);
@@ -441,6 +453,7 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
   // 사람처럼: 페이지를 열고 → 잠시 보고 → 천천히 스크롤(읽기). 빈 페이지면 1회 새로고침 재시도.
   let loaded = false;
   for (let attempt = 1; attempt <= 2 && !loaded; attempt++) {
+    await rateGate(); // 전역 속도 상한(설정 무관 백스톱)
     await page.goto(`${BASE}/auction/view.html?product_id=${productId}`, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
     await wait(rnd(900, 1900)); // 페이지 훑어보는 텀
     const probe = await page.evaluate(() => ({ html: document.documentElement.innerHTML.slice(0, 600), tables: document.querySelectorAll('table').length })).catch(() => ({ html: '', tables: 0 }));
