@@ -12,7 +12,10 @@
 import { chromium, type Browser, type Page } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Listing, RegistryEntry, Tenant, ListingDoc } from '../../shared/types.ts';
+import type {
+  Listing, RegistryEntry, Tenant, ListingDoc,
+  SiteMetrics, TransitStation, SaleRound, SiteComparable, BuildingInfo,
+} from '../../shared/types.ts';
 import type { Adapter, CrawlFilter, ScrapedListing } from './types.ts';
 import { sleep } from './types.ts';
 import {
@@ -212,6 +215,7 @@ export class DeonakchalAdapter implements Adapter {
             });
             docs.push({ caseNo: listing.caseNo, docType: 'sale_statement', parsedJson: { tenants: d.tenants, notes: allNotes } });
             if (d.appraisal) docs.push({ caseNo: listing.caseNo, docType: 'appraisal_report', parsedJson: d.appraisal });
+            if (d.siteMetrics && Object.keys(d.siteMetrics).length) docs.push({ caseNo: listing.caseNo, docType: 'site_metrics', parsedJson: d.siteMetrics });
             await sleep(delay);
           } catch (e) {
             console.warn(`[deonakchal] 상세 파싱 실패 ${c.listing.caseNo}: ${e}`);
@@ -246,6 +250,119 @@ export interface DetailData {
   notes: string[];
   siteAssumedAmount: number | null; // 사이트 예상배당의 '낙찰자인수' 합계(미배당금액)
   appraisal: { text: string; highlights: string[]; zoning?: string; gongPrice?: number; landPrice?: number } | null; // 감정평가요항 + 공시가격
+  siteMetrics: SiteMetrics; // 역세권·매각기일·동일건물 실거래·매각가율·표제부·명도비·토지규제·행정기관
+}
+
+const KMONEY = (s?: string | null): number | undefined => parseKoreanMoney(s ?? undefined) ?? undefined;
+
+/**
+ * 상세 본문 텍스트(공백 정규화본 + 줄바꿈 보존본)에서 부가 요소를 추출.
+ * 모두 사이트 view.html 한 페이지에 인라인으로 존재한다(팝업/외부링크 불필요).
+ */
+export function extractSiteMetrics(body: string, raw: string, subjectName?: string): SiteMetrics {
+  const m: SiteMetrics = {};
+  const slice = (from: string, to: string): string => {
+    const i = body.indexOf(from);
+    if (i < 0) return '';
+    const j = to ? body.indexOf(to, i + from.length) : -1;
+    return body.slice(i + from.length, j < 0 ? i + 4000 : j);
+  };
+
+  // 1) 역세권 (주변환경/이슈 → 역세권 … 개발계획)
+  const transitZone = slice('역세권', '개발계획') || slice('역세권', '행정기관');
+  const transit: TransitStation[] = [];
+  const trRe = /([0-9]+호선|[가-힣]+선)\s+([가-힣A-Za-z0-9]+)\s+([\d,]+)\s*m/g;
+  let tm: RegExpExecArray | null;
+  while ((tm = trRe.exec(transitZone))) {
+    transit.push({ line: tm[1]!, station: tm[2]!, distanceM: parseInt(tm[3]!.replace(/,/g, ''), 10) });
+  }
+  if (transit.length) m.transit = transit;
+
+  // 2) 매각기일 차수표: "1차 2026-06-16 231,000,000 (20%↓)"
+  const rounds: SaleRound[] = [];
+  const rdRe = /([0-9]+)차\s+(\d{4}-\d{2}-\d{2})\s+([\d,]{6,})(?:\s*\((\d+)%[↓↑]?\))?/g;
+  let rm: RegExpExecArray | null;
+  while ((rm = rdRe.exec(body))) {
+    const minPrice = parseInt(rm[3]!.replace(/,/g, ''), 10);
+    if (minPrice < 1_000_000) continue;
+    rounds.push({ round: parseInt(rm[1]!, 10), date: rm[2]!, minPrice, ratioPct: rm[4] ? parseInt(rm[4], 10) : undefined });
+  }
+  if (rounds.length) m.saleRounds = rounds.slice(0, 12);
+
+  // 3) 동일건물 실거래 (최근 거래내역 표): "에스아이팰리스장안센텀 26.537 (8.03평) 2026.04 25 16 1,413 37,500"
+  const tradeZone = slice('최근 거래내역', '인근 경') || slice('최근 거래내역', '인근');
+  const comps: SiteComparable[] = [];
+  const cpRe = /([가-힣A-Za-z0-9·().]+?)\s+(\d{1,3}\.\d{1,3})\s*\(([\d.]+)평\)\s+(\d{4})\.(\d{2})\s+\d{1,2}\s+(\d{1,3})\s+([\d,]+)\s+([\d,]+)/g;
+  let cm: RegExpExecArray | null;
+  while ((cm = cpRe.exec(tradeZone))) {
+    comps.push({
+      name: cm[1]!.trim(), areaM2: parseFloat(cm[2]!), pyeong: parseFloat(cm[3]!),
+      dealYm: `${cm[4]}-${cm[5]}`, floor: parseInt(cm[6]!, 10),
+      perPyeongManwon: parseInt(cm[7]!.replace(/,/g, ''), 10),
+      dealManwon: parseInt(cm[8]!.replace(/,/g, ''), 10),
+    });
+  }
+  if (comps.length) m.siteComps = comps.slice(0, 20);
+
+  // 4) 인근/동일건물 매각가율: "751,230,000(104%)" (금액에 % 가 붙은 형태 = 낙찰가율)
+  const saleZone = slice('인근 매각 사례', '주변환경') || slice('인근 매각', '주변환경');
+  const nearby: number[] = [];
+  const sameBld: number[] = [];
+  const srRe = /([\d,]{7,})\((\d{2,3})%\)/g;
+  let sr: RegExpExecArray | null;
+  while ((sr = srRe.exec(saleZone))) {
+    const pct = parseInt(sr[2]!, 10);
+    if (pct < 30 || pct > 200) continue;
+    nearby.push(pct);
+  }
+  if (nearby.length) m.nearbySaleRatios = nearby;
+  // 동일 건물명이 포함된 매각 행만 추려 별도 율 집계
+  if (subjectName) {
+    const esc = subjectName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rowRe = new RegExp(`${esc}[^]{0,160}?([\\d,]{7,})\\((\\d{2,3})%\\)`, 'g');
+    let bm: RegExpExecArray | null;
+    while ((bm = rowRe.exec(saleZone))) {
+      const pct = parseInt(bm[2]!, 10);
+      if (pct >= 30 && pct <= 200) sameBld.push(pct);
+    }
+    if (sameBld.length) m.sameBuildingSaleRatios = sameBld;
+  }
+
+  // 5) 건축물 표제부
+  const building: BuildingInfo = {};
+  building.mainUse = body.match(/주용도\s*([가-힣,·]+)/)?.[1];
+  const hh = body.match(/세대\/가구\/호\s*(\d+)\/(\d+)\/(\d+)/);
+  if (hh) building.households = parseInt(hh[1]!, 10);
+  const appr = body.match(/사용승인일?\s*(\d{8})/);
+  if (appr) building.approvalDate = `${appr[1]!.slice(0, 4)}-${appr[1]!.slice(4, 6)}-${appr[1]!.slice(6, 8)}`;
+  const fa = body.match(/지상_?층_?수\s*(\d+)/); if (fa) building.floorsAbove = parseInt(fa[1]!, 10);
+  const fb = body.match(/지하층수\s*(\d+)/); if (fb) building.floorsBelow = parseInt(fb[1]!, 10);
+  const far = body.match(/용적율\s*([\d.]+)\s*%/); if (far) building.far = parseFloat(far[1]!);
+  const bcr = body.match(/건폐율\s*([\d.]+)\s*%/); if (bcr) building.bcr = parseFloat(bcr[1]!);
+  if (Object.keys(building).length) m.building = building;
+
+  // 6) 명도비 / 취득세율 (낙찰시 추가비용 표)
+  const moveOut = KMONEY(body.match(/명도비\s*([\d,]{4,})\s*원/)?.[1]) ?? KMONEY(body.match(/명도비용[^0-9]{0,8}([\d,]{4,})\s*원/)?.[1]);
+  if (moveOut) m.moveOutCost = moveOut;
+  const taxPct = body.match(/취[등독]록세\s*매각가의\s*([\d.]+)\s*%/)?.[1];
+  if (taxPct) m.pageAcqTaxPct = parseFloat(taxPct);
+
+  // 7) 토지이용계획 원문 (감정평가요항 8항)
+  const landUse = raw.match(/토지이용계획\s*및\s*제한상태\s*([\s\S]{0,800}?)(?:\n\s*\d+\)\s*공부|공부와의\s*차이|기타참고|매각효력)/)?.[1]
+    ?? body.match(/토지이용계획[^)]*\)?\s*(.+?)(?=\d\)\s*공부|공부와의\s*차이|기타참고|매각효력|$)/)?.[1];
+  if (landUse) m.landUseText = landUse.replace(/\s+/g, ' ').trim().slice(0, 800);
+
+  // 8) 관할 행정기관 (법원/등기소/세무서/주민센터) — '행정기관' 섹션으로 한정(상단 내비 제외)
+  const admin: Record<string, string> = {};
+  const adminZone = body.indexOf('행정기관') >= 0 ? body.slice(body.indexOf('행정기관'), body.indexOf('행정기관') + 1200) : body;
+  const court = adminZone.match(/법원\s*(\S+지방법원)/)?.[1] ?? body.match(/(\S+지방법원)\s*경매\s*\d+계/)?.[1];
+  if (court) admin['법원'] = court;
+  const jusin = adminZone.match(/([가-힣\d]+동?\s*주민센터)/)?.[1]; if (jusin) admin['주민센터'] = jusin.replace(/\s+/g, '');
+  const deunggi = adminZone.match(/(\S+지방법원\s*등기소)/)?.[1]; if (deunggi) admin['등기소'] = deunggi.replace(/\s+/g, ' ');
+  const semu = adminZone.match(/([가-힣\d]+세무서)/)?.[1]; if (semu) admin['세무서'] = semu;
+  if (Object.keys(admin).length) m.adminOffices = admin;
+
+  return m;
 }
 
 /** 상세 페이지(view.html?product_id=) → 등기·임차인·명세서·예상배당 추출. 헤더 키워드로 테이블 탐색. */
@@ -328,7 +445,8 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
   }
 
   // 공시가격(공동주택공시가격 / 개별공시지가) — 상세 본문에서 직접 추출
-  const bodyText = (await page.evaluate(() => document.body.innerText).catch(() => '')).replace(/\s+/g, ' ');
+  const rawBody = (await page.evaluate(() => document.body.innerText).catch(() => '')) as string;
+  const bodyText = rawBody.replace(/\s+/g, ' ');
   const gongPrice = parseKoreanMoney(bodyText.match(/공동주택공시가격[^:]*:?\s*([\d,]{6,})/)?.[1]) ?? undefined;
   const landPrice = parseKoreanMoney(bodyText.match(/개별공시지가[^\d]{0,15}([\d,]{6,})/)?.[1]) ?? undefined;
 
@@ -356,5 +474,10 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
     appraisal = { text: apprText.slice(0, 4000), highlights, zoning, gongPrice, landPrice };
   }
 
-  return { registry, tenants, notes, siteAssumedAmount, appraisal };
+  // 부가 요소(역세권·매각기일·동일건물 실거래·매각가율·표제부·명도비·토지규제·행정기관)
+  const subjectName = bodyText.match(/동명\s*([가-힣A-Za-z0-9·()]+)/)?.[1]
+    ?? bodyText.match(/[가-힣]+(?:팰리스|아파트|빌라|타워|캐슬|자이|푸르지오|힐스테이트|더샵|e편한세상|센트럴|센텀)\S*/)?.[0];
+  const siteMetrics = extractSiteMetrics(bodyText, rawBody, subjectName);
+
+  return { registry, tenants, notes, siteAssumedAmount, appraisal, siteMetrics };
 }

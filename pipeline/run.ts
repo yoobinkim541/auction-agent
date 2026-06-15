@@ -11,10 +11,14 @@ import {
   saveRightsAnalysis, saveLocationAnalysis, saveScore,
   fetchListingsForAnalysis, fetchListingDocs, type ListingRow,
 } from '../shared/db.ts';
-import type { Listing, RightsInput, RegistryEntry, Tenant } from '../shared/types.ts';
+import type { Listing, RightsInput, RegistryEntry, Tenant, SiteMetrics } from '../shared/types.ts';
 import { analyzeRights } from './rights/engine.ts';
 import { analyzeLocation } from './location/index.ts';
 import { scoreListing, maxSafeBid, DEFAULT_SCORE_CONFIG } from './select/score.ts';
+import { computeAcquisitionCost, expectedBid, marketFromSiteComps, classifyLandUseFlags } from './cost/acquisition.ts';
+
+/** 사용자 취득세 가정(개인 1주택 기본). 다주택/법인이면 여기 또는 향후 설정에서 조정. */
+const TAX_ASSUMPTION = { homeCountAfter: 1 } as const;
 
 const num = (v: string | number | null): number => (v == null ? 0 : typeof v === 'number' ? v : parseFloat(v));
 
@@ -40,7 +44,7 @@ function rowToListing(r: ListingRow): Listing {
 }
 
 /** 등기/임차인 문서(parsed_json)로 RightsInput을 구성. 없으면 빈 입력(엔진이 경고). */
-async function buildRightsInput(listingId: number, listing: Listing): Promise<{ input: RightsInput; siteAssumed: number | null; appraisalHighlights: string[] }> {
+async function buildRightsInput(listingId: number, listing: Listing): Promise<{ input: RightsInput; siteAssumed: number | null; appraisalHighlights: string[]; siteMetrics: SiteMetrics; gongPrice?: number }> {
   const data = await fetchListingDocs(listingId);
 
   let registry: RegistryEntry[] = [];
@@ -49,11 +53,17 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<{ 
   let statementSeniorDate: string | undefined;
   let siteAssumed: number | null = null;
   let appraisalHighlights: string[] = [];
+  let siteMetrics: SiteMetrics = {};
+  let gongPrice: number | undefined;
   const notes: string[] = [];
 
   for (const d of data) {
     const p = d.parsed_json ?? {};
-    if (d.doc_type === 'appraisal_report' && Array.isArray(p.highlights)) appraisalHighlights = p.highlights as string[];
+    if (d.doc_type === 'appraisal_report') {
+      if (Array.isArray(p.highlights)) appraisalHighlights = p.highlights as string[];
+      if (typeof p.gongPrice === 'number') gongPrice = p.gongPrice;
+    }
+    if (d.doc_type === 'site_metrics') siteMetrics = p as SiteMetrics;
     if (d.doc_type === 'registry_summary') {
       if (Array.isArray(p.registry)) registry = p.registry as RegistryEntry[];
       if (Array.isArray(p.landRegistry)) landRegistry = p.landRegistry as RegistryEntry[];
@@ -90,6 +100,8 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<{ 
     },
     siteAssumed,
     appraisalHighlights,
+    siteMetrics,
+    gongPrice,
   };
 }
 
@@ -113,7 +125,7 @@ async function main() {
     const listing = rowToListing(r);
     try {
       // 1) 권리분석 (결정형 엔진) + 사이트 예상 낙찰자인수(권위값) 반영
-      const { input, siteAssumed, appraisalHighlights } = await buildRightsInput(r.id, listing);
+      const { input, siteAssumed, appraisalHighlights, siteMetrics, gongPrice } = await buildRightsInput(r.id, listing);
       const rights = analyzeRights(input);
       if (siteAssumed != null) {
         if (siteAssumed !== rights.assumedAmount) {
@@ -128,6 +140,52 @@ async function main() {
       // 2) 입지분석 (+ 감정평가요항 하이라이트)
       const loc = await analyzeLocation(listing, { tradeMonths: 12 });
       if (appraisalHighlights.length) loc.devSignals = appraisalHighlights;
+
+      // 2-b) 상세페이지 부가요소 통합 (역세권·표제부·매각기일·규제·동일건물 실거래·예상낙찰가·총취득비용)
+      loc.saleRounds = siteMetrics.saleRounds;
+      loc.building = siteMetrics.building;
+      loc.adminOffices = siteMetrics.adminOffices;
+      loc.siteComps = siteMetrics.siteComps;
+      loc.landUseFlags = classifyLandUseFlags(siteMetrics.landUseText);
+      if (siteMetrics.transit?.length) {
+        const nearest = [...siteMetrics.transit].sort((a, b) => a.distanceM - b.distanceM)[0]!;
+        const lines = new Set(siteMetrics.transit.map((t) => t.line)).size;
+        loc.transit = { ...loc.transit, nearestStation: `${nearest.line} ${nearest.station} ${nearest.distanceM}m`, lines, stations: siteMetrics.transit };
+      }
+
+      // 시세 보강: 사이트 동일건물 실거래(동일면적 ≥2건)는 신뢰도 최상 → 우선 채택, MOLIT는 교차검증으로 남김
+      const siteMarket = marketFromSiteComps(siteMetrics.siteComps, listing.areaM2);
+      if (siteMarket.price && siteMarket.n >= 2) {
+        if (loc.marketPrice && Math.abs(loc.marketPrice - siteMarket.price) / siteMarket.price > 0.05) {
+          loc.compBasis = `${siteMarket.basis} ${(siteMarket.price / 1e8).toFixed(2)}억 채택 (MOLIT추정 ${(loc.marketPrice / 1e8).toFixed(2)}억)`;
+        } else {
+          loc.compBasis = siteMarket.basis;
+        }
+        loc.marketPrice = siteMarket.price;
+        loc.marketConfidence = 'high';
+        loc.safetyMargin = listing.minBidPrice > 0 ? Math.round(((siteMarket.price - listing.minBidPrice) / siteMarket.price) * 1e5) / 1e5 : loc.safetyMargin;
+      }
+
+      // 예상낙찰가(감정가×낙찰가율)
+      const eb = expectedBid(listing.appraisalValue, siteMetrics.sameBuildingSaleRatios, siteMetrics.nearbySaleRatios);
+      loc.expectedBidPrice = eb.price;
+      loc.expectedBidBasis = eb.basis;
+
+      // 총취득비용 + 진짜 안전마진 (예상낙찰가가 현 최저가 이상이면 그 가격, 아니면 현 최저가로 가정)
+      const bidForCost = eb.price && eb.price >= listing.minBidPrice ? eb.price : listing.minBidPrice;
+      const bidBasis = eb.price && eb.price >= listing.minBidPrice ? `예상낙찰가(${eb.basis})` : '현 회차 최저매각가';
+      loc.acquisitionCost = computeAcquisitionCost({
+        propertyType: listing.propertyType,
+        address: listing.address,
+        areaM2: listing.areaM2,
+        bidPrice: bidForCost,
+        bidBasis,
+        gongPrice,
+        moveOutCost: siteMetrics.moveOutCost,
+        assumedAmount: rights.assumedAmount,
+        marketPrice: loc.marketPrice,
+        taxOptions: { ...TAX_ASSUMPTION, officetelAsHouse: false },
+      });
 
       // 3) 최대 안전 입찰가
       rights.maxSafeBid = maxSafeBid(loc.marketPrice, rights.assumedAmount, 0.1);
@@ -164,9 +222,11 @@ async function main() {
       await saveLocationAnalysis(r.id, loc);
       await saveScore(r.id, score);
 
+      const tm = loc.acquisitionCost?.trueSafetyMargin;
       console.log(
         `✓ ${listing.caseNo} | 위험:${rights.riskGrade} 인수:${rights.assumedAmount.toLocaleString('ko-KR')} ` +
-          `안전마진:${loc.safetyMargin !== null ? (loc.safetyMargin * 100).toFixed(1) + '%' : 'N/A'} 점수:${score.totalScore} ${score.passedFilter ? 'PASS' : 'skip'}`,
+          `안전마진:${loc.safetyMargin !== null ? (loc.safetyMargin * 100).toFixed(1) + '%' : 'N/A'} ` +
+          `진짜마진:${tm != null ? (tm * 100).toFixed(1) + '%' : 'N/A'} 점수:${score.totalScore} ${score.passedFilter ? 'PASS' : 'skip'}`,
       );
     } catch (e) {
       console.error(`✗ ${listing.caseNo}: ${e}`);

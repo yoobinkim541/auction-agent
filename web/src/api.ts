@@ -23,11 +23,32 @@ export interface LocationObj {
   market_confidence?: 'high' | 'medium' | 'low' | null;
   comp_basis?: string | null;
   safety_margin?: number | null;
-  transit?: { nearestStation?: string; walkMinutes?: number } | null;
+  transit?: { nearestStation?: string; walkMinutes?: number; lines?: number; stations?: { line: string; station: string; distanceM: number }[] } | null;
   schools?: { academyCount?: number; schoolCount?: number } | null;
   amenities?: Record<string, number> | null;
   dev_signals?: string[] | null;
+  expected_bid_price?: number | null;
+  expected_bid_basis?: string | null;
+  acquisition_cost?: AcquisitionCostObj | null;
+  site_comps?: SiteCompObj[] | null;
+  sale_rounds?: SaleRoundObj[] | null;
+  building?: BuildingObj | null;
+  land_use_flags?: LandUseFlagObj[] | null;
+  admin_offices?: Record<string, string> | null;
 }
+export interface AcquisitionCostObj {
+  bidPrice: number; bidBasis: string;
+  acqTax: number; acqTaxRatePct: number;
+  moveOutCost: number; bondCost: number; assumedAmount: number; etcCost: number;
+  totalCost: number; trueSafetyMargin: number | null; notes: string[];
+}
+export interface LandUseFlagObj {
+  keyword: string; label: string;
+  kind: 'risk' | 'opportunity' | 'info'; severity: 'high' | 'medium' | 'low'; impact?: string;
+}
+export interface SiteCompObj { name: string; areaM2: number; pyeong?: number; dealYm: string; dealManwon: number; floor?: number }
+export interface SaleRoundObj { round: number; date: string; minPrice: number; ratioPct?: number }
+export interface BuildingObj { mainUse?: string; households?: number; approvalDate?: string; floorsAbove?: number; floorsBelow?: number; far?: number; bcr?: number }
 export interface ListingItem {
   id: number;
   case_no: string;

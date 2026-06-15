@@ -45,7 +45,87 @@ export type DocType =
   | 'sale_statement' // 매각물건명세서
   | 'survey_report' // 현황조사서
   | 'appraisal_report' // 감정평가서
+  | 'site_metrics' // 상세페이지 부가요소(역세권/매각기일/동일건물 실거래/매각가율/표제부/명도비/토지규제)
   | 'registry_pdf'; // 사용자 업로드 등기부등본 PDF
+
+// ─────────────────────────────────────────────────────────────────
+// 상세페이지 부가 요소 (site_metrics doc 의 parsed_json)
+// ─────────────────────────────────────────────────────────────────
+
+/** 역세권: 노선·역명·도보거리(m) */
+export interface TransitStation {
+  line: string; // 예: "5호선"
+  station: string; // 예: "장한평"
+  distanceM: number;
+}
+
+/** 매각기일 차수표 한 줄 */
+export interface SaleRound {
+  round: number; // 1차/2차…
+  date: string; // ISO
+  minPrice: number; // 해당 회차 최저매각가(원)
+  ratioPct?: number; // 감정가 대비 %
+}
+
+/** 사이트가 제시한 동일건물/동일면적 실거래 한 건 */
+export interface SiteComparable {
+  name: string; // 단지/건물명
+  areaM2: number; // 전용면적
+  pyeong?: number;
+  dealYm: string; // 계약년월 YYYY-MM
+  dealManwon: number; // 거래금액(만원)
+  perPyeongManwon?: number; // ㎡당? 페이지 표기상 평당/㎡당 만원
+  floor?: number;
+}
+
+/** 건축물 표제부 요약 */
+export interface BuildingInfo {
+  mainUse?: string; // 주용도
+  households?: number; // 세대수
+  approvalDate?: string; // 사용승인일 ISO
+  floorsAbove?: number;
+  floorsBelow?: number;
+  far?: number; // 용적률 %
+  bcr?: number; // 건폐율 %
+}
+
+/** 토지이용 규제 플래그(투자 위험/기회) */
+export interface LandUseFlag {
+  keyword: string;
+  label: string;
+  kind: 'risk' | 'opportunity' | 'info';
+  severity: 'high' | 'medium' | 'low';
+  impact?: string;
+}
+
+/** 취득비용 내역 + 진짜 안전마진 */
+export interface AcquisitionCost {
+  bidPrice: number; // 가정 낙찰가(예상낙찰가 또는 최저가)
+  bidBasis: string; // 낙찰가 산정 근거
+  acqTax: number; // 취득세+농특세+교육세
+  acqTaxRatePct: number;
+  moveOutCost: number; // 명도비
+  bondCost: number; // 국민주택채권 본인부담(추정)
+  assumedAmount: number; // 권리 인수금액
+  etcCost: number; // 기타(기본 0)
+  totalCost: number; // 총 취득비용
+  trueSafetyMargin: number | null; // (시세 − 총취득비용)/시세
+  notes: string[];
+}
+
+export interface SiteMetrics {
+  transit?: TransitStation[];
+  saleRounds?: SaleRound[];
+  siteComps?: SiteComparable[];
+  nearbySaleRatios?: number[]; // 인근 매각가율(낙찰/감정 %)
+  sameBuildingSaleRatios?: number[]; // 동일 건물명 매각가율
+  building?: BuildingInfo;
+  moveOutCost?: number; // 사이트 표기 명도비(원)
+  pageAcqTaxPct?: number; // 사이트 표기 취득세율
+  landUseText?: string; // 토지이용계획 원문
+  landUseFlags?: LandUseFlag[];
+  adminOffices?: Record<string, string>; // 법원/등기소/세무서/주민센터
+}
 
 export interface ListingDoc {
   caseNo: string;
@@ -253,10 +333,27 @@ export interface LocationAnalysis {
   compBasis?: string;
   /** 안전마진 = (시세 − 최저매각가) / 시세 */
   safetyMargin: number | null;
-  transit?: { nearestStation?: string; walkMinutes?: number; lines?: number };
+  transit?: { nearestStation?: string; walkMinutes?: number; lines?: number; stations?: TransitStation[] };
   schools?: { assignedElementary?: string; assignedMiddle?: string; academyCount?: number; schoolCount?: number };
   amenities?: Record<string, number>; // 카테고리별 반경 내 개수
   devSignals?: string[];
+
+  // ── 상세페이지 부가요소 기반 확장 ──
+  /** 예상낙찰가(감정가 × 낙찰가율) */
+  expectedBidPrice?: number | null;
+  expectedBidBasis?: string;
+  /** 총취득비용(취득세+명도비+채권+인수금액 포함) + 진짜 안전마진 */
+  acquisitionCost?: AcquisitionCost;
+  /** 사이트 동일건물 실거래 비교군 */
+  siteComps?: SiteComparable[];
+  /** 매각기일 차수표 */
+  saleRounds?: SaleRound[];
+  /** 건축물 표제부 */
+  building?: BuildingInfo;
+  /** 토지이용 규제 플래그 */
+  landUseFlags?: LandUseFlag[];
+  /** 관할 행정기관 */
+  adminOffices?: Record<string, string>;
 }
 
 export interface Score {

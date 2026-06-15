@@ -79,6 +79,14 @@ create table if not exists gm_location_analysis (
   schools       jsonb,
   amenities     jsonb,
   dev_signals   jsonb,
+  expected_bid_price bigint,        -- 예상낙찰가(감정가×낙찰가율)
+  expected_bid_basis text,
+  acquisition_cost   jsonb,         -- 총취득비용 내역 + 진짜 안전마진
+  site_comps         jsonb,         -- 사이트 동일건물 실거래
+  sale_rounds        jsonb,         -- 매각기일 차수표
+  building           jsonb,         -- 건축물 표제부
+  land_use_flags     jsonb,         -- 토지이용 규제 flags
+  admin_offices      jsonb,         -- 관할 행정기관
   analyzed_at   timestamptz not null default now(),
   unique (listing_id)
 );

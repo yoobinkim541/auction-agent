@@ -94,15 +94,22 @@ export async function saveRightsAnalysis(
 export async function saveLocationAnalysis(listingId: number, loc: LocationAnalysis): Promise<void> {
   await query(
     `insert into gm_location_analysis
-       (listing_id,market_price,comps,safety_margin,transit,schools,amenities,dev_signals,market_confidence,comp_basis,analyzed_at)
-     values ($1,$2,$3::jsonb,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9,$10,now())
+       (listing_id,market_price,comps,safety_margin,transit,schools,amenities,dev_signals,market_confidence,comp_basis,
+        expected_bid_price,expected_bid_basis,acquisition_cost,site_comps,sale_rounds,building,land_use_flags,admin_offices,analyzed_at)
+     values ($1,$2,$3::jsonb,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9,$10,
+        $11,$12,$13::jsonb,$14::jsonb,$15::jsonb,$16::jsonb,$17::jsonb,$18::jsonb,now())
      on conflict (listing_id) do update set
        market_price=excluded.market_price, comps=excluded.comps, safety_margin=excluded.safety_margin,
        transit=excluded.transit, schools=excluded.schools, amenities=excluded.amenities,
        dev_signals=excluded.dev_signals, market_confidence=excluded.market_confidence,
-       comp_basis=excluded.comp_basis, analyzed_at=now()`,
+       comp_basis=excluded.comp_basis, expected_bid_price=excluded.expected_bid_price,
+       expected_bid_basis=excluded.expected_bid_basis, acquisition_cost=excluded.acquisition_cost,
+       site_comps=excluded.site_comps, sale_rounds=excluded.sale_rounds, building=excluded.building,
+       land_use_flags=excluded.land_use_flags, admin_offices=excluded.admin_offices, analyzed_at=now()`,
     [listingId, loc.marketPrice, j(loc.comps), loc.safetyMargin, j(loc.transit), j(loc.schools),
-     j(loc.amenities), j(loc.devSignals), loc.marketConfidence ?? null, loc.compBasis ?? null],
+     j(loc.amenities), j(loc.devSignals), loc.marketConfidence ?? null, loc.compBasis ?? null,
+     loc.expectedBidPrice ?? null, loc.expectedBidBasis ?? null, j(loc.acquisitionCost), j(loc.siteComps),
+     j(loc.saleRounds), j(loc.building), j(loc.landUseFlags), j(loc.adminOffices)],
   );
 }
 

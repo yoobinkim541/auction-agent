@@ -233,7 +233,9 @@ function Detail({ row, onClose, onFav }: { row: ListingItem; onClose: () => void
           <div><span>감정가</span><b>{eok(row.appraisal_value)}</b></div>
           <div><span>최저매각가</span><b>{eok(row.min_bid_price)}</b></div>
           <div><span>추정시세</span><b>{eok(loc?.market_price)}{loc?.market_confidence ? ` · 신뢰도 ${CONF[loc.market_confidence]}` : ''}</b></div>
-          <div><span>안전마진</span><b>{pct(loc?.safety_margin)}</b></div>
+          <div><span>예상낙찰가</span><b>{eok(loc?.expected_bid_price)}</b></div>
+          <div><span>안전마진(최저가)</span><b>{pct(loc?.safety_margin)}</b></div>
+          <div><span title="시세 − 총취득비용(취득세·명도비·채권·인수 포함)">진짜 안전마진</span><b className={(loc?.acquisition_cost?.trueSafetyMargin ?? 0) < 0 ? 'danger' : ''}>{pct(loc?.acquisition_cost?.trueSafetyMargin)}</b></div>
           <div><span>총 인수금액</span><b className={rights?.assumed_amount ? 'danger' : ''}>{won(rights?.assumed_amount ?? 0)}</b></div>
           <div><span>최대안전입찰가</span><b>{won(rights?.max_safe_bid)}</b></div>
         </div>
@@ -283,17 +285,89 @@ function Detail({ row, onClose, onFav }: { row: ListingItem; onClose: () => void
           )}
         </Section>
 
+        {loc?.acquisition_cost && (
+          <Section title="취득비용 · 진짜 안전마진">
+            <p className="muted">가정 낙찰가: {won(loc.acquisition_cost.bidPrice)} ({loc.acquisition_cost.bidBasis})</p>
+            <table className="mini">
+              <tbody>
+                <tr><td>낙찰가</td><td className="num">{won(loc.acquisition_cost.bidPrice)}</td></tr>
+                <tr><td>취득세 ({loc.acquisition_cost.acqTaxRatePct}%)</td><td className="num">{won(loc.acquisition_cost.acqTax)}</td></tr>
+                <tr><td>명도비</td><td className="num">{won(loc.acquisition_cost.moveOutCost)}</td></tr>
+                <tr><td>국민주택채권(본인부담)</td><td className="num">{won(loc.acquisition_cost.bondCost)}</td></tr>
+                {loc.acquisition_cost.assumedAmount > 0 && <tr><td className="danger">권리 인수금액</td><td className="num danger">{won(loc.acquisition_cost.assumedAmount)}</td></tr>}
+                <tr className="total"><td><b>총 취득비용</b></td><td className="num"><b>{won(loc.acquisition_cost.totalCost)}</b></td></tr>
+                <tr><td><b>진짜 안전마진</b> (시세 대비)</td><td className="num"><b className={(loc.acquisition_cost.trueSafetyMargin ?? 0) < 0 ? 'danger' : ''}>{pct(loc.acquisition_cost.trueSafetyMargin)}</b></td></tr>
+              </tbody>
+            </table>
+            {loc.acquisition_cost.notes.length > 0 && (
+              <ul className="warns">{loc.acquisition_cost.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+            )}
+            <p className="muted">※ 취득세·채권은 개인 1주택 가정·참고용 추정. 등기 시점 위택스·주택도시기금 재확인 필요.</p>
+          </Section>
+        )}
+
+        {loc?.land_use_flags && loc.land_use_flags.length > 0 && (
+          <Section title="토지이용 규제 · 이슈">
+            <div className="flags">
+              {loc.land_use_flags.map((f, i) => (
+                <span key={i} className={`flag flag-luf-${f.kind}`} title={f.impact}>
+                  {f.kind === 'opportunity' ? '🟢' : f.kind === 'risk' ? '🔴' : 'ℹ️'} {f.label}
+                </span>
+              ))}
+            </div>
+            <ul className="warns">
+              {loc.land_use_flags.filter((f) => f.kind !== 'info' && f.impact).map((f, i) => (
+                <li key={i}><b>{f.label}</b>: {f.impact}</li>
+              ))}
+            </ul>
+          </Section>
+        )}
+
         <Section title="입지분석">
           {loc?.comp_basis && <p className="muted">시세 비교군: {loc.comp_basis}</p>}
           <div className="kv">
             <div><span>최근접역</span><b>{loc?.transit?.nearestStation ?? '-'}{loc?.transit?.walkMinutes ? ` (도보 ${loc.transit.walkMinutes}분)` : ''}</b></div>
             <div><span>학교/학원</span><b>{loc?.schools?.schoolCount ?? '-'} / {loc?.schools?.academyCount ?? '-'}</b></div>
           </div>
+          {loc?.transit?.stations && loc.transit.stations.length > 0 && (
+            <div className="amen">{loc.transit.stations.map((s, i) => <span key={i}>{s.line} {s.station} {s.distanceM}m</span>)}</div>
+          )}
+          {loc?.building && (
+            <p className="muted">
+              건물: {loc.building.mainUse ?? ''} {loc.building.households ? `${loc.building.households}세대` : ''}
+              {loc.building.approvalDate ? ` · 사용승인 ${loc.building.approvalDate}` : ''}
+              {loc.building.floorsAbove ? ` · 지상${loc.building.floorsAbove}/지하${loc.building.floorsBelow ?? 0}층` : ''}
+              {loc.building.far ? ` · 용적률 ${loc.building.far}%` : ''}
+            </p>
+          )}
+          {loc?.site_comps && loc.site_comps.length > 0 && (
+            <>
+              <h4>동일건물 실거래 (사이트)</h4>
+              <table className="mini">
+                <thead><tr><th>계약월</th><th>전용</th><th>층</th><th className="num">거래가</th></tr></thead>
+                <tbody>
+                  {loc.site_comps.slice(0, 8).map((c, i) => (
+                    <tr key={i}><td className="mono">{c.dealYm}</td><td>{c.areaM2}㎡{c.pyeong ? `(${c.pyeong}평)` : ''}</td><td>{c.floor ?? '-'}</td><td className="num">{(c.dealManwon / 10000).toFixed(2)}억</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+          {loc?.sale_rounds && loc.sale_rounds.length > 0 && (
+            <>
+              <h4>매각기일 차수</h4>
+              <div className="amen">{loc.sale_rounds.map((s, i) => <span key={i} className={i === 0 ? 'flag-high' : ''}>{s.round}차 {s.date} {eok(s.minPrice)}{s.ratioPct ? ` (${s.ratioPct}%↓)` : ''}</span>)}</div>
+            </>
+          )}
+          {loc?.expected_bid_basis && <p className="muted">예상낙찰가 근거: {loc.expected_bid_basis}</p>}
           {loc?.amenities && (
             <div className="amen">{Object.entries(loc.amenities).map(([k, v]) => <span key={k}>{k}: {v}</span>)}</div>
           )}
           {loc?.dev_signals && loc.dev_signals.length > 0 && (
             <div className="amen">{loc.dev_signals.map((s, i) => <span key={i}>{s}</span>)}</div>
+          )}
+          {loc?.admin_offices && Object.keys(loc.admin_offices).length > 0 && (
+            <p className="muted">관할: {Object.entries(loc.admin_offices).map(([k, v]) => `${k} ${v}`).join(' · ')}</p>
           )}
         </Section>
       </aside>
