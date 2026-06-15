@@ -39,7 +39,7 @@ create table if not exists gm_listing_docs (
   listing_id  bigint references gm_listings(id) on delete cascade,
   doc_type    text not null check (doc_type in
                 ('rights_summary','registry_summary','sale_statement',
-                 'survey_report','appraisal_report','registry_pdf')),
+                 'survey_report','appraisal_report','site_metrics','registry_pdf')),
   parsed_json jsonb,
   pdf_path    text,
   created_at  timestamptz not null default now()
