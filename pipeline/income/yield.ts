@@ -104,6 +104,8 @@ export function analyzeIncome(inp: IncomeInput): IncomeAnalysis {
   // 추정 모드(전세가율 가정)에선 전세가율을 되돌려 보여주는 건 동어반복 → 갭만 노출.
   const jeonseRatioPct = (r.jeonseDeposit && market && !r.estimated) ? Math.round((r.jeonseDeposit / market) * 1000) / 10 : null;
   const gapInvestment = (r.jeonseDeposit && total) ? round(total - r.jeonseDeposit) : null;
+  // 무피(無피): 전세보증금이 총취득비용을 충당 → 자기 돈 0 이하로 취득 가능
+  const zeroPiCandidate = gapInvestment !== null && gapInvestment <= 0;
   const grossYieldPct = (r.monthlyRent && total) ? Math.round((r.monthlyRent * 12 / total) * 1000) / 10 : null;
 
   // 월세 보유 현금흐름(가정): 월세 − 대출이자 − 재산세/12 − 관리비
@@ -131,10 +133,13 @@ export function analyzeIncome(inp: IncomeInput): IncomeAnalysis {
   if (r.estimated) notes.push('전월세 실거래 미확보 → 전세보증금은 지역·유형 전세가율 가정으로 역산한 추정치(저신뢰). 월세·표면수익률은 산출하지 않음. 실제 임대시세는 인근 중개·실거래 재확인 필요');
   else if (!r.n) notes.push('MOLIT 전월세 실거래 부족 — 임대시세 추정 불가(인근 표본 없음)');
 
+  if (zeroPiCandidate && !r.estimated) notes.push('전세보증금이 총취득비용을 상회 — 무피(無피) 가능성. 실제 임대인 교체·보증보험 가입 여부·임차인 협조 여부 현장 확인 필수');
+
   return {
     rentBasis: r.basis, jeonseDeposit: r.jeonseDeposit, monthlyDeposit: r.monthlyDeposit, monthlyRent: r.monthlyRent,
     jeonseRatioPct, gapInvestment, grossYieldPct, monthlyCashflow, cashflowNote, hiddenTenantDeposit,
     saleScenarios: scenarios, notes, estimated: r.estimated,
+    zeroPiCandidate: zeroPiCandidate || undefined,
   };
 }
 

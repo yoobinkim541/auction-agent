@@ -60,7 +60,9 @@ export function scoreListing(
 ): Score {
   const sSafety = safetyScore(loc.safetyMargin, cfg.safetyMaxAt);
   const sClean = cleanScore(rights);
-  const total = Math.round(cfg.wSafety * sSafety + cfg.wClean * sClean);
+  // 무피 보너스: 실거래 기반(non-estimated) zeroPiCandidate에만 +5점
+  const zeroPiBonus = (loc.income?.zeroPiCandidate && !loc.income?.estimated) ? 5 : 0;
+  const total = Math.min(100, Math.round(cfg.wSafety * sSafety + cfg.wClean * sClean) + zeroPiBonus);
 
   const reasons: string[] = [];
   let passed = true;
@@ -95,7 +97,9 @@ export function scoreListing(
     cleanRightsScore: sClean,
     totalScore: total,
     passedFilter: passed,
-    reason: passed ? `통과 (안전마진 ${sSafety}, 권리 ${sClean})` : reasons.join('; '),
+    reason: passed
+      ? `통과 (안전마진 ${sSafety}, 권리 ${sClean}${zeroPiBonus ? ', 무피+5' : ''})`
+      : reasons.join('; '),
   };
 }
 

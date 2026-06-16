@@ -99,6 +99,7 @@ table.mini th, table.mini td { text-align: left; padding: 5px 6px; border-bottom
 .flag-luf-info { background: var(--panel2); color: var(--muted); }
 .warns { font-size: 12px; color: var(--caution); padding-left: 18px; margin-top: 10px; }
 .warn-badge { font-size: 12px; color: var(--caution); background: rgba(255,193,7,.12); border: 1px solid rgba(255,193,7,.35); border-radius: 6px; padding: 6px 9px; margin: 4px 0 8px; }
+.zero-pi-badge { font-size: 12px; color: #1a7f4b; background: rgba(75,201,140,.12); border: 1px solid rgba(75,201,140,.4); border-radius: 6px; padding: 6px 9px; margin: 4px 0 8px; font-weight: 600; }
 .amen { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; color: var(--muted); margin-top: 8px; }
 .amen .flag-high { color: var(--text, #eee); font-weight: 600; }
 table.mini tr.total td { border-top: 2px solid var(--line); }
