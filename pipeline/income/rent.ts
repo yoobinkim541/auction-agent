@@ -58,7 +58,7 @@ export async function fetchRentDeals(propertyType: PropertyType, lawdCd: string,
   for (const ym of recentYearMonths(months)) {
     const url = `${MOLIT_BASE}/${ep}/get${ep}?serviceKey=${encodeURIComponent(key)}&LAWD_CD=${lawdCd}&DEAL_YMD=${ym}&numOfRows=400&pageNo=1&_type=json`;
     try {
-      const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(12000) });
+      const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20000) });
       if (!res.ok) continue;
       const json = (await res.json()) as RentResp;
       const raw = json?.response?.body?.items?.item;
