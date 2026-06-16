@@ -79,6 +79,7 @@ export default function App() {
   const [onlyConsider, setOnlyConsider] = useState(false);
   const [onlyUrgent, setOnlyUrgent] = useState(false);
   const [onlyToday, setOnlyToday] = useState(false);
+  const [filterDate, setFilterDate] = useState<string | null>(null);
   const [maxGapEok, setMaxGapEok] = useState(0);
   const [hideExpired, setHideExpired] = useState<boolean>(() => loadUIState().hideExpired ?? true);
   const [type, setType] = useState<string>(() => loadUIState().type ?? 'all');
@@ -181,6 +182,7 @@ export default function App() {
     if (onlyZeroPi) v = v.filter((x) => x.item.location?.income?.zeroPiCandidate === true);
     if (onlyConsider) v = v.filter((x) => x.item.location?.report?.recommendation === 'consider');
     if (onlyToday) v = v.filter((x) => x.item.sale_date === TODAY);
+    if (filterDate) v = v.filter((x) => x.item.sale_date === filterDate);
     if (onlyUrgent) {
       const sevenDaysStr = new Date(new Date(TODAY).getTime() + 7 * 86_400_000).toISOString().slice(0, 10);
       v = v.filter((x) => x.item.sale_date && x.item.sale_date >= TODAY && x.item.sale_date <= sevenDaysStr);
@@ -216,7 +218,7 @@ export default function App() {
       return sortDir === 'asc' ? diff : -diff;
     });
     return v;
-  }, [rows, cfg, hideExpired, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyUrgent, onlyToday, maxGapEok, type, q, sort, sortDir]);
+  }, [rows, cfg, hideExpired, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyUrgent, onlyToday, filterDate, maxGapEok, type, q, sort, sortDir]);
 
   const favCount = rows.filter((r) => r.is_favorite).length;
   const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
@@ -235,7 +237,17 @@ export default function App() {
     const reviewCount = upcoming.filter((x) => x.item.rights?.risk_grade === 'review_required').length;
     const zeroPiCount = upcoming.filter((x) => x.item.location?.income?.zeroPiCandidate === true).length;
     const considerCount = upcoming.filter((x) => x.item.location?.report?.recommendation === 'consider').length;
-    return { total: rows.length, passed, todayUrgent, week, reviewCount, zeroPiCount, considerCount };
+    const weekDist: Record<string, { total: number; passed: number }> = {};
+    for (const x of upcoming) {
+      if (!x.item.sale_date) continue;
+      const d = saleDaysDiff(x.item.sale_date);
+      if (d === null || d < 0 || d > 6) continue;
+      const k = x.item.sale_date;
+      if (!weekDist[k]) weekDist[k] = { total: 0, passed: 0 };
+      weekDist[k]!.total++;
+      if (x.sc.passed) weekDist[k]!.passed++;
+    }
+    return { total: rows.length, passed, todayUrgent, week, reviewCount, zeroPiCount, considerCount, weekDist };
   }, [rows, cfg]);
 
   const selNavIdx = selected ? view.findIndex((x) => x.item.id === selected.id) : -1;
@@ -266,7 +278,7 @@ export default function App() {
           {stats.todayUrgent > 0 && (
             <div
               className={`stat-item stat-urgent${onlyToday ? ' on' : ''}`}
-              onClick={() => setOnlyToday((v) => !v)}
+              onClick={() => { setOnlyToday((v) => !v); setFilterDate(null); }}
               title="클릭하면 오늘 기일 매물만 표시"
               style={{ cursor: 'pointer' }}
             >
@@ -318,6 +330,29 @@ export default function App() {
               <b className="stat-num">{stats.considerCount}</b>
             </div>
           )}
+        </div>
+      )}
+
+      {!loading && Object.keys(stats.weekDist).length > 0 && (
+        <div className="week-cal">
+          {Object.entries(stats.weekDist).sort().map(([date, { total, passed }]) => {
+            const d = saleDaysDiff(date);
+            const dayLabel = ['일', '월', '화', '수', '목', '금', '토'][new Date(date).getDay()]!;
+            const isToday = date === TODAY;
+            const isSelected = filterDate === date;
+            return (
+              <div
+                key={date}
+                className={`wc-day${isToday ? ' wc-today' : ''}${isSelected ? ' wc-sel' : ''}`}
+                onClick={() => { setFilterDate((fd) => fd === date ? null : date); setOnlyToday(false); }}
+                title={`${date} ${dayLabel}요일 — 통과 ${passed}건 / 전체 ${total}건`}
+              >
+                <span className="wc-label">{isToday ? '오늘' : `${dayLabel}${d != null ? `(D-${d})` : ''}`}</span>
+                <b className="wc-cnt">{passed}</b>
+                <span className="wc-total">/{total}</span>
+              </div>
+            );
+          })}
         </div>
       )}
 

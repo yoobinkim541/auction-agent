@@ -103,6 +103,36 @@ header .crawl-date { color: var(--muted); font-size: 11px; font-weight: 400; fon
 .stat-item.stat-urgent > b { color: var(--risky); }
 .stat-item.stat-soon > b { color: var(--caution); }
 
+/* ── Weekly Calendar ── */
+.week-cal {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;
+}
+.wc-day {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 12px 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 58px;
+  flex: 0 0 auto;
+  transition: border-color .12s, background .12s;
+}
+.wc-day:hover { border-color: var(--line-2); background: var(--panel2); }
+.wc-day.wc-today { border-color: rgba(240,69,69,.35); }
+.wc-day.wc-today .wc-label { color: #ff6b6b; }
+.wc-day.wc-sel { background: rgba(65,120,255,.08); border-color: var(--accent); }
+.wc-label { font-size: 9.5px; font-weight: 700; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; }
+.wc-cnt { font-family: var(--mono); font-size: 22px; font-weight: 700; color: var(--clean); line-height: 1.1; }
+.wc-total { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+
 /* ── Controls ── */
 .controls {
   display: flex;
@@ -655,8 +685,8 @@ table.mini td.num { text-align: right; font-family: var(--mono); }
   .app { padding: 12px 12px calc(80px + env(safe-area-inset-bottom)); }
   header h1 { font-size: 17px; }
 
-  .stat-banner { gap: 6px; }
-  .stat-item { padding: 8px 12px 10px; min-width: 64px; flex: 1; }
+  .stat-banner { gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap; padding-bottom: 2px; }
+  .stat-item { padding: 8px 12px 10px; min-width: 64px; flex: 0 0 auto; }
   .stat-num { font-size: 20px; }
 
   .tabbar {

@@ -67,7 +67,7 @@ export function scoreListing(
   const reasons: string[] = [];
   let passed = true;
 
-  if (!cfg.allowedTypes.includes(propertyType)) {
+  if (cfg.allowedTypes.length > 0 && !cfg.allowedTypes.includes(propertyType)) {
     passed = false;
     reasons.push(`물건종류(${propertyType}) 제외`);
   }

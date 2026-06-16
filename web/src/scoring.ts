@@ -56,7 +56,8 @@ export function scoreClient(item: ListingItem, cfg: ScoreConfig): ClientScore {
   if (assumed > 0) cleanScore = Math.min(cleanScore, 20);
 
   const wSum = cfg.wSafety + cfg.wClean || 1;
-  const totalScore = Math.round((cfg.wSafety * safetyScore + cfg.wClean * cleanScore) / wSum);
+  const zeroPiBonus = (item.location?.income?.zeroPiCandidate && !item.location?.income?.estimated) ? 5 : 0;
+  const totalScore = Math.min(100, Math.round((cfg.wSafety * safetyScore + cfg.wClean * cleanScore) / wSum) + zeroPiBonus);
 
   const reasons: string[] = [];
   let passed = true;
