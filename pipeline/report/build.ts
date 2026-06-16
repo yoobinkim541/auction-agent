@@ -6,6 +6,7 @@ import type {
   ListingReport, PreBidItem, RightsAnalysisResult, LocationAnalysis, Listing,
 } from '../../shared/types.ts';
 import { buildPreBidChecklist } from './checklist.ts';
+import { buildFieldwork } from './fieldwork.ts';
 
 const eok = (n: number | null | undefined) => (n == null ? '-' : (n / 1e8).toFixed(2) + '억');
 const pct = (n: number | null | undefined) => (n == null ? '-' : (n * 100).toFixed(1) + '%');
@@ -84,5 +85,6 @@ export function buildReport(args: {
   return {
     headline, recommendation, summary, rightsSummary, locationSummary, costSummary,
     checklist, dangerCount, warnCount, sourceUrl: listing.sourceUrl,
+    fieldwork: buildFieldwork(rights, loc, listing),
   };
 }

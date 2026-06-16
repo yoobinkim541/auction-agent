@@ -382,6 +382,7 @@ function Detail({ row, onClose, onFav }: { row: ListingItem; onClose: () => void
 
         {loc?.acquisition_cost && <CostCalculator row={row} loc={loc} />}
         {loc?.income && <IncomeBlock income={loc.income} />}
+        {loc?.eviction && <EvictionBlock ev={loc.eviction} />}
 
         {loc?.land_use_flags && loc.land_use_flags.length > 0 && (
           <Section title="토지이용 규제 · 이슈">
@@ -456,6 +457,27 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return <section className="sect"><h3>{title}</h3>{children}</section>;
 }
 
+const DIFF: Record<string, { label: string; cls: string }> = {
+  easy: { label: '쉬움', cls: 'reco-consider' }, medium: { label: '보통', cls: 'reco-caution' }, hard: { label: '어려움', cls: 'reco-avoid' },
+};
+/** 명도 난이도·인도명령·비용/기간 */
+function EvictionBlock({ ev }: { ev: import('./api.ts').EvictionObj }) {
+  const d = DIFF[ev.difficulty] ?? DIFF.medium!;
+  return (
+    <Section title="명도 난이도">
+      <p className="report-head">{ev.occupantLabel} · <span className={`badge ${d.cls}`}>{d.label}</span> · {ev.remedyLabel}{ev.writEligible ? '(인도명령 가능)' : ''}</p>
+      <p className="muted">{ev.reason}</p>
+      <div className="kv">
+        <div><span>예상 명도비</span><b>{eok(ev.costBase)} <span className="muted">({won(ev.costLow)}~{won(ev.costHigh)})</span></b></div>
+        <div><span>예상 기간</span><b>{ev.monthsLow}~{ev.monthsHigh}개월</b></div>
+      </div>
+      <p className="muted">🤝 협상: {ev.negotiationBrief}</p>
+      {ev.laws.length > 0 && <p className="lrf-laws">근거: {ev.laws.map((l) => `${l.name}${l.article ? ' ' + l.article : ''}`).join(' · ')}</p>}
+      {ev.notes.length > 0 && <ul className="warns">{ev.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
+    </Section>
+  );
+}
+
 /** 임대수익·출구(양도세) — '이거 사면 돈 되나' */
 function IncomeBlock({ income: inc }: { income: import('./api.ts').IncomeObj }) {
   const pctv = (n: number | null) => (n == null ? '-' : n.toFixed(1) + '%');
@@ -525,6 +547,21 @@ function ReportBlock({ report }: { report: import('./api.ts').ReportObj }) {
         <p className="muted"><b>입지</b> {report.locationSummary}</p>
         <p className="muted"><b>비용</b> {report.costSummary}</p>
       </section>
+
+      {report.fieldwork && (
+        <Section title={`발품 절감 — 원격 분석 ${report.fieldwork.legworkSavedPct}% 완료`}>
+          <div className="fw-bar"><div className="fw-fill" style={{ width: `${report.fieldwork.legworkSavedPct}%` }} /></div>
+          <div className="fw-done">
+            {report.fieldwork.remoteDone.map((r, i) => (
+              <span key={i} className={r.ok ? 'fw-ok' : 'fw-no'}>{r.ok ? '✓' : '·'} {r.label}</span>
+            ))}
+          </div>
+          <h4>🚶 현장 가서 이것만 확인하세요</h4>
+          {report.fieldwork.fieldChecklist.map((f, i) => (
+            <div key={i} className="fw-item"><b>{f.label}</b><div className="muted">{f.why}</div></div>
+          ))}
+        </Section>
+      )}
 
       {report.legalRisk && (
         <section className="sect">

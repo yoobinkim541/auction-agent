@@ -37,6 +37,7 @@ export interface LocationObj {
   admin_offices?: Record<string, string> | null;
   photos?: string[] | null;
   income?: IncomeObj | null;
+  eviction?: EvictionObj | null;
   report?: ReportObj | null;
 }
 export interface AcquisitionCostObj {
@@ -75,6 +76,17 @@ export interface IncomeObj {
   saleScenarios: SaleScenarioObj[];
   notes: string[];
 }
+export interface EvictionObj {
+  occupantLabel: string; remedy: string; remedyLabel: string; writEligible: boolean;
+  difficulty: 'easy' | 'medium' | 'hard';
+  costLow: number; costBase: number; costHigh: number; monthsLow: number; monthsHigh: number;
+  reason: string; negotiationBrief: string; laws: { name: string; article?: string }[]; notes: string[];
+}
+export interface FieldworkObj {
+  remoteDone: { label: string; ok: boolean }[];
+  fieldChecklist: { label: string; why: string }[];
+  legworkSavedPct: number;
+}
 export interface ReportObj {
   headline: string;
   recommendation: 'consider' | 'caution' | 'avoid';
@@ -85,6 +97,7 @@ export interface ReportObj {
   sourceUrl?: string;
   glossary?: GlossaryObj[];
   legalRisk?: LegalRiskObj;
+  fieldwork?: FieldworkObj;
 }
 export interface ListingItem {
   id: number;

@@ -22,6 +22,7 @@ import { assessLegalRisk } from './legal/risk.ts';
 import { addressToLawdCd } from './location/lawd-codes.ts';
 import { fetchRentDeals, estimateRent } from './income/rent.ts';
 import { analyzeIncome } from './income/yield.ts';
+import { analyzeEviction } from './eviction/index.ts';
 
 /** 사용자 취득세 가정(개인 1주택 기본). 다주택/법인이면 여기 또는 향후 설정에서 조정. */
 const TAX_ASSUMPTION = { homeCountAfter: 1 } as const;
@@ -221,6 +222,9 @@ async function main() {
           }
         }
       } catch { /* 전월세 조회 실패는 무시(임대분석 생략) */ }
+
+      // 2-d) 명도 난이도 엔진 (점유유형·인도명령·비용/기간·협상 브리프)
+      loc.eviction = analyzeEviction(rights, listing.areaM2, scanNotes);
 
       // 3) 최대 안전 입찰가
       rights.maxSafeBid = maxSafeBid(loc.marketPrice, rights.assumedAmount, 0.1);

@@ -170,6 +170,14 @@ table.mini td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .cfg input[type=number] { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
   border-radius: 6px; padding: 5px 8px; font-size: 12.5px; }
 
+/* 발품 절감 리포트 */
+.fw-bar { height: 8px; background: var(--panel2); border-radius: 5px; overflow: hidden; margin: 4px 0 10px; }
+.fw-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--clean, #4bc98c)); border-radius: 5px; transition: width .4s; }
+.fw-done { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; margin-bottom: 8px; }
+.fw-done .fw-ok { color: var(--clean, #4bc98c); }
+.fw-done .fw-no { color: var(--muted); }
+.fw-item { border-left: 3px solid var(--caution); padding: 5px 10px; margin: 6px 0; background: var(--panel2); border-radius: 0 8px 8px 0; font-size: 12.5px; }
+
 /* 매물 사진 갤러리 (가로 스크롤) */
 .gallery { display: flex; gap: 8px; overflow-x: auto; margin: 12px 0 4px; padding-bottom: 6px; -webkit-overflow-scrolling: touch; scroll-snap-type: x mandatory; }
 .gphoto { flex: 0 0 auto; scroll-snap-align: start; }

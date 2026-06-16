@@ -174,6 +174,28 @@ export interface IncomeAnalysis {
   notes: string[];
 }
 
+/** 명도 난이도·인도명령·비용/기간 분석 */
+export interface EvictionAnalysis {
+  occupantLabel: string; // 점유자 유형(한글)
+  remedy: 'WRIT' | 'LAWSUIT' | 'WRIT_THEN_LAWSUIT'; // 인도명령 / 명도소송 / 인도명령후소송
+  remedyLabel: string;
+  writEligible: boolean; // 인도명령 가능 여부
+  difficulty: 'easy' | 'medium' | 'hard';
+  costLow: number; costBase: number; costHigh: number; // 명도 비용 레인지(원)
+  monthsLow: number; monthsHigh: number; // 예상 소요기간(개월)
+  reason: string;
+  negotiationBrief: string; // 협상 레버리지 브리프
+  laws: { name: string; article?: string }[];
+  notes: string[];
+}
+
+/** 발품-절감 리포트: 원격으로 끝난 것 / 현장에 남은 것 */
+export interface FieldworkReport {
+  remoteDone: { label: string; ok: boolean }[]; // 원격 분석 완료 현황
+  fieldChecklist: { label: string; why: string }[]; // 현장 가서 확인할 것(이 매물 맞춤)
+  legworkSavedPct: number; // 발품 절감 추정 %
+}
+
 /** 매물별 종합 보고서 */
 export interface ListingReport {
   headline: string; // 한 줄 결론
@@ -188,6 +210,7 @@ export interface ListingReport {
   sourceUrl?: string; // 원본 상세페이지(더블체크용)
   glossary?: GlossaryEntry[]; // 이 매물에 등장한 용어 풀이(초보자용)
   legalRisk?: LegalRisk; // 법령 근거 리스크 평가
+  fieldwork?: FieldworkReport; // 발품-절감 리포트 + 현장 체크리스트
 }
 
 export interface SiteMetrics {
@@ -436,6 +459,8 @@ export interface LocationAnalysis {
   photos?: string[];
   /** 임대수익·출구 분석 */
   income?: IncomeAnalysis;
+  /** 명도 난이도 분석 */
+  eviction?: EvictionAnalysis;
   /** 매물별 종합 보고서 + 입찰 전 체크리스트 */
   report?: ListingReport;
 }
