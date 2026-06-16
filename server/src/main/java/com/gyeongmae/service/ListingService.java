@@ -51,7 +51,9 @@ public class ListingService {
                     'market_confidence', loc.market_confidence,
                     'safety_margin', loc.safety_margin,
                     'expected_bid_price', loc.expected_bid_price,
-                    'acquisition_cost', loc.acquisition_cost,
+                    'acquisition_cost', case when loc.acquisition_cost is not null
+                                             then jsonb_build_object('trueSafetyMargin', loc.acquisition_cost->'trueSafetyMargin')
+                                             else null end,
                     'sale_rounds', loc.sale_rounds,
                     'report', case when loc.report is not null
                                    then jsonb_build_object('recommendation', loc.report->>'recommendation')

@@ -710,7 +710,7 @@ function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
           )}
         </Section>
 
-        {loc?.acquisition_cost && <CostCalculator row={row} loc={loc} />}
+        {loc?.acquisition_cost?.bidPrice && <CostCalculator row={row} loc={loc} />}
         {loc?.income && <IncomeBlock income={loc.income} />}
         {loc?.eviction && <EvictionBlock ev={loc.eviction} />}
 
