@@ -83,7 +83,10 @@ async function humanScroll(page: Page): Promise<void> {
 }
 
 async function ensureLogin(page: Page): Promise<void> {
-  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' }).catch(() => {});
+  // 차단 상태면 로그인 시도 자체가 무의미 → 즉시 중단(타임아웃 대신 명확한 에러)
+  const blocked = await page.evaluate(() => /비정상접속|접속을\s*차단/.test(document.documentElement.innerHTML)).catch(() => false);
+  if (blocked) throw new SiteBlockedError();
   if (await page.locator(SEL.loggedInMarker).count()) return; // 세션 유효
   const id = process.env.DEONAKCHAL_ID;
   const pw = process.env.DEONAKCHAL_PW;

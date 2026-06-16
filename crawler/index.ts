@@ -53,6 +53,11 @@ async function main() {
 }
 
 main().catch((e) => {
+  if (e && (e.name === 'SiteBlockedError' || /SITE_BLOCKED|비정상접속/.test(String(e)))) {
+    console.error('⛔ 더낙찰옥션 접속 차단 상태 — 크롤 건너뜀. 차단 해제 후 재시도(또는 1577-9352 문의).');
+    process.exitCode = 0; // 차단은 '실패'가 아니라 '대기' → 타이머 정상 종료
+    return;
+  }
   console.error(e);
   process.exitCode = 1;
 });
