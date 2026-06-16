@@ -37,7 +37,7 @@ public class ListingService {
   private static final String SELECT_SLIM = """
       select l.id, l.case_no, l.court, l.address, l.property_type,
              l.appraisal_value, l.min_bid_price, l.fail_count, l.sale_date, l.area_m2, l.source,
-             l.source_url, l.is_favorite,
+             l.source_url, l.is_favorite, l.crawled_at,
              case when r.id is null then null
                   else jsonb_build_object(
                     'risk_grade', r.risk_grade,

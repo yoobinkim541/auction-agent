@@ -115,6 +115,7 @@ export interface ListingItem {
   source: string;
   source_url: string | null;
   is_favorite: boolean | null;
+  crawled_at: string | null;
   rights: RightsObj | null;
   location: LocationObj | null;
   total_score: number | null;

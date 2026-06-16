@@ -436,7 +436,10 @@ export default function App() {
               return (
                 <tr key={r.id} className={`row${r.location?.report?.recommendation === 'consider' ? ' row-consider' : ''}${sc.passed && r.location?.report?.recommendation === 'avoid' ? ' row-pass-avoid' : ''}`}>
                   <td className="star" onClick={() => toggleFav(r)} title="관심">{r.is_favorite ? '★' : '☆'}</td>
-                  <td className="mono" onClick={() => handleSelect(r)}>{r.case_no}</td>
+                  <td className="mono" onClick={() => handleSelect(r)}>
+                    {r.case_no}
+                    {r.crawled_at && r.crawled_at.slice(0, 10) >= TODAY && <span className="new-chip" title={`신규 수집: ${r.crawled_at.slice(0, 10)}`}>NEW</span>}
+                  </td>
                   <td onClick={() => handleSelect(r)} title={r.area_m2 != null ? `전용 ${r.area_m2.toFixed(1)}㎡` : undefined}>{TYPE_LABEL[r.property_type] ?? r.property_type}</td>
                   <td className="addr" onClick={() => handleSelect(r)}>{r.address}</td>
                   <td className="num" onClick={() => handleSelect(r)}>{eok(r.appraisal_value)}</td>
@@ -446,8 +449,10 @@ export default function App() {
                       ? <span className="no-mkt" title="시세 미확보 — 안전마진 산정 불가">?</span>
                       : pct(r.location.safety_margin)}
                     {r.location?.acquisition_cost?.trueSafetyMargin != null && (
-                      <span className="true-margin" title="진짜 안전마진(취득비용 반영)"> / {pct(r.location.acquisition_cost.trueSafetyMargin)}</span>
+                      <span className={`true-margin${(r.location.acquisition_cost.trueSafetyMargin ?? 0) < 0 ? ' neg-margin' : ''}`} title="진짜 안전마진(취득비용 반영)"> / {pct(r.location.acquisition_cost.trueSafetyMargin)}</span>
                     )}
+                    {r.location?.market_confidence === 'low' && <span className="conf-dot conf-low" title="시세 추정 신뢰도: 낮음(표본 부족)">●</span>}
+                    {r.location?.market_confidence === 'medium' && <span className="conf-dot conf-med" title="시세 추정 신뢰도: 보통">●</span>}
                   </td>
                   <td className="num" onClick={() => handleSelect(r)}>{r.rights ? (r.rights.assumed_amount ? eok(r.rights.assumed_amount) : '0') : '-'}</td>
                   <td onClick={() => handleSelect(r)}>
