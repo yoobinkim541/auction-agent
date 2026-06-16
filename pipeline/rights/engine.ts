@@ -281,7 +281,16 @@ function scanRedFlags(
   if (/토지별도등기/.test(text)) add('toji_byeoldo_deungi', 'danger', '토지별도등기 — 토지상 권리 인수 위험', true);
   if (/제시\s*외|제시외/.test(text)) add('jesioe_building', 'warn', '제시외 건물 존재 — 일괄/제외 여부 확인', false);
   if (/농지취득|농취|농지자격/.test(text)) add('nongchi', 'warn', '농지취득자격증명 필요 가능성', false);
-  if (/대항력\s*있는\s*임차인/.test(text)) add('senior_tenant', 'danger', '목록상 대항력 있는 임차인 표기 — 보증금 인수 위험, 등기/명세서 확인 필요', true);
+  // 목록 표기 "대항력있는임차인": 엔진이 이미 임차인 분석에서 대항력을 탐지했으면 중복 등록 방지.
+  // 엔진이 탐지하지 못한 경우(등기 미수집/불완전)에만 needsHumanReview=true로 escalate.
+  const engineFoundSenior = tenants.some((ta) => ta.hasOpposition);
+  if (/대항력\s*있는\s*임차인/.test(text)) {
+    if (engineFoundSenior) {
+      // 엔진이 이미 분석한 경우 — 중복 등록 안 함(아래 for 루프에서 처리됨)
+    } else {
+      add('senior_tenant', 'danger', '목록상 대항력 있는 임차인 표기 — 등기/명세서 확인 필요(엔진 미탐지: 등기 불완전 가능성)', true);
+    }
+  }
 
   for (const ta of tenants) {
     if (ta.hasOpposition) {
