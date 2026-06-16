@@ -123,6 +123,19 @@ export async function saveLocationAnalysis(listingId: number, loc: LocationAnaly
      loc.expectedBidPrice ?? null, loc.expectedBidBasis ?? null, j(loc.acquisitionCost), j(loc.siteComps),
      j(loc.saleRounds), j(loc.building), j(loc.landUseFlags), j(loc.adminOffices), j(loc.report), j(loc.photos), j(loc.income), j(loc.eviction)],
   );
+  // sale_rounds가 있으면 sale_date 일치 차수에서 fail_count 역산(N차 → N-1회 유찰)
+  if (loc.saleRounds && loc.saleRounds.length > 0) {
+    await query(
+      `UPDATE gm_listings SET fail_count = COALESCE(
+         (SELECT (r->>'round')::int - 1
+          FROM jsonb_array_elements($2::jsonb) AS r
+          WHERE r->>'date' = sale_date::text
+          LIMIT 1),
+         0
+       ) WHERE id = $1`,
+      [listingId, j(loc.saleRounds)],
+    );
+  }
 }
 
 export async function saveScore(listingId: number, s: Score): Promise<void> {
