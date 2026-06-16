@@ -124,6 +124,7 @@ export async function saveLocationAnalysis(listingId: number, loc: LocationAnaly
      j(loc.saleRounds), j(loc.building), j(loc.landUseFlags), j(loc.adminOffices), j(loc.report), j(loc.photos), j(loc.income), j(loc.eviction)],
   );
   // sale_rounds가 있으면 sale_date 일치 차수에서 fail_count 역산(N차 → N-1회 유찰)
+  // 일치하는 날짜 없으면(≒ 재분석 전 sale_date 갱신) 최근 차수를 하한으로 사용
   if (loc.saleRounds && loc.saleRounds.length > 0) {
     await query(
       `UPDATE gm_listings SET fail_count = COALESCE(
@@ -131,7 +132,9 @@ export async function saveLocationAnalysis(listingId: number, loc: LocationAnaly
           FROM jsonb_array_elements($2::jsonb) AS r
           WHERE r->>'date' = sale_date::text
           LIMIT 1),
-         0
+         (SELECT MAX((r->>'round')::int)
+          FROM jsonb_array_elements($2::jsonb) AS r
+          WHERE (r->>'date')::date < sale_date)
        ) WHERE id = $1`,
       [listingId, j(loc.saleRounds)],
     );

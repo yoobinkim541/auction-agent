@@ -473,6 +473,7 @@ table.mini td.num { text-align: right; font-family: var(--mono); }
   border: 1px solid rgba(65,120,255,.28);
   margin-right: 3px;
 }
+.round-badge-est { opacity: .7; border-style: dashed; }
 .flag-chip {
   display: inline-block;
   font-size: 10px;

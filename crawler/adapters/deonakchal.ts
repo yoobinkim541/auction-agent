@@ -508,6 +508,9 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
     return out;
   })) as { deunggi: string[][]; imcha: string[][]; baedang: string[][]; myungse: string[][]; gamjeong: string[][] };
 
+  // 페이지 전체 텍스트를 한 번만 fetch — 등기표 폴백 + 공시가격/입지 추출에 공용
+  const rawBody = (await page.evaluate(() => document.body.innerText).catch(() => '')) as string;
+
   const registry: RegistryEntry[] = [];
   for (const row of raw.deunggi) {
     const joined = row.join(' ');
@@ -520,6 +523,15 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
       demandedDistribution: /배당요구/.test(joined),
       raw: joined,
     });
+  }
+  // 등기표 키워드('접수일'/'권리종류')가 없는 빌라 등에서 테이블 검출 실패 시 텍스트 폴백
+  if (registry.length === 0) {
+    const bodyLines = rawBody.split('\n').map((l) => l.trim()).filter(Boolean);
+    for (const r of extractRegistryRowsFromText(bodyLines)) {
+      if (r.receiptDate) {
+        registry.push({ kind: r.kind, receiptDate: r.receiptDate, amount: r.amount ?? undefined, raw: '(텍스트추출)' });
+      }
+    }
   }
 
   const tenants: Tenant[] = [];
@@ -555,7 +567,6 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
   }
 
   // 공시가격(공동주택공시가격 / 개별공시지가) — 상세 본문에서 직접 추출
-  const rawBody = (await page.evaluate(() => document.body.innerText).catch(() => '')) as string;
   const bodyText = rawBody.replace(/\s+/g, ' ');
   const gongPrice = parseKoreanMoney(bodyText.match(/공동주택공시가격[^:]*:?\s*([\d,]{6,})/)?.[1]) ?? undefined;
   const landPrice = parseKoreanMoney(bodyText.match(/개별공시지가[^\d]{0,15}([\d,]{6,})/)?.[1]) ?? undefined;

@@ -22,6 +22,20 @@ function DDay({ dateStr }: { dateStr?: string | null }) {
   return <span className={`dday ${cls}`} title={dateStr ?? ''}>{label}</span>;
 }
 
+// sale_rounds 에서 현재 차수를 결정. 날짜 불일치(분석 이후 재매각기일 갱신) 시 추정.
+function resolveRound(rounds: { date: string; round: number }[], saleDate?: string | null, failCount?: number | null): { n: number; est: boolean } | null {
+  if (!rounds.length) return null;
+  const match = saleDate ? rounds.find((s) => s.date === saleDate) : null;
+  if (match) return { n: match.round, est: false };
+  const last = rounds[rounds.length - 1]!;
+  if (saleDate && last.date < saleDate) {
+    // sale_rounds 가 구형(분석 후 sale_date 재갱신) → 최소 last.round+1 차수로 추정
+    const n = (failCount != null && failCount > 0) ? failCount + 1 : last.round + 1;
+    return { n, est: true };
+  }
+  return { n: last.round, est: false };
+}
+
 const FLAG_LABEL: Record<string, string> = {
   yuchigwon: '유치권', beopjeong_jisangwon: '법정지상권', bunmyo_gijigwon: '분묘기지권',
   daejigwon_mideungi: '대지권미등기', toji_byeoldo_deungi: '토지별도등기',
@@ -487,9 +501,9 @@ export default function App() {
                   <td onClick={() => handleSelect(r)}>
                     <DDay dateStr={r.sale_date} /><span className="sale-date-txt">{r.sale_date ?? '-'}</span>
                     {(() => {
-                      const rds = r.location?.sale_rounds ?? [];
-                      const rnd = rds.find((s) => s.date === r.sale_date)?.round ?? (rds.length > 0 ? rds[rds.length - 1]!.round : null);
-                      return rnd && rnd > 1 ? <span className="round-badge" style={{ marginLeft: 3 }}>{rnd}차</span> : null;
+                      const rr = resolveRound(r.location?.sale_rounds ?? [], r.sale_date, r.fail_count);
+                      if (!rr || rr.n <= 1) return null;
+                      return <span className={`round-badge${rr.est ? ' round-badge-est' : ''}`} style={{ marginLeft: 3 }} title={rr.est ? '분석 후 재매각기일 갱신 — 차수 추정값' : ''}>{rr.n}차{rr.est ? '+' : ''}</span>;
                     })()}
                   </td>
                 </tr>
@@ -507,8 +521,8 @@ export default function App() {
             const tm = r.location?.acquisition_cost?.trueSafetyMargin;
             const assumed = r.rights?.assumed_amount ?? 0;
             const rounds = r.location?.sale_rounds ?? [];
-            const currentRound = rounds.find((s) => s.date === r.sale_date)?.round
-              ?? (rounds.length > 0 ? rounds[rounds.length - 1]!.round : null);
+            const resolvedRound = resolveRound(rounds, r.sale_date, r.fail_count);
+            const currentRound = resolvedRound?.n ?? null;
             const expBid = r.location?.expected_bid_price;
             const isIncomplete = r.location?.report?.headline?.startsWith('[데이터 불완전]') ?? false;
             const passedAvoid = sc.passed && reco === 'avoid';
@@ -701,7 +715,7 @@ function exportCSV(rows: Array<{ item: ListingItem; sc: ClientScore }>) {
     '사건번호', '종류', '면적(㎡)', '주소', '법원', '감정가(만원)', '최저가(만원)',
     '안전마진%', '인수금액(만원)', '권리등급', '점수', '통과', '미통과사유', '매각기일',
     '추정시세(만원)', '진짜마진%', '전세시세(만원)', '갭(만원)', '수익률%',
-    '현재차수', '예상낙찰가(만원)', '관심',
+    '현재차수', '예상낙찰가(만원)', 'AI권고', '위험항목수', '주의항목수', '등기미수집', '관심',
   ];
   const toMw = (v: number | null | undefined) => (v != null ? Math.round(v / 10000) : '');
   const pctStr = (v: number | null | undefined) => (v != null ? (v * 100).toFixed(1) : '');
@@ -709,9 +723,7 @@ function exportCSV(rows: Array<{ item: ListingItem; sc: ClientScore }>) {
 
   const lines = rows.map(({ item: r, sc }) => {
     const rounds = r.location?.sale_rounds ?? [];
-    const currentRound =
-      rounds.find((s) => s.date === r.sale_date)?.round ??
-      (rounds.length > 0 ? rounds[rounds.length - 1]!.round : null);
+    const currentRound = resolveRound(rounds, r.sale_date, r.fail_count)?.n ?? null;
     return [
       r.case_no, TYPE_LABEL[r.property_type] ?? r.property_type, r.area_m2 != null ? r.area_m2.toFixed(2) : '', r.address, r.court ?? '',
       toMw(r.appraisal_value), toMw(r.min_bid_price),
@@ -726,6 +738,10 @@ function exportCSV(rows: Array<{ item: ListingItem; sc: ClientScore }>) {
       r.location?.income?.grossYieldPct != null ? r.location.income.grossYieldPct.toFixed(1) : '',
       currentRound ?? '',
       toMw(r.location?.expected_bid_price),
+      r.location?.report?.recommendation ?? '',
+      r.location?.report?.dangerCount ?? '',
+      r.location?.report?.warnCount ?? '',
+      r.location?.report?.headline?.startsWith('[데이터 불완전]') ? '○' : '',
       r.is_favorite ? '★' : '',
     ].map(esc).join(',');
   });
@@ -785,9 +801,8 @@ function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
   }, [onClose, onPrev, onNext, row.source_url, row.case_no, onFav]);
 
   const detailRounds = loc?.sale_rounds ?? [];
-  const currentRound =
-    detailRounds.find((s) => s.date === row.sale_date)?.round ??
-    (detailRounds.length > 0 ? detailRounds[detailRounds.length - 1]!.round : null);
+  const detailResolvedRound = resolveRound(detailRounds, row.sale_date, row.fail_count);
+  const currentRound = detailResolvedRound?.n ?? null;
 
   return (
     <div className="drawer-bg" onClick={onClose}>
@@ -827,7 +842,7 @@ function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
           {row.area_m2 != null && <div><span>전용면적</span><b>{row.area_m2.toFixed(2)}㎡{` (${(row.area_m2 / 3.3058).toFixed(1)}평)`}</b></div>}
           <div><span>매각기일</span><b>{row.sale_date ?? '-'}</b></div>
           {currentRound != null && (
-            <div><span>현재 차수</span><b className={currentRound > 1 ? 'danger' : ''}>{currentRound}차{currentRound > 1 ? ` · 유찰 ${currentRound - 1}회` : ''}</b></div>
+            <div><span>현재 차수</span><b className={currentRound > 1 ? 'danger' : ''} title={detailResolvedRound?.est ? '분석 후 재매각기일 갱신 — 차수 추정값' : ''}>{currentRound}차{detailResolvedRound?.est ? '+' : ''}{currentRound > 1 ? ` · 유찰 ${currentRound - 1}회${detailResolvedRound?.est ? '~' : ''}` : ''}</b></div>
           )}
           <div><span>추정시세</span><b>{loc?.market_price == null ? <span className="muted">미확보 — 안전마진 산정 불가</span> : <>{eok(loc.market_price)}{loc.market_confidence ? ` · 신뢰도 ${CONF[loc.market_confidence]}` : ''}</>}</b></div>
           <div><span>예상낙찰가</span><b>{eok(loc?.expected_bid_price)}</b></div>

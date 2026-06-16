@@ -106,18 +106,29 @@ export function buildPreBidChecklist(args: {
     if (/말소기준일.*불일치/.test(w)) push({ id: 'malso-mismatch', label: '말소기준일 vs 명세서 최선순위 불일치', category: '등기인수', severity: 'warn', detail: w, source: '등기/명세서', verify: '매각물건명세서 최선순위 설정일자' });
   }
 
-  // 5) 토지이용 규제 flags (위험만 체크리스트로)
+  // 5) 지층/지하층/반지하 — 시세 과대 추정·거주성·대출 제한 주의
+  if (/지층|지하층|반지하/.test(listing.address)) {
+    push({
+      id: 'basement-unit',
+      label: '지하/지층 호실 — 시세비교 왜곡·거주성·대출 주의',
+      category: '물건하자', severity: 'warn',
+      detail: '지층·지하층·반지하는 MOLIT 실거래 비교군이 지상층 기준일 수 있어 시세가 과대 산출될 수 있습니다. 주택담보대출 LTV 제한(또는 불가), 침수·채광·환기 위험, 건축물대장 용도(창고 vs 주거) 확인 필수.',
+      source: '주소(자동감지)', verify: '건축물대장 용도, 현장 채광·침수 여부, 대출 한도 확인',
+    });
+  }
+
+  // 6) 토지이용 규제 flags (위험만 체크리스트로)
   for (const lf of loc.landUseFlags ?? []) {
     if (lf.kind === 'info') continue;
     push({ id: `luf-${lf.label}`, label: lf.label, category: '공법규제', severity: lf.kind === 'risk' ? (lf.severity === 'high' ? 'danger' : 'warn') : 'info', detail: lf.impact ?? lf.label, source: '토지이용계획(감정평가요항)', verify: '토지이용계획확인원' });
   }
 
-  // 6) 자연어 키워드 스캔
+  // 7) 자연어 키워드 스캔
   for (const r of NOTE_RULES) {
     if (r.re.test(text)) push({ id: `note-${r.id}`, label: r.label, category: r.category, severity: r.severity, detail: r.detail, source: r.source, verify: r.verify });
   }
 
-  // 7) 절차·비용 상시 항목
+  // 8) 절차·비용 상시 항목
   const deposit = Math.round(listing.minBidPrice * 0.1);
   push({ id: 'bid-deposit', label: `입찰보증금 ${won(deposit)} (최저가 10%)`, category: '절차비용', severity: 'info', detail: `당 회차 최저매각가 ${won(listing.minBidPrice)}의 10%. 재매각 사건은 20~30%로 상향.`, source: '절차', verify: '매각물건명세서 특별매각조건(보증금 비율)' });
   push({ id: 'balance-deadline', label: '대금납부기한(미납 시 보증금 몰수)', category: '절차비용', severity: 'info', detail: '매각허가결정 확정 후 통상 약 1개월 내 잔금 전액 납부. 미납 시 보증금 몰취·재경매. 인수금액+취득세+잔금 자금계획 필요.', source: '절차', verify: '법원 대금지급기한 통지' });
@@ -126,7 +137,7 @@ export function buildPreBidChecklist(args: {
   }
   push({ id: 'registry-fresh', label: '입찰 직전 등기 재확인', category: '등기인수', severity: 'info', detail: '수집 시점 이후 신규 가압류·임차권등기·대위변제 말소 등 변동 가능 — 입찰 직전 등기사항전부증명서 재발급으로 확인.', source: '절차', verify: '인터넷등기소 등기사항전부증명서 재발급' });
 
-  // 8) 원본 더블체크 안내(항상)
+  // 9) 원본 더블체크 안내(항상)
   push({ id: 'verify-source', label: '원본 공부서류 직접 확인', category: '절차비용', severity: 'info', detail: '본 분석은 사이트 파싱 기반 참고용. 매각물건명세서·현황조사서·감정평가서·등기부 원본을 입찰 전 반드시 직접 확인.', source: '원본 상세페이지', verify: listing.sourceUrl ?? '더낙찰옥션 상세페이지' });
 
   // 심각도 순 정렬(danger→warn→info), 카테고리 보조
