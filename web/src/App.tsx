@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  fetchListings, fetchDetail, fetchLastCrawl, triggerJob, setFavorite, apiBase, won, eok,
+  fetchListings, fetchDetail, fetchLastCrawl, triggerJob, fetchJobStatus, setFavorite, apiBase, won, eok,
   type ListingItem, type RightsObj, type LocationObj,
 } from './api.ts';
 import { scoreClient, DEFAULT_CONFIG, type ScoreConfig, type ClientScore } from './scoring.ts';
@@ -42,8 +42,14 @@ const RISK: Record<string, { label: string; cls: string }> = {
 const pct = (n: number | null | undefined) => (n == null ? '-' : (n * 100).toFixed(1) + '%');
 const CONF: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' };
 
-type SortKey = 'score' | 'safety' | 'trueSafety' | 'sale' | 'price';
+type SortKey = 'score' | 'safety' | 'trueSafety' | 'sale' | 'price' | 'appraisal' | 'assumed';
 const CFG_KEY = 'gm_score_config';
+const UI_KEY = 'gm_ui_state';
+
+const SORT_DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
+  score: 'desc', safety: 'desc', trueSafety: 'desc', sale: 'asc',
+  price: 'asc', appraisal: 'desc', assumed: 'asc',
+};
 
 function loadConfig(): ScoreConfig {
   try {
@@ -53,6 +59,15 @@ function loadConfig(): ScoreConfig {
   return DEFAULT_CONFIG;
 }
 
+type UIState = { sort?: SortKey; sortDir?: 'asc' | 'desc'; type?: string; hideExpired?: boolean };
+function loadUIState(): UIState {
+  try {
+    const raw = localStorage.getItem(UI_KEY);
+    if (raw) return JSON.parse(raw) as UIState;
+  } catch { /* ignore */ }
+  return {};
+}
+
 export default function App() {
   const [rows, setRows] = useState<ListingItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,10 +75,12 @@ export default function App() {
   const [onlyPassed, setOnlyPassed] = useState(true);
   const [onlyFavorite, setOnlyFavorite] = useState(false);
   const [onlyMultiRound, setOnlyMultiRound] = useState(false);
-  const [hideExpired, setHideExpired] = useState(true);
-  const [type, setType] = useState('all');
+  const [onlyZeroPi, setOnlyZeroPi] = useState(false);
+  const [hideExpired, setHideExpired] = useState<boolean>(() => loadUIState().hideExpired ?? true);
+  const [type, setType] = useState<string>(() => loadUIState().type ?? 'all');
   const [q, setQ] = useState('');
-  const [sort, setSort] = useState<SortKey>('score');
+  const [sort, setSort] = useState<SortKey>(() => loadUIState().sort ?? 'score');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => loadUIState().sortDir ?? 'desc');
   const [selected, setSelected] = useState<ListingItem | null>(null);
   const [cfg, setCfg] = useState<ScoreConfig>(loadConfig);
   const [showCfg, setShowCfg] = useState(false);
@@ -71,6 +88,7 @@ export default function App() {
   const [detailLoading, setDetailLoading] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<{ msg: string; ok: boolean } | null>(null);
   const jobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [lastCrawl, setLastCrawl] = useState<string | null>(null);
 
   const load = () => {
@@ -80,6 +98,7 @@ export default function App() {
   };
   useEffect(load, []);
   useEffect(() => { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }, [cfg]);
+  useEffect(() => { localStorage.setItem(UI_KEY, JSON.stringify({ sort, sortDir, type, hideExpired })); }, [sort, sortDir, type, hideExpired]);
 
   const toggleFav = (item: ListingItem) => {
     const nv = !item.is_favorite;
@@ -91,13 +110,42 @@ export default function App() {
   const showJob = (msg: string, ok: boolean, ttl = ok ? 4000 : 7000) => {
     if (jobTimerRef.current) clearTimeout(jobTimerRef.current);
     setJobStatus({ msg, ok });
-    jobTimerRef.current = setTimeout(() => setJobStatus(null), ttl);
+    if (ttl > 0) jobTimerRef.current = setTimeout(() => setJobStatus(null), ttl);
   };
+  const stopPoll = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
   const runJob = (job: 'crawl' | 'analyze' | 'eval' | 'ingest-legal', label: string) => {
-    showJob(`${label} 시작 중…`, true, 60000);
+    stopPoll();
+    showJob(`${label} 시작 중…`, true, 0);
     triggerJob(job)
-      .then(() => showJob(`${label} 실행됨`, true))
+      .then(() => {
+        showJob(`${label} 실행 중…`, true, 0);
+        const start = Date.now();
+        pollRef.current = setInterval(async () => {
+          const elapsed = Math.round((Date.now() - start) / 1000);
+          const mins = Math.floor(elapsed / 60), secs = elapsed % 60;
+          const elapsedStr = mins > 0 ? `${mins}분 ${secs}초` : `${secs}초`;
+          try {
+            const st = await fetchJobStatus();
+            const s = st[job];
+            if (s?.state === 'ok') {
+              stopPoll();
+              showJob(`✓ ${label} 완료 (${elapsedStr})`, true);
+              load();
+            } else if (s?.state === 'error') {
+              stopPoll();
+              showJob(`✕ ${label} 실패`, false);
+            } else {
+              showJob(`${label} 실행 중… ${elapsedStr}`, true, 0);
+            }
+          } catch { /* ignore poll errors */ }
+        }, 8000);
+      })
       .catch((e: unknown) => showJob(`오류: ${e instanceof Error ? e.message : String(e)}`, false));
+  };
+
+  const handleSort = (key: SortKey) => {
+    if (sort === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSort(key); setSortDir(SORT_DEFAULT_DIR[key]); }
   };
 
   const handleSelect = (item: ListingItem) => {
@@ -126,6 +174,7 @@ export default function App() {
     if (hideExpired) v = v.filter((x) => !x.item.sale_date || x.item.sale_date >= TODAY);
     if (onlyPassed) v = v.filter((x) => x.sc.passed);
     if (onlyFavorite) v = v.filter((x) => x.item.is_favorite);
+    if (onlyZeroPi) v = v.filter((x) => x.item.location?.income?.zeroPiCandidate === true);
     if (onlyMultiRound) v = v.filter((x) => {
       const rs = x.item.location?.sale_rounds ?? [];
       const rnd = rs.find((s) => s.date === x.item.sale_date)?.round ?? (rs.length > 0 ? rs[rs.length - 1]!.round : null);
@@ -134,18 +183,18 @@ export default function App() {
     if (type !== 'all') v = v.filter((x) => x.item.property_type === type);
     if (q.trim()) v = v.filter((x) => x.item.address.includes(q.trim()) || x.item.case_no.includes(q.trim()));
     v.sort((a, b) => {
-      if (sort === 'safety') return (b.item.location?.safety_margin ?? -1) - (a.item.location?.safety_margin ?? -1);
-      if (sort === 'sale') {
-        const da = a.item.sale_date ?? '9999';
-        const db = b.item.sale_date ?? '9999';
-        return da.localeCompare(db);
-      }
-      if (sort === 'trueSafety') return (b.item.location?.acquisition_cost?.trueSafetyMargin ?? -1) - (a.item.location?.acquisition_cost?.trueSafetyMargin ?? -1);
-      if (sort === 'price') return (a.item.min_bid_price ?? Infinity) - (b.item.min_bid_price ?? Infinity);
-      return b.sc.totalScore - a.sc.totalScore;
+      let diff = 0;
+      if (sort === 'safety') diff = (a.item.location?.safety_margin ?? -1) - (b.item.location?.safety_margin ?? -1);
+      else if (sort === 'sale') diff = (a.item.sale_date ?? '9999').localeCompare(b.item.sale_date ?? '9999');
+      else if (sort === 'trueSafety') diff = (a.item.location?.acquisition_cost?.trueSafetyMargin ?? -1) - (b.item.location?.acquisition_cost?.trueSafetyMargin ?? -1);
+      else if (sort === 'price') diff = (a.item.min_bid_price ?? Infinity) - (b.item.min_bid_price ?? Infinity);
+      else if (sort === 'appraisal') diff = (a.item.appraisal_value ?? 0) - (b.item.appraisal_value ?? 0);
+      else if (sort === 'assumed') diff = (a.item.rights?.assumed_amount ?? 0) - (b.item.rights?.assumed_amount ?? 0);
+      else diff = a.sc.totalScore - b.sc.totalScore;
+      return sortDir === 'asc' ? diff : -diff;
     });
     return v;
-  }, [rows, cfg, hideExpired, onlyPassed, onlyFavorite, onlyMultiRound, type, q, sort]);
+  }, [rows, cfg, hideExpired, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, type, q, sort, sortDir]);
 
   const favCount = rows.filter((r) => r.is_favorite).length;
   const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
@@ -162,7 +211,8 @@ export default function App() {
       return d !== null && d >= 0 && d <= 7;
     }).length;
     const reviewCount = upcoming.filter((x) => x.item.rights?.risk_grade === 'review_required').length;
-    return { total: rows.length, passed, todayUrgent, week, reviewCount };
+    const zeroPiCount = upcoming.filter((x) => x.item.location?.income?.zeroPiCandidate === true).length;
+    return { total: rows.length, passed, todayUrgent, week, reviewCount, zeroPiCount };
   }, [rows, cfg]);
 
   const selNavIdx = selected ? view.findIndex((x) => x.item.id === selected.id) : -1;
@@ -213,6 +263,17 @@ export default function App() {
               <b className="stat-num">{stats.reviewCount}</b>
             </div>
           )}
+          {stats.zeroPiCount > 0 && (
+            <div
+              className={`stat-item stat-zeropi${onlyZeroPi ? ' on' : ''}`}
+              onClick={() => { setOnlyZeroPi((z) => !z); setOnlyPassed(false); }}
+              title="클릭하면 무피(無피) 후보만 표시"
+              style={{ cursor: 'pointer' }}
+            >
+              <span className="stat-label">무피후보★</span>
+              <b className="stat-num">{stats.zeroPiCount}</b>
+            </div>
+          )}
         </div>
       )}
 
@@ -221,17 +282,20 @@ export default function App() {
         <label><input type="checkbox" checked={onlyPassed} onChange={(e) => setOnlyPassed(e.target.checked)} /> 통과만</label>
         <label><input type="checkbox" checked={onlyFavorite} onChange={(e) => setOnlyFavorite(e.target.checked)} /> ★관심만 ({favCount})</label>
         <label><input type="checkbox" checked={onlyMultiRound} onChange={(e) => setOnlyMultiRound(e.target.checked)} /> 2차↑ 유찰</label>
+        <label><input type="checkbox" checked={onlyZeroPi} onChange={(e) => setOnlyZeroPi(e.target.checked)} /> ★무피후보</label>
         <select value={type} onChange={(e) => setType(e.target.value)}>
           <option value="all">전체 종류</option>
           {Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
         <input placeholder="주소·사건번호 검색" value={q} onChange={(e) => setQ(e.target.value)} />
-        <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
+        <select value={sort} onChange={(e) => handleSort(e.target.value as SortKey)}>
           <option value="score">점수순</option>
           <option value="trueSafety">진짜마진순</option>
           <option value="safety">안전마진순</option>
           <option value="sale">임박순</option>
           <option value="price">최저가순</option>
+          <option value="appraisal">감정가순</option>
+          <option value="assumed">인수금액순</option>
         </select>
         <button onClick={() => setShowCfg((s) => !s)}>{showCfg ? '조건 닫기' : '⚙ 조건·기준'}</button>
         <button onClick={load}>새로고침</button>
@@ -253,8 +317,14 @@ export default function App() {
         <table className="grid">
           <thead>
             <tr>
-              <th></th><th>사건번호</th><th>종류</th><th>소재지</th><th>감정가</th><th>최저가</th>
-              <th>안전마진</th><th>인수금액</th><th>권리</th><th>점수</th><th>매각기일</th>
+              <th></th><th>사건번호</th><th>종류</th><th>소재지</th>
+              <ThSort col="appraisal" cur={sort} dir={sortDir} onSort={handleSort}>감정가</ThSort>
+              <ThSort col="price" cur={sort} dir={sortDir} onSort={handleSort}>최저가</ThSort>
+              <ThSort col="safety" cur={sort} dir={sortDir} onSort={handleSort}><span title="안전마진 / 진짜마진(취득비용 반영)">마진</span></ThSort>
+              <ThSort col="assumed" cur={sort} dir={sortDir} onSort={handleSort}>인수금액</ThSort>
+              <th>권리</th>
+              <ThSort col="score" cur={sort} dir={sortDir} onSort={handleSort}>점수</ThSort>
+              <ThSort col="sale" cur={sort} dir={sortDir} onSort={handleSort}>매각기일</ThSort>
             </tr>
           </thead>
           <tbody>
@@ -268,11 +338,23 @@ export default function App() {
                   <td className="addr" onClick={() => handleSelect(r)}>{r.address}</td>
                   <td className="num" onClick={() => handleSelect(r)}>{eok(r.appraisal_value)}</td>
                   <td className="num" onClick={() => handleSelect(r)}>{eok(r.min_bid_price)}</td>
-                  <td className="num" onClick={() => handleSelect(r)}>{pct(r.location?.safety_margin)}</td>
+                  <td className="num safety-cell" onClick={() => handleSelect(r)}>
+                    {pct(r.location?.safety_margin)}
+                    {r.location?.acquisition_cost?.trueSafetyMargin != null && (
+                      <span className="true-margin" title="진짜 안전마진(취득비용 반영)"> / {pct(r.location.acquisition_cost.trueSafetyMargin)}</span>
+                    )}
+                  </td>
                   <td className="num" onClick={() => handleSelect(r)}>{r.rights ? (r.rights.assumed_amount ? eok(r.rights.assumed_amount) : '0') : '-'}</td>
                   <td onClick={() => handleSelect(r)}><span className={`badge ${risk.cls}`}>{risk.label}</span></td>
                   <td className="num" onClick={() => handleSelect(r)}><b className={sc.totalScore >= 70 ? 'good' : sc.totalScore < 40 ? 'danger' : ''}>{sc.totalScore}</b></td>
-                  <td onClick={() => handleSelect(r)}><DDay dateStr={r.sale_date} /><span className="sale-date-txt">{r.sale_date ?? '-'}</span></td>
+                  <td onClick={() => handleSelect(r)}>
+                    <DDay dateStr={r.sale_date} /><span className="sale-date-txt">{r.sale_date ?? '-'}</span>
+                    {(() => {
+                      const rds = r.location?.sale_rounds ?? [];
+                      const rnd = rds.find((s) => s.date === r.sale_date)?.round ?? (rds.length > 0 ? rds[rds.length - 1]!.round : null);
+                      return rnd && rnd > 1 ? <span className="round-badge" style={{ marginLeft: 3 }}>{rnd}차</span> : null;
+                    })()}
+                  </td>
                 </tr>
               );
             })}
@@ -321,6 +403,7 @@ export default function App() {
                 <div className="card-foot">
                   <span className="card-score">점수 <b>{sc.totalScore}</b></span>
                   {assumed > 0 && <span className="card-assumed">인수 {eok(assumed)}</span>}
+                  {r.location?.income?.zeroPiCandidate && <span className="zero-pi-chip">★무피</span>}
                   {currentRound && currentRound > 1 && <span className="round-badge">{currentRound}차 진행</span>}
                   <DDay dateStr={r.sale_date} />
                   <span className="card-go">자세히 ›</span>
@@ -502,15 +585,31 @@ function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
   const loc: LocationObj | null = row.location;
   const risk = RISK[rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
 
+  const [copied, setCopied] = useState(false);
+  const copyCase = () => {
+    navigator.clipboard.writeText(row.case_no).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    }).catch(() => {});
+  };
+
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
       if (e.key === 'ArrowLeft' && onPrev) { e.preventDefault(); onPrev(); }
       if (e.key === 'ArrowRight' && onNext) { e.preventDefault(); onNext(); }
+      if (e.key === 'o' && row.source_url && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as Element)?.tagName)) {
+        e.preventDefault();
+        window.open(row.source_url, '_blank', 'noopener,noreferrer');
+      }
+      if (e.key === 'c' && !e.metaKey && !e.ctrlKey && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as Element)?.tagName)) {
+        e.preventDefault();
+        copyCase();
+      }
     };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
-  }, [onClose, onPrev, onNext]);
+  }, [onClose, onPrev, onNext, row.source_url, row.case_no]);
 
   const detailRounds = loc?.sale_rounds ?? [];
   const currentRound =
@@ -531,11 +630,13 @@ function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
         {loading && <p className="detail-loading">상세 분석 불러오는 중…</p>}
         <h2>
           <span className="star" onClick={onFav} title="관심">{row.is_favorite ? '★' : '☆'}</span>{' '}
-          {row.case_no} <span className={`badge ${risk.cls}`}>{risk.label}</span>
+          {row.case_no}{' '}
+          <button className="copy-btn" onClick={copyCase} title="사건번호 복사 (단축키: c)">{copied ? '✓' : '⧉'}</button>{' '}
+          <span className={`badge ${risk.cls}`}>{risk.label}</span>
         </h2>
         <p className="addr">{row.address} · {TYPE_LABEL[row.property_type]} · {row.court}</p>
         {row.source_url && (
-          <p className="srclink"><a href={row.source_url} target="_blank" rel="noopener noreferrer">🔗 원본 상세페이지에서 더블체크 ↗</a></p>
+          <p className="srclink"><a href={row.source_url} target="_blank" rel="noopener noreferrer">🔗 원본 상세페이지에서 더블체크 ↗</a> <span className="key-hint" title="단축키">o</span></p>
         )}
         {loc?.photos && loc.photos.length > 0 && (
           <div className="gallery">
@@ -679,6 +780,17 @@ function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
         </Section>
       </aside>
     </div>
+  );
+}
+
+function ThSort({ col, cur, dir, onSort, children }: {
+  col: SortKey; cur: SortKey; dir: 'asc' | 'desc'; onSort: (c: SortKey) => void; children: React.ReactNode;
+}) {
+  const active = col === cur;
+  return (
+    <th className={`sortable${active ? ' sorted' : ''}`} onClick={() => onSort(col)}>
+      {children}{active ? <span className="sort-ind">{dir === 'asc' ? ' ↑' : ' ↓'}</span> : null}
+    </th>
   );
 }
 

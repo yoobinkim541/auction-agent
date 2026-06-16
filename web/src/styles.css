@@ -87,6 +87,9 @@ header .crawl-date { color: var(--muted); font-size: 11px; font-weight: 400; fon
 .stat-item.stat-review .stat-num { color: var(--muted-2); }
 .stat-item.stat-review.on { border-color: var(--caution); background: rgba(234,179,8,.06); }
 .stat-item.stat-review.on .stat-num { color: var(--caution); }
+.stat-item.stat-zeropi .stat-num { color: var(--clean); }
+.stat-item.stat-zeropi { border-color: rgba(30,199,88,.2); }
+.stat-item.stat-zeropi.on { background: rgba(30,199,88,.07); border-color: rgba(30,199,88,.4); }
 /* legacy: hide separators if still in markup */
 .stat-sep { display: none; }
 /* legacy: if old stat-item <b> still used */
@@ -150,6 +153,10 @@ table.grid th {
   white-space: nowrap;
 }
 table.grid th:first-child { width: 32px; }
+table.grid th.sortable { cursor: pointer; user-select: none; }
+table.grid th.sortable:hover { color: var(--muted-2); }
+table.grid th.sorted { color: var(--text); }
+.sort-ind { color: var(--accent); font-size: 10px; }
 table.grid td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 .row { cursor: pointer; transition: background .1s; }
 .row:hover { background: var(--panel); }
@@ -426,6 +433,16 @@ table.mini td.num { text-align: right; font-family: var(--mono); }
   border: 1px solid rgba(240,69,69,.24);
   margin-left: 2px;
 }
+.zero-pi-chip {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(30,199,88,.12);
+  color: var(--clean);
+  border: 1px solid rgba(30,199,88,.3);
+}
 
 /* ── Color helpers ── */
 .good { color: var(--clean); }
@@ -472,6 +489,11 @@ table.mini td.num { text-align: right; font-family: var(--mono); }
 .srclink { margin: 4px 0 0; font-size: 12.5px; }
 .srclink a { color: #6ea8fe; text-decoration: none; }
 .srclink a:hover { text-decoration: underline; }
+.key-hint { display: inline-block; font-family: var(--mono); font-size: 10px; color: var(--muted); background: var(--panel2); border: 1px solid var(--line-2); border-radius: 3px; padding: 0 4px; margin-left: 4px; vertical-align: middle; }
+.copy-btn { background: none; border: 1px solid var(--line-2); color: var(--muted); font-size: 12px; border-radius: 4px; padding: 0 5px; cursor: pointer; vertical-align: middle; transition: border-color .12s, color .12s; line-height: 1.4; }
+.copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+.true-margin { color: var(--muted); font-size: 11px; }
+.safety-cell { white-space: nowrap; }
 
 /* ── Recommendation badges ── */
 .reco-consider { background: rgba(30,199,88,.1); color: var(--clean); border: 1px solid rgba(30,199,88,.25); }

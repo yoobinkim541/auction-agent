@@ -145,6 +145,13 @@ export async function triggerJob(job: 'crawl' | 'analyze' | 'eval' | 'ingest-leg
   if (!res.ok) throw new Error(`잡 실행 실패 (${res.status})`);
 }
 
+export interface JobStatus { state: 'idle' | 'running' | 'ok' | 'error'; startedAt?: string; finishedAt?: string; exitCode?: number; error?: string; }
+export async function fetchJobStatus(): Promise<Record<string, JobStatus>> {
+  const res = await fetch(`${BASE}/api/jobs/status`);
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return (await res.json()) as Record<string, JobStatus>;
+}
+
 export async function setFavorite(id: number, value: boolean): Promise<void> {
   await fetch(`${BASE}/api/listings/${id}/favorite?value=${value}`, { method: 'POST' });
 }
