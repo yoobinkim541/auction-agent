@@ -42,13 +42,13 @@ const RISK: Record<string, { label: string; cls: string }> = {
 const pct = (n: number | null | undefined) => (n == null ? '-' : (n * 100).toFixed(1) + '%');
 const CONF: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' };
 
-type SortKey = 'score' | 'safety' | 'trueSafety' | 'sale' | 'price' | 'appraisal' | 'assumed';
+type SortKey = 'score' | 'safety' | 'trueSafety' | 'sale' | 'price' | 'appraisal' | 'assumed' | 'gap';
 const CFG_KEY = 'gm_score_config';
 const UI_KEY = 'gm_ui_state';
 
 const SORT_DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
   score: 'desc', safety: 'desc', trueSafety: 'desc', sale: 'asc',
-  price: 'asc', appraisal: 'desc', assumed: 'asc',
+  price: 'asc', appraisal: 'desc', assumed: 'asc', gap: 'asc',
 };
 
 function loadConfig(): ScoreConfig {
@@ -190,6 +190,11 @@ export default function App() {
       else if (sort === 'price') diff = (a.item.min_bid_price ?? Infinity) - (b.item.min_bid_price ?? Infinity);
       else if (sort === 'appraisal') diff = (a.item.appraisal_value ?? 0) - (b.item.appraisal_value ?? 0);
       else if (sort === 'assumed') diff = (a.item.rights?.assumed_amount ?? 0) - (b.item.rights?.assumed_amount ?? 0);
+      else if (sort === 'gap') {
+        const ga = a.item.location?.income?.gapInvestment ?? Infinity;
+        const gb = b.item.location?.income?.gapInvestment ?? Infinity;
+        diff = ga - gb;
+      }
       else diff = a.sc.totalScore - b.sc.totalScore;
       return sortDir === 'asc' ? diff : -diff;
     });
@@ -296,6 +301,7 @@ export default function App() {
           <option value="price">최저가순</option>
           <option value="appraisal">감정가순</option>
           <option value="assumed">인수금액순</option>
+          <option value="gap">갭(소자본)순</option>
         </select>
         <button onClick={() => setShowCfg((s) => !s)}>{showCfg ? '조건 닫기' : '⚙ 조건·기준'}</button>
         <button onClick={load}>새로고침</button>
