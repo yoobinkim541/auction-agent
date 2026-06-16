@@ -46,19 +46,30 @@ async function kakaoGeocode(address: string): Promise<GeocodeResult | null> {
 }
 
 /** 국토부 매매 실거래가(최근 N개월) — 물건종류별 base 엔드포인트 + JSON. */
+// 법정동·월 단위 캐시 — 같은 동네 매물이 동일 MOLIT 데이터를 재호출하지 않게(쿼터 절약).
+const _molitCache = new Map<string, Comparable[]>();
+let _molitQuotaHit = false; // 429(일일쿼터 초과) 감지 시 이후 호출 중단
+
 async function molitTrades(propertyType: PropertyType, lawdCd: string, months: number): Promise<Comparable[]> {
   const ep = MOLIT_ENDPOINT[propertyType];
   const key = process.env.MOLIT_SERVICE_KEY;
   if (!ep || !key) return [];
   const out: Comparable[] = [];
   for (const ym of recentYearMonths(months)) {
+    const ck = `${ep}:${lawdCd}:${ym}`;
+    const cached = _molitCache.get(ck);
+    if (cached) { out.push(...cached); continue; }
+    if (_molitQuotaHit) break; // 쿼터 초과 후엔 더 호출 안 함
     const url =
       `${MOLIT_BASE}/${ep}/get${ep}?serviceKey=${encodeURIComponent(key)}&LAWD_CD=${lawdCd}&DEAL_YMD=${ym}&numOfRows=400&pageNo=1&_type=json`;
     try {
       const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(12000) });
+      if (res.status === 429) { _molitQuotaHit = true; console.warn('[molit] 일일 쿼터 초과(429) — 이후 실거래 조회 중단'); break; }
       if (!res.ok) continue;
       const json = (await res.json()) as MolitResponse;
-      out.push(...parseMolitJson(json?.response?.body?.items?.item));
+      const parsed = parseMolitJson(json?.response?.body?.items?.item);
+      _molitCache.set(ck, parsed);
+      out.push(...parsed);
     } catch {
       /* 개별 월 실패는 무시 */
     }

@@ -49,6 +49,10 @@ const median = (xs: number[]): number | null => {
 interface RentItem { deposit?: unknown; monthlyRent?: unknown; excluUseAr?: unknown; dealYear?: unknown; dealMonth?: unknown }
 interface RentResp { response?: { body?: { items?: { item?: RentItem | RentItem[] } } } }
 
+// 법정동·월 단위 캐시 + 429(일일쿼터) 중단 — 매매와 동일 키를 공유하므로 호출 절약 필수.
+const _rentCache = new Map<string, RentDeal[]>();
+let _rentQuotaHit = false;
+
 /** MOLIT 전월세 실거래 조회 (최근 months개월, 해당 법정동코드) */
 export async function fetchRentDeals(propertyType: PropertyType, lawdCd: string, months: number): Promise<RentDeal[]> {
   const ep = RENT_ENDPOINT[propertyType];
@@ -56,20 +60,28 @@ export async function fetchRentDeals(propertyType: PropertyType, lawdCd: string,
   if (!ep || !key) return [];
   const out: RentDeal[] = [];
   for (const ym of recentYearMonths(months)) {
+    const ck = `${ep}:${lawdCd}:${ym}`;
+    const cached = _rentCache.get(ck);
+    if (cached) { out.push(...cached); continue; }
+    if (_rentQuotaHit) break;
     const url = `${MOLIT_BASE}/${ep}/get${ep}?serviceKey=${encodeURIComponent(key)}&LAWD_CD=${lawdCd}&DEAL_YMD=${ym}&numOfRows=400&pageNo=1&_type=json`;
     try {
       const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20000) });
+      if (res.status === 429) { _rentQuotaHit = true; console.warn('[rent] MOLIT 일일 쿼터 초과(429) — 전월세 조회 중단'); break; }
       if (!res.ok) continue;
       const json = (await res.json()) as RentResp;
       const raw = json?.response?.body?.items?.item;
       const items = Array.isArray(raw) ? raw : raw ? [raw] : [];
+      const parsed: RentDeal[] = [];
       for (const it of items) {
         const deposit = num(it.deposit) * 10_000; // 만원→원
         const monthlyRent = num(it.monthlyRent) * 10_000;
         const areaM2 = parseFloat(String(it.excluUseAr ?? ''));
         if (!deposit || !areaM2) continue;
-        out.push({ deposit, monthlyRent, areaM2, dealDate: `${it.dealYear}-${String(it.dealMonth ?? 1).padStart(2, '0')}` });
+        parsed.push({ deposit, monthlyRent, areaM2, dealDate: `${it.dealYear}-${String(it.dealMonth ?? 1).padStart(2, '0')}` });
       }
+      _rentCache.set(ck, parsed);
+      out.push(...parsed);
     } catch { /* 개별 월 실패 무시 */ }
   }
   return out;
