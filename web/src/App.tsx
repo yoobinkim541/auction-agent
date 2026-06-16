@@ -192,7 +192,7 @@ export default function App() {
     if (onlyMultiRound) v = v.filter((x) => {
       const rs = x.item.location?.sale_rounds ?? [];
       const rnd = rs.find((s) => s.date === x.item.sale_date)?.round ?? (rs.length > 0 ? rs[rs.length - 1]!.round : null);
-      return rnd != null && rnd >= 2;
+      return (rnd != null && rnd >= 2) || (rs.length === 0 && (x.item.fail_count ?? 0) >= 1);
     });
     if (type !== 'all') v = v.filter((x) => x.item.property_type === type);
     if (q.trim()) {
@@ -604,7 +604,7 @@ function ConfigPanel({ cfg, setCfg }: { cfg: ScoreConfig; setCfg: (c: ScoreConfi
 function exportCSV(rows: Array<{ item: ListingItem; sc: ClientScore }>) {
   const BOM = '﻿'; // Excel Korean UTF-8 BOM
   const headers = [
-    '사건번호', '종류', '주소', '법원', '감정가(만원)', '최저가(만원)',
+    '사건번호', '종류', '면적(㎡)', '주소', '법원', '감정가(만원)', '최저가(만원)',
     '안전마진%', '인수금액(만원)', '권리등급', '점수', '통과', '미통과사유', '매각기일',
     '추정시세(만원)', '진짜마진%', '전세시세(만원)', '갭(만원)', '수익률%',
     '현재차수', '예상낙찰가(만원)', '관심',
@@ -619,7 +619,7 @@ function exportCSV(rows: Array<{ item: ListingItem; sc: ClientScore }>) {
       rounds.find((s) => s.date === r.sale_date)?.round ??
       (rounds.length > 0 ? rounds[rounds.length - 1]!.round : null);
     return [
-      r.case_no, TYPE_LABEL[r.property_type] ?? r.property_type, r.address, r.court ?? '',
+      r.case_no, TYPE_LABEL[r.property_type] ?? r.property_type, r.area_m2 != null ? r.area_m2.toFixed(2) : '', r.address, r.court ?? '',
       toMw(r.appraisal_value), toMw(r.min_bid_price),
       pctStr(r.location?.safety_margin),
       toMw(r.rights?.assumed_amount ?? 0),
@@ -730,6 +730,7 @@ function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
         <div className="kv">
           <div><span>감정가</span><b>{eok(row.appraisal_value)}</b></div>
           <div><span>최저매각가</span><b>{eok(row.min_bid_price)}</b></div>
+          {row.area_m2 != null && <div><span>전용면적</span><b>{row.area_m2.toFixed(2)}㎡{` (${(row.area_m2 / 3.3058).toFixed(1)}평)`}</b></div>}
           <div><span>매각기일</span><b>{row.sale_date ?? '-'}</b></div>
           {currentRound != null && (
             <div><span>현재 차수</span><b className={currentRound > 1 ? 'danger' : ''}>{currentRound}차{currentRound > 1 ? ` · 유찰 ${currentRound - 1}회` : ''}</b></div>
