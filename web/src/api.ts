@@ -75,6 +75,7 @@ export interface IncomeObj {
   hiddenTenantDeposit: number | null;
   saleScenarios: SaleScenarioObj[];
   notes: string[];
+  estimated?: boolean;
 }
 export interface EvictionObj {
   occupantLabel: string; remedy: string; remedyLabel: string; writEligible: boolean;

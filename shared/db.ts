@@ -99,14 +99,25 @@ export async function saveLocationAnalysis(listingId: number, loc: LocationAnaly
      values ($1,$2,$3::jsonb,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9,$10,
         $11,$12,$13::jsonb,$14::jsonb,$15::jsonb,$16::jsonb,$17::jsonb,$18::jsonb,$19::jsonb,$20::jsonb,$21::jsonb,$22::jsonb,now())
      on conflict (listing_id) do update set
-       market_price=excluded.market_price, comps=excluded.comps, safety_margin=excluded.safety_margin,
-       transit=excluded.transit, schools=excluded.schools, amenities=excluded.amenities,
-       dev_signals=excluded.dev_signals, market_confidence=excluded.market_confidence,
-       comp_basis=excluded.comp_basis, expected_bid_price=excluded.expected_bid_price,
+       -- 시세는 마지막 정상값 보존: 이번 분석이 시세 산출 실패(null)면 기존값/근거 유지(MOLIT 쿼터·차단 중 재분석 회귀 방지)
+       market_price=coalesce(excluded.market_price, gm_location_analysis.market_price),
+       comps=case when excluded.market_price is null then gm_location_analysis.comps else excluded.comps end,
+       market_confidence=case when excluded.market_price is null then gm_location_analysis.market_confidence else excluded.market_confidence end,
+       comp_basis=case when excluded.market_price is null then gm_location_analysis.comp_basis else excluded.comp_basis end,
+       safety_margin=coalesce(excluded.safety_margin, gm_location_analysis.safety_margin),
+       -- 입지 보강(OSM 도보·생활인프라·학군)은 별도 enrich 패스가 채우므로 병합 보존(키 충돌 시 새 값 우선)
+       transit=coalesce(gm_location_analysis.transit,'{}'::jsonb) || coalesce(excluded.transit,'{}'::jsonb),
+       schools=coalesce(gm_location_analysis.schools,'{}'::jsonb) || coalesce(excluded.schools,'{}'::jsonb),
+       amenities=coalesce(gm_location_analysis.amenities,'{}'::jsonb) || coalesce(excluded.amenities,'{}'::jsonb),
+       dev_signals=excluded.dev_signals,
+       expected_bid_price=excluded.expected_bid_price,
        expected_bid_basis=excluded.expected_bid_basis, acquisition_cost=excluded.acquisition_cost,
        site_comps=excluded.site_comps, sale_rounds=excluded.sale_rounds, building=excluded.building,
-       land_use_flags=excluded.land_use_flags, admin_offices=excluded.admin_offices, report=excluded.report,
-       photos=excluded.photos, income=excluded.income, eviction=excluded.eviction, analyzed_at=now()`,
+       -- 규제 flags는 분석이 결정형으로 재생성 → 새 값이 있으면 교체, 비면 기존(OSM 소음 flag 등) 유지
+       land_use_flags=case when jsonb_array_length(coalesce(excluded.land_use_flags,'[]'::jsonb))>0 then excluded.land_use_flags else gm_location_analysis.land_use_flags end,
+       admin_offices=excluded.admin_offices, report=excluded.report,
+       photos=case when jsonb_array_length(coalesce(excluded.photos,'[]'::jsonb))>0 then excluded.photos else gm_location_analysis.photos end,
+       income=coalesce(excluded.income, gm_location_analysis.income), eviction=excluded.eviction, analyzed_at=now()`,
     [listingId, loc.marketPrice, j(loc.comps), loc.safetyMargin, j(loc.transit), j(loc.schools),
      j(loc.amenities), j(loc.devSignals), loc.marketConfidence ?? null, loc.compBasis ?? null,
      loc.expectedBidPrice ?? null, loc.expectedBidBasis ?? null, j(loc.acquisitionCost), j(loc.siteComps),

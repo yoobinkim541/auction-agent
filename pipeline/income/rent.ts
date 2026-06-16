@@ -3,9 +3,8 @@
  * 임대수익률 엔진의 데이터층. (매매와 동일 MOLIT_SERVICE_KEY 재사용, 추가 키 불필요)
  */
 import type { PropertyType } from '../../shared/types.ts';
+import { fetchMolitRaw, molitQuotaHit } from '../../shared/molit-cache.ts';
 
-const MOLIT_BASE = 'https://apis.data.go.kr/1613000';
-const UA = 'gyeongmae-agent/0.1 (personal research)';
 const RENT_ENDPOINT: Partial<Record<PropertyType, string>> = {
   apartment: 'RTMSDataSvcAptRent', // 아파트 전월세
   villa: 'RTMSDataSvcRHRent', // 연립다세대 전월세
@@ -27,6 +26,32 @@ export interface RentEstimate {
   nJeonse: number;
   nMonthly: number;
   basis: string;
+  estimated?: boolean; // 실거래 아님 — 전세가율 가정으로 역산한 추정치
+}
+
+// 수도권 전세가율 가정(실거래 미확보 시 fallback). 보수적 중앙값 — 실제는 단지·연식별 편차 큼.
+// 아파트 < 빌라 < 오피스텔 순으로 전세가율이 높은 시장 경향 반영.
+const JEONSE_RATIO: Partial<Record<PropertyType, number>> = {
+  apartment: 0.60,
+  villa: 0.68,
+  officetel: 0.75,
+};
+
+/**
+ * 전월세 실거래가 없을 때(쿼터/표본부족) 매매시세 × 지역·유형 전세가율로 전세보증금만 추정.
+ * 월세는 추정하지 않음(보증금↔차임 전환율 가정이 과도) → 갭/전세가율 화면용 저신뢰 추정치.
+ */
+export function estimateRentFromSalePrice(propertyType: PropertyType, marketPrice: number | null): RentEstimate {
+  const empty: RentEstimate = { jeonseDeposit: null, monthlyDeposit: null, monthlyRent: null, n: 0, nJeonse: 0, nMonthly: 0, basis: '' };
+  if (!marketPrice || marketPrice <= 0) return empty;
+  const ratio = JEONSE_RATIO[propertyType] ?? 0.65;
+  return {
+    jeonseDeposit: Math.round(marketPrice * ratio),
+    monthlyDeposit: null, monthlyRent: null,
+    n: 0, nJeonse: 0, nMonthly: 0,
+    estimated: true,
+    basis: `전세 실거래 미확보 — 전세가율 ${Math.round(ratio * 100)}% 가정 추정(저신뢰, 실제 확인 필요)`,
+  };
 }
 
 function recentYearMonths(months: number): string[] {
@@ -47,42 +72,22 @@ const median = (xs: number[]): number | null => {
 };
 
 interface RentItem { deposit?: unknown; monthlyRent?: unknown; excluUseAr?: unknown; dealYear?: unknown; dealMonth?: unknown }
-interface RentResp { response?: { body?: { items?: { item?: RentItem | RentItem[] } } } }
 
-// 법정동·월 단위 캐시 + 429(일일쿼터) 중단 — 매매와 동일 키를 공유하므로 호출 절약 필수.
-const _rentCache = new Map<string, RentDeal[]>();
-let _rentQuotaHit = false;
-
-/** MOLIT 전월세 실거래 조회 (최근 months개월, 해당 법정동코드) */
+/** MOLIT 전월세 실거래 조회 (최근 months개월, 해당 법정동코드) — DB 영구 캐시 경유(shared/molit-cache) */
 export async function fetchRentDeals(propertyType: PropertyType, lawdCd: string, months: number): Promise<RentDeal[]> {
   const ep = RENT_ENDPOINT[propertyType];
-  const key = process.env.MOLIT_SERVICE_KEY;
-  if (!ep || !key) return [];
+  if (!ep) return [];
   const out: RentDeal[] = [];
   for (const ym of recentYearMonths(months)) {
-    const ck = `${ep}:${lawdCd}:${ym}`;
-    const cached = _rentCache.get(ck);
-    if (cached) { out.push(...cached); continue; }
-    if (_rentQuotaHit) break;
-    const url = `${MOLIT_BASE}/${ep}/get${ep}?serviceKey=${encodeURIComponent(key)}&LAWD_CD=${lawdCd}&DEAL_YMD=${ym}&numOfRows=400&pageNo=1&_type=json`;
-    try {
-      const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20000) });
-      if (res.status === 429) { _rentQuotaHit = true; console.warn('[rent] MOLIT 일일 쿼터 초과(429) — 전월세 조회 중단'); break; }
-      if (!res.ok) continue;
-      const json = (await res.json()) as RentResp;
-      const raw = json?.response?.body?.items?.item;
-      const items = Array.isArray(raw) ? raw : raw ? [raw] : [];
-      const parsed: RentDeal[] = [];
-      for (const it of items) {
-        const deposit = num(it.deposit) * 10_000; // 만원→원
-        const monthlyRent = num(it.monthlyRent) * 10_000;
-        const areaM2 = parseFloat(String(it.excluUseAr ?? ''));
-        if (!deposit || !areaM2) continue;
-        parsed.push({ deposit, monthlyRent, areaM2, dealDate: `${it.dealYear}-${String(it.dealMonth ?? 1).padStart(2, '0')}` });
-      }
-      _rentCache.set(ck, parsed);
-      out.push(...parsed);
-    } catch { /* 개별 월 실패 무시 */ }
+    const items = await fetchMolitRaw(ep, lawdCd, ym);
+    if (items === null) { if (molitQuotaHit()) break; else continue; } // 쿼터/장애 → 중단
+    for (const it of items as RentItem[]) {
+      const deposit = num(it.deposit) * 10_000; // 만원→원
+      const monthlyRent = num(it.monthlyRent) * 10_000;
+      const areaM2 = parseFloat(String(it.excluUseAr ?? ''));
+      if (!deposit || !areaM2) continue;
+      out.push({ deposit, monthlyRent, areaM2, dealDate: `${it.dealYear}-${String(it.dealMonth ?? 1).padStart(2, '0')}` });
+    }
   }
   return out;
 }

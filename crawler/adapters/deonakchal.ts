@@ -92,6 +92,13 @@ async function ensureLogin(page: Page): Promise<void> {
   const pw = process.env.DEONAKCHAL_PW;
   if (!id || !pw) throw new Error('DEONAKCHAL_ID / DEONAKCHAL_PW 환경변수가 필요합니다');
   await page.goto(BASE + SEL.loginPath, { waitUntil: 'domcontentloaded' });
+  // 로그인 폼이 안 뜨면(차단 페이지 등) page.fill 이 30s 행에 빠진 뒤 raw TimeoutError → 깔끔히 차단 감지로 대체.
+  const formReady = await page.locator(SEL.loginId).first().waitFor({ state: 'visible', timeout: 8000 }).then(() => true).catch(() => false);
+  if (!formReady) {
+    const blockedNow = await page.evaluate(() => /비정상접속|접속을\s*차단|차단되었습니다/.test(document.documentElement.innerHTML)).catch(() => false);
+    if (blockedNow) throw new SiteBlockedError();
+    throw new Error('로그인 폼(#id) 로드 실패 — 사이트 구조 변경 또는 접속 차단 의심 (CRAWL_HEADLESS=false로 점검)');
+  }
   await page.fill(SEL.loginId, id);
   await page.fill(SEL.loginPw, pw);
   await page.click(SEL.loginSubmit).catch(() => {});

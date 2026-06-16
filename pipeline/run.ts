@@ -20,7 +20,7 @@ import { buildReport } from './report/build.ts';
 import { attachGlossary } from './report/glossary.ts';
 import { assessLegalRisk } from './legal/risk.ts';
 import { addressToLawdCd } from './location/lawd-codes.ts';
-import { fetchRentDeals, estimateRent } from './income/rent.ts';
+import { fetchRentDeals, estimateRent, estimateRentFromSalePrice } from './income/rent.ts';
 import { analyzeIncome } from './income/yield.ts';
 import { analyzeEviction } from './eviction/index.ts';
 
@@ -121,9 +121,12 @@ async function main() {
   const withVerify = process.argv.includes('--verify');
 
   const reanalyzeAll = process.argv.includes('--all');
-  const listings = await fetchListingsForAnalysis(2000, !reanalyzeAll);
+  const limitArg = process.argv.find((a) => a.startsWith('--limit='));
+  const limit = limitArg ? Math.max(1, parseInt(limitArg.split('=')[1] ?? '', 10)) : null;
+  let listings = await fetchListingsForAnalysis(2000, !reanalyzeAll);
+  if (limit) listings = listings.slice(0, limit); // 소규모 검증/점진 적재용
   const concurrency = Math.max(1, parseInt(process.env.ANALYZE_CONCURRENCY ?? '6', 10));
-  console.log(`분석 대상 매물: ${listings.length}건 ${reanalyzeAll ? '(전체 재분석)' : '(신규만 — 전체는 --all)'} | 병렬 ${concurrency}`);
+  console.log(`분석 대상 매물: ${listings.length}건 ${reanalyzeAll ? '(전체 재분석)' : '(신규만 — 전체는 --all)'}${limit ? ` [--limit ${limit}]` : ''} | 병렬 ${concurrency}`);
 
   // 검증 모드 결정: claude CLI(Max 구독, 과금 0) 우선 → API 키 → 생략
   let verifyMode: 'cli' | 'api' | 'none' = 'none';
@@ -132,6 +135,15 @@ async function main() {
     if (await claudeCliAvailable()) verifyMode = 'cli';
     else if (process.env.ANTHROPIC_API_KEY) verifyMode = 'api';
     console.log(`[verify] 모드: ${verifyMode}${verifyMode === 'cli' ? ' (Claude Max 구독, 추가 과금 없음)' : ''}`);
+  }
+
+  // 마지막 정상 시세 캐시 — MOLIT 쿼터/차단으로 이번 분석이 시세를 못 낼 때 회귀 방지 + 임대 fallback 가동.
+  const { query } = await import('../shared/db.ts');
+  const prevMarket = new Map<number, { price: number; conf: string | null; basis: string | null }>();
+  for (const row of await query<{ listing_id: number; market_price: number | null; market_confidence: string | null; comp_basis: string | null }>(
+    'select listing_id, market_price, market_confidence, comp_basis from gm_location_analysis where market_price is not null',
+  )) {
+    if (row.market_price) prevMarket.set(row.listing_id, { price: row.market_price, conf: row.market_confidence, basis: row.comp_basis });
   }
 
   let cursor = 0;
@@ -186,6 +198,17 @@ async function main() {
         loc.safetyMargin = listing.minBidPrice > 0 ? Math.round(((siteMarket.price - listing.minBidPrice) / siteMarket.price) * 1e5) / 1e5 : loc.safetyMargin;
       }
 
+      // 시세 산출 실패(MOLIT 쿼터/차단 + 사이트 comps 없음) → 마지막 정상 시세 재사용(회귀 방지 + 임대 fallback 가동)
+      if (loc.marketPrice == null) {
+        const prev = prevMarket.get(r.id);
+        if (prev) {
+          loc.marketPrice = prev.price;
+          loc.marketConfidence = (prev.conf as typeof loc.marketConfidence) ?? loc.marketConfidence;
+          loc.compBasis = prev.basis ? `${prev.basis} (이전 분석값 유지 — 이번 회차 실거래 미조회)` : loc.compBasis;
+          loc.safetyMargin = listing.minBidPrice > 0 ? Math.round(((prev.price - listing.minBidPrice) / prev.price) * 1e5) / 1e5 : loc.safetyMargin;
+        }
+      }
+
       // 예상낙찰가(감정가×낙찰가율)
       const eb = expectedBid(listing.appraisalValue, siteMetrics.sameBuildingSaleRatios, siteMetrics.nearbySaleRatios);
       loc.expectedBidPrice = eb.price;
@@ -211,8 +234,10 @@ async function main() {
       try {
         const lawdCd = addressToLawdCd(listing.address);
         if (lawdCd) {
-          const rent = estimateRent(await fetchRentDeals(listing.propertyType, lawdCd, 12), listing.areaM2);
-          if (rent.n > 0) {
+          let rent = estimateRent(await fetchRentDeals(listing.propertyType, lawdCd, 12), listing.areaM2);
+          // 전월세 실거래 미확보(쿼터/표본부족)면 매매시세×전세가율로 전세보증금만 추정(저신뢰 fallback)
+          if (rent.n === 0 && loc.marketPrice) rent = estimateRentFromSalePrice(listing.propertyType, loc.marketPrice);
+          if (rent.n > 0 || rent.estimated) {
             loc.income = analyzeIncome({
               marketPrice: loc.marketPrice, totalAcqCost: loc.acquisitionCost?.totalCost ?? null,
               bidPrice: loc.acquisitionCost?.bidPrice ?? listing.minBidPrice,

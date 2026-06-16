@@ -167,3 +167,15 @@ create table if not exists gm_crawl_runs (
   started_at timestamptz not null default now(),
   finished_at timestamptz
 );
+
+-- 국토부(MOLIT) 실거래 원자료 영구 캐시 — 법정동·월 단위. 개발계정 일일쿼터 소진 방지.
+-- 과거 월의 신고는 사실상 불변 → 한 번 받으면 재호출 없이 income/시세 분석 재실행 가능.
+create table if not exists gm_molit_cache (
+  ep         text not null,           -- 엔드포인트(예: RTMSDataSvcRHRent)
+  lawd_cd    text not null,           -- 법정동코드 앞 5자리(시군구)
+  ym         text not null,           -- 거래년월(YYYYMM)
+  items      jsonb not null default '[]'::jsonb,
+  n          int not null default 0,
+  fetched_at timestamptz not null default now(),
+  primary key (ep, lawd_cd, ym)
+);

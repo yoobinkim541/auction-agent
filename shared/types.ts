@@ -172,6 +172,7 @@ export interface IncomeAnalysis {
   hiddenTenantDeposit: number | null; // 점유 임차인 보증금 추정(원)
   saleScenarios: SaleScenario[];
   notes: string[];
+  estimated?: boolean; // 전월세 실거래 미확보 → 전세가율 가정으로 추정(저신뢰)
 }
 
 /** 명도 난이도·인도명령·비용/기간 분석 */

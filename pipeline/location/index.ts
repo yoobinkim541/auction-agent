@@ -4,16 +4,15 @@
  */
 import type { Listing, LocationAnalysis, Comparable, PropertyType } from '../../shared/types.ts';
 import { addressToLawdCd } from './lawd-codes.ts';
+import { fetchMolitRaw, molitQuotaHit } from '../../shared/molit-cache.ts';
 
 const KAKAO = 'https://dapi.kakao.com/v2/local';
-// 국토부 실거래가 — base 엔드포인트 + _type=json + User-Agent 필요(Dev 엔드포인트는 data.go.kr WAF에 차단됨)
-const MOLIT_BASE = 'https://apis.data.go.kr/1613000';
+// 국토부 실거래가 — 물건종류별 base 엔드포인트(DB 캐시는 shared/molit-cache 가 담당)
 const MOLIT_ENDPOINT: Partial<Record<PropertyType, string>> = {
   apartment: 'RTMSDataSvcAptTrade',   // 아파트 매매
   villa: 'RTMSDataSvcRHTrade',        // 연립다세대 매매
   officetel: 'RTMSDataSvcOffiTrade',  // 오피스텔 매매(승인 시)
 };
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
 
 interface GeocodeResult {
   lat: number;
@@ -45,34 +44,15 @@ async function kakaoGeocode(address: string): Promise<GeocodeResult | null> {
   };
 }
 
-/** 국토부 매매 실거래가(최근 N개월) — 물건종류별 base 엔드포인트 + JSON. */
-// 법정동·월 단위 캐시 — 같은 동네 매물이 동일 MOLIT 데이터를 재호출하지 않게(쿼터 절약).
-const _molitCache = new Map<string, Comparable[]>();
-let _molitQuotaHit = false; // 429(일일쿼터 초과) 감지 시 이후 호출 중단
-
+/** 국토부 매매 실거래가(최근 N개월) — DB 영구 캐시(shared/molit-cache) 경유로 쿼터 절약. */
 async function molitTrades(propertyType: PropertyType, lawdCd: string, months: number): Promise<Comparable[]> {
   const ep = MOLIT_ENDPOINT[propertyType];
-  const key = process.env.MOLIT_SERVICE_KEY;
-  if (!ep || !key) return [];
+  if (!ep) return [];
   const out: Comparable[] = [];
   for (const ym of recentYearMonths(months)) {
-    const ck = `${ep}:${lawdCd}:${ym}`;
-    const cached = _molitCache.get(ck);
-    if (cached) { out.push(...cached); continue; }
-    if (_molitQuotaHit) break; // 쿼터 초과 후엔 더 호출 안 함
-    const url =
-      `${MOLIT_BASE}/${ep}/get${ep}?serviceKey=${encodeURIComponent(key)}&LAWD_CD=${lawdCd}&DEAL_YMD=${ym}&numOfRows=400&pageNo=1&_type=json`;
-    try {
-      const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(12000) });
-      if (res.status === 429) { _molitQuotaHit = true; console.warn('[molit] 일일 쿼터 초과(429) — 이후 실거래 조회 중단'); break; }
-      if (!res.ok) continue;
-      const json = (await res.json()) as MolitResponse;
-      const parsed = parseMolitJson(json?.response?.body?.items?.item);
-      _molitCache.set(ck, parsed);
-      out.push(...parsed);
-    } catch {
-      /* 개별 월 실패는 무시 */
-    }
+    const items = await fetchMolitRaw(ep, lawdCd, ym);
+    if (items === null) { if (molitQuotaHit()) break; else continue; } // 쿼터/장애 → 중단
+    out.push(...parseMolitJson(items as MolitItem[]));
   }
   return out;
 }

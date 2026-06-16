@@ -101,7 +101,8 @@ export function analyzeIncome(inp: IncomeInput): IncomeAnalysis {
   const total = inp.totalAcqCost ?? null;
   const r = inp.rent;
 
-  const jeonseRatioPct = (r.jeonseDeposit && market) ? Math.round((r.jeonseDeposit / market) * 1000) / 10 : null;
+  // 추정 모드(전세가율 가정)에선 전세가율을 되돌려 보여주는 건 동어반복 → 갭만 노출.
+  const jeonseRatioPct = (r.jeonseDeposit && market && !r.estimated) ? Math.round((r.jeonseDeposit / market) * 1000) / 10 : null;
   const gapInvestment = (r.jeonseDeposit && total) ? round(total - r.jeonseDeposit) : null;
   const grossYieldPct = (r.monthlyRent && total) ? Math.round((r.monthlyRent * 12 / total) * 1000) / 10 : null;
 
@@ -127,12 +128,13 @@ export function analyzeIncome(inp: IncomeInput): IncomeAnalysis {
   }) : [];
   if (scenarios.length) notes.push('매도가는 현재 시세 동결 가정 — 장기보유공제로 보유기간↑일수록 세후 순익↑. 1세대1주택 비과세·다주택 중과는 미반영(개인 1주택 기본세율 가정)');
 
-  if (!r.n) notes.push('MOLIT 전월세 실거래 부족 — 임대시세 추정 불가(인근 표본 없음)');
+  if (r.estimated) notes.push('전월세 실거래 미확보 → 전세보증금은 지역·유형 전세가율 가정으로 역산한 추정치(저신뢰). 월세·표면수익률은 산출하지 않음. 실제 임대시세는 인근 중개·실거래 재확인 필요');
+  else if (!r.n) notes.push('MOLIT 전월세 실거래 부족 — 임대시세 추정 불가(인근 표본 없음)');
 
   return {
     rentBasis: r.basis, jeonseDeposit: r.jeonseDeposit, monthlyDeposit: r.monthlyDeposit, monthlyRent: r.monthlyRent,
     jeonseRatioPct, gapInvestment, grossYieldPct, monthlyCashflow, cashflowNote, hiddenTenantDeposit,
-    saleScenarios: scenarios, notes,
+    saleScenarios: scenarios, notes, estimated: r.estimated,
   };
 }
 

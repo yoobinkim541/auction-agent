@@ -482,10 +482,11 @@ function EvictionBlock({ ev }: { ev: import('./api.ts').EvictionObj }) {
 function IncomeBlock({ income: inc }: { income: import('./api.ts').IncomeObj }) {
   const pctv = (n: number | null) => (n == null ? '-' : n.toFixed(1) + '%');
   return (
-    <Section title="임대수익 · 출구 (세후)">
+    <Section title={`임대수익 · 출구 (세후)${inc.estimated ? ' · 추정' : ''}`}>
+      {inc.estimated && <p className="warn-badge">⚠ 전월세 실거래 미확보 — 전세가율 가정 기반 <b>추정치</b>(저신뢰). 갭만 참고하고 실제 임대시세는 별도 확인하세요.</p>}
       <p className="muted">임대시세: {inc.rentBasis || '표본 부족'}</p>
       <div className="kv">
-        {inc.jeonseDeposit != null && <div><span>전세 시세</span><b>{eok(inc.jeonseDeposit)}</b></div>}
+        {inc.jeonseDeposit != null && <div><span>전세 시세{inc.estimated ? '(추정)' : ''}</span><b>{eok(inc.jeonseDeposit)}</b></div>}
         {inc.jeonseRatioPct != null && <div><span>전세가율</span><b>{pctv(inc.jeonseRatioPct)}</b></div>}
         {inc.gapInvestment != null && <div><span title="총취득비용 − 전세보증금">갭(전세 실투자)</span><b>{eok(inc.gapInvestment)}</b></div>}
         {inc.monthlyRent != null && <div><span>월세 시세</span><b>{won(inc.monthlyRent)}</b></div>}
