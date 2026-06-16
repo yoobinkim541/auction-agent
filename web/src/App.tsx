@@ -42,7 +42,7 @@ const RISK: Record<string, { label: string; cls: string }> = {
 const pct = (n: number | null | undefined) => (n == null ? '-' : (n * 100).toFixed(1) + '%');
 const CONF: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' };
 
-type SortKey = 'score' | 'safety' | 'sale' | 'price';
+type SortKey = 'score' | 'safety' | 'trueSafety' | 'sale' | 'price';
 const CFG_KEY = 'gm_score_config';
 
 function loadConfig(): ScoreConfig {
@@ -140,6 +140,7 @@ export default function App() {
         const db = b.item.sale_date ?? '9999';
         return da.localeCompare(db);
       }
+      if (sort === 'trueSafety') return (b.item.location?.acquisition_cost?.trueSafetyMargin ?? -1) - (a.item.location?.acquisition_cost?.trueSafetyMargin ?? -1);
       if (sort === 'price') return (a.item.min_bid_price ?? Infinity) - (b.item.min_bid_price ?? Infinity);
       return b.sc.totalScore - a.sc.totalScore;
     });
@@ -227,6 +228,7 @@ export default function App() {
         <input placeholder="주소·사건번호 검색" value={q} onChange={(e) => setQ(e.target.value)} />
         <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
           <option value="score">점수순</option>
+          <option value="trueSafety">진짜마진순</option>
           <option value="safety">안전마진순</option>
           <option value="sale">임박순</option>
           <option value="price">최저가순</option>
