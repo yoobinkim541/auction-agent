@@ -77,6 +77,7 @@ export default function App() {
   const [onlyMultiRound, setOnlyMultiRound] = useState<boolean>(() => loadUIState().onlyMultiRound ?? false);
   const [onlyZeroPi, setOnlyZeroPi] = useState(false);
   const [onlyConsider, setOnlyConsider] = useState(false);
+  const [onlyPassedAvoid, setOnlyPassedAvoid] = useState(false);
   const [onlyUrgent, setOnlyUrgent] = useState(false);
   const [onlyToday, setOnlyToday] = useState(false);
   const [filterDate, setFilterDate] = useState<string | null>(null);
@@ -181,6 +182,7 @@ export default function App() {
     if (onlyFavorite) v = v.filter((x) => x.item.is_favorite);
     if (onlyZeroPi) v = v.filter((x) => x.item.location?.income?.zeroPiCandidate === true);
     if (onlyConsider) v = v.filter((x) => x.item.location?.report?.recommendation === 'consider');
+    if (onlyPassedAvoid) v = v.filter((x) => x.sc.passed && x.item.location?.report?.recommendation === 'avoid');
     if (onlyToday) v = v.filter((x) => x.item.sale_date === TODAY);
     if (filterDate) v = v.filter((x) => x.item.sale_date === filterDate);
     if (onlyUrgent) {
@@ -218,7 +220,7 @@ export default function App() {
       return sortDir === 'asc' ? diff : -diff;
     });
     return v;
-  }, [rows, cfg, hideExpired, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyUrgent, onlyToday, filterDate, maxGapEok, type, q, sort, sortDir]);
+  }, [rows, cfg, hideExpired, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyPassedAvoid, onlyUrgent, onlyToday, filterDate, maxGapEok, type, q, sort, sortDir]);
 
   const favCount = rows.filter((r) => r.is_favorite).length;
   const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
@@ -237,6 +239,7 @@ export default function App() {
     const reviewCount = upcoming.filter((x) => x.item.rights?.risk_grade === 'review_required').length;
     const zeroPiCount = upcoming.filter((x) => x.item.location?.income?.zeroPiCandidate === true).length;
     const considerCount = upcoming.filter((x) => x.item.location?.report?.recommendation === 'consider').length;
+    const passedAvoidCount = upcoming.filter((x) => x.sc.passed && x.item.location?.report?.recommendation === 'avoid').length;
     const weekDist: Record<string, { total: number; passed: number }> = {};
     for (const x of upcoming) {
       if (!x.item.sale_date) continue;
@@ -247,7 +250,7 @@ export default function App() {
       weekDist[k]!.total++;
       if (x.sc.passed) weekDist[k]!.passed++;
     }
-    return { total: rows.length, passed, todayUrgent, week, reviewCount, zeroPiCount, considerCount, weekDist };
+    return { total: rows.length, passed, todayUrgent, week, reviewCount, zeroPiCount, considerCount, passedAvoidCount, weekDist };
   }, [rows, cfg]);
 
   const selNavIdx = selected ? view.findIndex((x) => x.item.id === selected.id) : -1;
@@ -328,6 +331,17 @@ export default function App() {
             >
               <span className="stat-label">검토권장 ✦</span>
               <b className="stat-num">{stats.considerCount}</b>
+            </div>
+          )}
+          {stats.passedAvoidCount > 0 && (
+            <div
+              className={`stat-item stat-pass-avoid${onlyPassedAvoid ? ' on' : ''}`}
+              onClick={() => { setOnlyPassedAvoid((v) => !v); setOnlyPassed(false); }}
+              title={`통과 기준 충족이지만 AI 보고서가 '회피' 권고 — 클릭하면 이 목록만 표시`}
+              style={{ cursor: 'pointer' }}
+            >
+              <span className="stat-label">통과+회피⚠</span>
+              <b className="stat-num">{stats.passedAvoidCount}</b>
             </div>
           )}
         </div>
@@ -420,7 +434,7 @@ export default function App() {
             {view.map(({ item: r, sc }) => {
               const risk = RISK[r.rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
               return (
-                <tr key={r.id} className={`row${r.location?.report?.recommendation === 'consider' ? ' row-consider' : ''}`}>
+                <tr key={r.id} className={`row${r.location?.report?.recommendation === 'consider' ? ' row-consider' : ''}${sc.passed && r.location?.report?.recommendation === 'avoid' ? ' row-pass-avoid' : ''}`}>
                   <td className="star" onClick={() => toggleFav(r)} title="관심">{r.is_favorite ? '★' : '☆'}</td>
                   <td className="mono" onClick={() => handleSelect(r)}>{r.case_no}</td>
                   <td onClick={() => handleSelect(r)} title={r.area_m2 != null ? `전용 ${r.area_m2.toFixed(1)}㎡` : undefined}>{TYPE_LABEL[r.property_type] ?? r.property_type}</td>
@@ -439,6 +453,12 @@ export default function App() {
                   <td onClick={() => handleSelect(r)}>
                     <span className={`badge ${risk.cls}`}>{risk.label}</span>
                     {r.location?.report?.recommendation === 'consider' && <span className="badge reco-consider reco-badge">권장✦</span>}
+                    {sc.passed && r.location?.report?.recommendation === 'avoid' && (
+                      <span className="badge reco-avoid reco-badge pass-avoid-badge" title="점수는 통과 기준이지만 AI 보고서가 회피 권고 — 상세 확인 필요">⚠회피</span>
+                    )}
+                    {(r.location?.report?.dangerCount ?? 0) > 0 && (
+                      <span className="danger-cnt-chip" title={`위험항목 ${r.location!.report!.dangerCount}건`}>🔴{r.location!.report!.dangerCount}</span>
+                    )}
                   </td>
                   <td className="num" onClick={() => handleSelect(r)} title={sc.reasons.length ? sc.reasons.join(' · ') : undefined}>
                     <b className={sc.totalScore >= 70 ? 'good' : sc.totalScore < 40 ? 'danger' : ''}>{sc.totalScore}</b>
@@ -470,10 +490,11 @@ export default function App() {
             const currentRound = rounds.find((s) => s.date === r.sale_date)?.round
               ?? (rounds.length > 0 ? rounds[rounds.length - 1]!.round : null);
             const expBid = r.location?.expected_bid_price;
+            const passedAvoid = sc.passed && reco === 'avoid';
             return (
               <li
                 key={r.id}
-                className={`card reco-edge-${reco ?? 'none'}`}
+                className={`card reco-edge-${reco ?? 'none'}${passedAvoid ? ' card-pass-avoid' : ''}`}
                 style={{ animationDelay: `${Math.min(i, 12) * 28}ms` }}
                 onClick={() => handleSelect(r)}
               >
@@ -621,6 +642,20 @@ function ConfigPanel({ cfg, setCfg }: { cfg: ScoreConfig; setCfg: (c: ScoreConfi
         <label>통과 최소 안전마진: {(cfg.minSafetyMargin * 100).toFixed(0)}%</label>
         <input type="range" min={0} max={40} value={Math.round(cfg.minSafetyMargin * 100)}
           onChange={(e) => setCfg({ ...cfg, minSafetyMargin: +e.target.value / 100 })} />
+      </div>
+      <div className="cfg-row">
+        <label>통과 최소 진짜마진: {cfg.minTrueSafetyMarginPct <= -99 ? '제한 없음' : `${cfg.minTrueSafetyMarginPct}%`}
+          <span className="cfg-hint"> (취득비용 반영 — -99 = 비활성)</span>
+        </label>
+        <input type="range" min={-99} max={30} value={cfg.minTrueSafetyMarginPct}
+          onChange={(e) => setCfg({ ...cfg, minTrueSafetyMarginPct: +e.target.value })} />
+      </div>
+      <div className="cfg-row">
+        <label>허용 위험항목 최대: {cfg.maxDangerCount < 0 ? '제한 없음' : `${cfg.maxDangerCount}건`}
+          <span className="cfg-hint"> (공법규제·권리 위험 — -1 = 비활성)</span>
+        </label>
+        <input type="range" min={-1} max={3} value={cfg.maxDangerCount}
+          onChange={(e) => setCfg({ ...cfg, maxDangerCount: +e.target.value })} />
       </div>
       <div className="cfg-row">
         <label>안전마진 만점 기준: {(cfg.safetyMaxAt * 100).toFixed(0)}%</label>

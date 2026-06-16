@@ -56,7 +56,11 @@ public class ListingService {
                                              else null end,
                     'sale_rounds', loc.sale_rounds,
                     'report', case when loc.report is not null
-                                   then jsonb_build_object('recommendation', loc.report->>'recommendation')
+                                   then jsonb_build_object(
+                                     'recommendation', loc.report->>'recommendation',
+                                     'dangerCount', (loc.report->>'dangerCount')::int,
+                                     'warnCount',   (loc.report->>'warnCount')::int
+                                   )
                                    else null end,
                     'income', case when loc.income is null then null
                                    else jsonb_build_object(

@@ -95,6 +95,9 @@ header .crawl-date { color: var(--muted); font-size: 11px; font-weight: 400; fon
 .stat-item.stat-consider.on { background: rgba(240,192,64,.07); border-color: rgba(240,192,64,.4); }
 .stat-item.stat-soon.on { background: rgba(245,166,35,.07); border-color: rgba(245,166,35,.4); }
 .stat-item.stat-urgent.on { background: rgba(240,69,69,.07); border-color: rgba(240,69,69,.4); }
+.stat-item.stat-pass-avoid .stat-num { color: var(--caution); }
+.stat-item.stat-pass-avoid { border-color: rgba(245,166,35,.25); }
+.stat-item.stat-pass-avoid.on { background: rgba(245,166,35,.07); border-color: rgba(245,166,35,.45); }
 /* legacy: hide separators if still in markup */
 .stat-sep { display: none; }
 /* legacy: if old stat-item <b> still used */
@@ -198,7 +201,10 @@ table.grid td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertica
 .row:hover { background: var(--panel); }
 .row-consider { background: rgba(30,199,88,.025); }
 .row-consider:hover { background: rgba(30,199,88,.06) !important; }
+.row-pass-avoid { border-left: 2px solid rgba(245,166,35,.5); }
+.row-pass-avoid:hover { background: rgba(245,166,35,.04) !important; }
 .reco-badge { font-size: 9px !important; padding: 1px 4px !important; margin-left: 4px; vertical-align: middle; }
+.pass-avoid-badge { font-weight: 700 !important; }
 .addr { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-2); font-size: 12.5px; }
 
 /* ── Numbers / Monospace ── */
@@ -254,6 +260,8 @@ table.grid td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertica
 .reco-edge-consider { border-left-color: var(--clean); }
 .reco-edge-caution { border-left-color: var(--caution); }
 .reco-edge-avoid { border-left-color: var(--risky); }
+/* card that passes filter yet AI says avoid — striped amber top border to signal divergence */
+.card-pass-avoid { border-top: 2px solid rgba(245,166,35,.55); }
 @keyframes cardin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 /* ── Drawer ── */
@@ -472,6 +480,8 @@ table.mini td.num { text-align: right; font-family: var(--mono); }
   border: 1px solid rgba(240,69,69,.24);
   margin-left: 2px;
 }
+.danger-cnt-chip { font-size: 10px; margin-left: 3px; cursor: default; vertical-align: middle; }
+.cfg-hint { font-size: 10.5px; color: var(--muted); font-weight: 400; }
 .zero-pi-chip {
   display: inline-block;
   font-size: 10px;
