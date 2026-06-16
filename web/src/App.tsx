@@ -185,6 +185,10 @@ export default function App() {
             const reco = r.location?.report?.recommendation;
             const tm = r.location?.acquisition_cost?.trueSafetyMargin;
             const assumed = r.rights?.assumed_amount ?? 0;
+            const rounds = r.location?.sale_rounds ?? [];
+            const currentRound = rounds.find((s) => s.date === r.sale_date)?.round
+              ?? (rounds.length > 0 ? rounds[rounds.length - 1]!.round : null);
+            const expBid = r.location?.expected_bid_price;
             return (
               <li
                 key={r.id}
@@ -207,13 +211,15 @@ export default function App() {
                 </div>
                 <div className="card-metrics">
                   <div><span>감정가</span><b>{eok(r.appraisal_value)}</b></div>
-                  <div><span>최저가</span><b>{eok(r.min_bid_price)}</b></div>
+                  <div><span>최저가{currentRound && currentRound > 1 ? ` (${currentRound}차)` : ''}</span><b>{eok(r.min_bid_price)}</b></div>
                   <div><span>안전마진</span><b>{pct(r.location?.safety_margin)}</b></div>
-                  <div><span>진짜마진</span><b className={(tm ?? 0) < 0 ? 'danger' : 'good'}>{pct(tm)}</b></div>
+                  {expBid ? <div><span>예상낙찰가</span><b className="good">{eok(expBid)}</b></div>
+                    : <div><span>진짜마진</span><b className={(tm ?? 0) < 0 ? 'danger' : 'good'}>{pct(tm)}</b></div>}
                 </div>
                 <div className="card-foot">
                   <span className="card-score">점수 <b>{sc.totalScore}</b></span>
                   {assumed > 0 && <span className="card-assumed">인수 {eok(assumed)}</span>}
+                  {currentRound && currentRound > 1 && <span className="round-badge">{currentRound}차 진행</span>}
                   <DDay dateStr={r.sale_date} />
                   <span className="card-go">자세히 ›</span>
                 </div>
