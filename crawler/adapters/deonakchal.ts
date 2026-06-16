@@ -154,8 +154,13 @@ async function parseListPage(page: Page): Promise<ParsedRow[]> {
     if (!head) continue;
     const [, court, caseNo, typeLabel] = head;
 
-    const status = text.match(/(신건|유찰|진행|정지|배당종결|취하|기각|각하|낙찰|변경|재진행|재매각|미진행|대금납부|배당)\s*\((\d+)%\)/);
+    // "유찰 15회 (0%)" 형태도 포함: (?:\s*\d+회)? 옵션 그룹으로 N회 건너뜀
+    const status = text.match(/(신건|유찰|진행|정지|배당종결|취하|기각|각하|낙찰|변경|재진행|재매각|미진행|대금납부|배당)(?:\s*\d+회)?\s*\((\d+)%\)/);
     if (status && TERMINAL.test(status[1]!)) continue; // 진행 매물만 수집
+
+    // 유찰 횟수: "유찰 N회" 또는 "재진행 N회" 텍스트에서 직접 추출
+    const failCountM = text.match(/(?:유찰|재진행)\s*(\d+)회/);
+    const failCount = failCountM ? parseInt(failCountM[1]!, 10) : 0;
 
     const am = text.match(/감정가\s*([\d,]+)\s*최저가\s*([\d,]+)/);
     const addrM = text.match(/((?:서울특별시|인천광역시|경기도)[^[]*?)\s*(?:건물|토지|감정가)/);
@@ -174,7 +179,7 @@ async function parseListPage(page: Page): Promise<ParsedRow[]> {
         appraisalValue: parseKoreanMoney(am?.[1]) ?? 0,
         minBidPrice: parseKoreanMoney(am?.[2]) ?? 0,
         minBidRatio: status ? parseInt(status[2]!, 10) : undefined,
-        failCount: 0,
+        failCount,
         saleDate: dates.length ? dates[dates.length - 1] : undefined,
         areaM2: bldM ? parseFloat(bldM[1]!) : parseAreaToM2(text),
         isCollectiveBuilding: /아파트|오피스텔|다세대|연립|도시형생활/.test(typeLabel!),
