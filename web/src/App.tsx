@@ -134,11 +134,26 @@ export default function App() {
 
       {!loading && rows.length > 0 && (
         <div className="stat-banner">
-          <span className="stat-item">전체 <b>{stats.total}</b></span>
-          <span className="stat-sep">|</span>
-          <span className="stat-item good">통과 <b>{stats.passed}</b></span>
-          {stats.todayUrgent > 0 && <><span className="stat-sep">|</span><span className="stat-item stat-urgent">오늘 기일 <b>{stats.todayUrgent}</b></span></>}
-          {stats.week > 0 && <><span className="stat-sep">|</span><span className="stat-item stat-soon">7일 이내 <b>{stats.week}</b></span></>}
+          <div className="stat-item">
+            <span className="stat-label">전체</span>
+            <b className="stat-num">{stats.total}</b>
+          </div>
+          <div className="stat-item good">
+            <span className="stat-label">통과</span>
+            <b className="stat-num">{stats.passed}</b>
+          </div>
+          {stats.todayUrgent > 0 && (
+            <div className="stat-item stat-urgent">
+              <span className="stat-label">오늘 기일</span>
+              <b className="stat-num">{stats.todayUrgent}</b>
+            </div>
+          )}
+          {stats.week > 0 && (
+            <div className="stat-item stat-soon">
+              <span className="stat-label">7일 이내</span>
+              <b className="stat-num">{stats.week}</b>
+            </div>
+          )}
         </div>
       )}
 
@@ -193,7 +208,7 @@ export default function App() {
                   <td className="num" onClick={() => setSelected(r)}>{pct(r.location?.safety_margin)}</td>
                   <td className="num" onClick={() => setSelected(r)}>{r.rights ? (r.rights.assumed_amount ? eok(r.rights.assumed_amount) : '0') : '-'}</td>
                   <td onClick={() => setSelected(r)}><span className={`badge ${risk.cls}`}>{risk.label}</span></td>
-                  <td className="num" onClick={() => setSelected(r)}><b>{sc.totalScore}</b></td>
+                  <td className="num" onClick={() => setSelected(r)}><b className={sc.totalScore >= 70 ? 'good' : sc.totalScore < 40 ? 'danger' : ''}>{sc.totalScore}</b></td>
                   <td onClick={() => setSelected(r)}><DDay dateStr={r.sale_date} /><span className="sale-date-txt">{r.sale_date ?? '-'}</span></td>
                 </tr>
               );
