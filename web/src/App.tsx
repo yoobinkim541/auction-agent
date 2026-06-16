@@ -701,7 +701,7 @@ function IncomeBlock({ income: inc }: { income: import('./api.ts').IncomeObj }) 
         {inc.monthlyCashflow != null && <div><span>월 현금흐름</span><b className={inc.monthlyCashflow < 0 ? 'danger' : 'good'}>{won(inc.monthlyCashflow)}</b></div>}
         {inc.hiddenTenantDeposit != null && <div><span className="danger">점유 임차인 보증금(추정)</span><b className="danger">{eok(inc.hiddenTenantDeposit)}</b></div>}
       </div>
-      {inc.saleScenarios.length > 0 && (
+      {(inc.saleScenarios?.length ?? 0) > 0 && (
         <>
           <h4>보유기간별 세후 매도 순익 (시세 동결 가정)</h4>
           <table className="mini">
@@ -718,7 +718,7 @@ function IncomeBlock({ income: inc }: { income: import('./api.ts').IncomeObj }) 
           </table>
         </>
       )}
-      {inc.notes.length > 0 && <ul className="warns">{inc.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
+      {(inc.notes?.length ?? 0) > 0 && <ul className="warns">{inc.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
     </Section>
   );
 }
