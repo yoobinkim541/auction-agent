@@ -77,6 +77,7 @@ export default function App() {
   const [onlyMultiRound, setOnlyMultiRound] = useState(false);
   const [onlyZeroPi, setOnlyZeroPi] = useState(false);
   const [onlyConsider, setOnlyConsider] = useState(false);
+  const [onlyUrgent, setOnlyUrgent] = useState(false);
   const [hideExpired, setHideExpired] = useState<boolean>(() => loadUIState().hideExpired ?? true);
   const [type, setType] = useState<string>(() => loadUIState().type ?? 'all');
   const [q, setQ] = useState('');
@@ -177,6 +178,10 @@ export default function App() {
     if (onlyFavorite) v = v.filter((x) => x.item.is_favorite);
     if (onlyZeroPi) v = v.filter((x) => x.item.location?.income?.zeroPiCandidate === true);
     if (onlyConsider) v = v.filter((x) => x.item.location?.report?.recommendation === 'consider');
+    if (onlyUrgent) {
+      const sevenDaysStr = new Date(new Date(TODAY).getTime() + 7 * 86_400_000).toISOString().slice(0, 10);
+      v = v.filter((x) => x.item.sale_date && x.item.sale_date >= TODAY && x.item.sale_date <= sevenDaysStr);
+    }
     if (onlyMultiRound) v = v.filter((x) => {
       const rs = x.item.location?.sale_rounds ?? [];
       const rnd = rs.find((s) => s.date === x.item.sale_date)?.round ?? (rs.length > 0 ? rs[rs.length - 1]!.round : null);
@@ -201,7 +206,7 @@ export default function App() {
       return sortDir === 'asc' ? diff : -diff;
     });
     return v;
-  }, [rows, cfg, hideExpired, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, type, q, sort, sortDir]);
+  }, [rows, cfg, hideExpired, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyUrgent, type, q, sort, sortDir]);
 
   const favCount = rows.filter((r) => r.is_favorite).length;
   const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
@@ -255,7 +260,12 @@ export default function App() {
             </div>
           )}
           {stats.week > 0 && (
-            <div className="stat-item stat-soon">
+            <div
+              className={`stat-item stat-soon${onlyUrgent ? ' on' : ''}`}
+              onClick={() => setOnlyUrgent((v) => !v)}
+              title="클릭하면 7일 이내 기일 매물만 표시"
+              style={{ cursor: 'pointer' }}
+            >
               <span className="stat-label">7일 이내</span>
               <b className="stat-num">{stats.week}</b>
             </div>

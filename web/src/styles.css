@@ -93,6 +93,7 @@ header .crawl-date { color: var(--muted); font-size: 11px; font-weight: 400; fon
 .stat-item.stat-consider .stat-num { color: #f0c040; }
 .stat-item.stat-consider { border-color: rgba(240,192,64,.2); }
 .stat-item.stat-consider.on { background: rgba(240,192,64,.07); border-color: rgba(240,192,64,.4); }
+.stat-item.stat-soon.on { background: rgba(245,166,35,.07); border-color: rgba(245,166,35,.4); }
 /* legacy: hide separators if still in markup */
 .stat-sep { display: none; }
 /* legacy: if old stat-item <b> still used */
