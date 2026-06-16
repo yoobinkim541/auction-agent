@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  fetchListings, triggerJob, setFavorite, apiBase, won, eok,
+  fetchListings, fetchDetail, triggerJob, setFavorite, apiBase, won, eok,
   type ListingItem, type RightsObj, type LocationObj,
 } from './api.ts';
 import { scoreClient, DEFAULT_CONFIG, type ScoreConfig, type ClientScore } from './scoring.ts';
@@ -66,6 +66,8 @@ export default function App() {
   const [selected, setSelected] = useState<ListingItem | null>(null);
   const [cfg, setCfg] = useState<ScoreConfig>(loadConfig);
   const [showCfg, setShowCfg] = useState(false);
+  const detailCacheRef = useRef(new Map<string, ListingItem>());
+  const [detailLoading, setDetailLoading] = useState<string | null>(null);
 
   const load = () => {
     setLoading(true); setErr(null);
@@ -79,6 +81,20 @@ export default function App() {
     setRows((rs) => rs.map((r) => (r.id === item.id ? { ...r, is_favorite: nv } : r)));
     if (selected?.id === item.id) setSelected({ ...selected, is_favorite: nv });
     setFavorite(item.id, nv).catch(() => load());
+  };
+
+  const handleSelect = (item: ListingItem) => {
+    const cached = detailCacheRef.current.get(item.case_no);
+    if (cached) { setSelected(cached); return; }
+    setSelected(item);
+    setDetailLoading(item.case_no);
+    fetchDetail(item.case_no)
+      .then((full) => {
+        detailCacheRef.current.set(item.case_no, full);
+        setSelected((cur) => (cur?.case_no === item.case_no ? full : cur));
+      })
+      .catch(() => {})
+      .finally(() => setDetailLoading((cur) => (cur === item.case_no ? null : cur)));
   };
 
   const view = useMemo(() => {
@@ -208,16 +224,16 @@ export default function App() {
               return (
                 <tr key={r.id} className="row">
                   <td className="star" onClick={() => toggleFav(r)} title="관심">{r.is_favorite ? '★' : '☆'}</td>
-                  <td className="mono" onClick={() => setSelected(r)}>{r.case_no}</td>
-                  <td onClick={() => setSelected(r)}>{TYPE_LABEL[r.property_type] ?? r.property_type}</td>
-                  <td className="addr" onClick={() => setSelected(r)}>{r.address}</td>
-                  <td className="num" onClick={() => setSelected(r)}>{eok(r.appraisal_value)}</td>
-                  <td className="num" onClick={() => setSelected(r)}>{eok(r.min_bid_price)}</td>
-                  <td className="num" onClick={() => setSelected(r)}>{pct(r.location?.safety_margin)}</td>
-                  <td className="num" onClick={() => setSelected(r)}>{r.rights ? (r.rights.assumed_amount ? eok(r.rights.assumed_amount) : '0') : '-'}</td>
-                  <td onClick={() => setSelected(r)}><span className={`badge ${risk.cls}`}>{risk.label}</span></td>
-                  <td className="num" onClick={() => setSelected(r)}><b className={sc.totalScore >= 70 ? 'good' : sc.totalScore < 40 ? 'danger' : ''}>{sc.totalScore}</b></td>
-                  <td onClick={() => setSelected(r)}><DDay dateStr={r.sale_date} /><span className="sale-date-txt">{r.sale_date ?? '-'}</span></td>
+                  <td className="mono" onClick={() => handleSelect(r)}>{r.case_no}</td>
+                  <td onClick={() => handleSelect(r)}>{TYPE_LABEL[r.property_type] ?? r.property_type}</td>
+                  <td className="addr" onClick={() => handleSelect(r)}>{r.address}</td>
+                  <td className="num" onClick={() => handleSelect(r)}>{eok(r.appraisal_value)}</td>
+                  <td className="num" onClick={() => handleSelect(r)}>{eok(r.min_bid_price)}</td>
+                  <td className="num" onClick={() => handleSelect(r)}>{pct(r.location?.safety_margin)}</td>
+                  <td className="num" onClick={() => handleSelect(r)}>{r.rights ? (r.rights.assumed_amount ? eok(r.rights.assumed_amount) : '0') : '-'}</td>
+                  <td onClick={() => handleSelect(r)}><span className={`badge ${risk.cls}`}>{risk.label}</span></td>
+                  <td className="num" onClick={() => handleSelect(r)}><b className={sc.totalScore >= 70 ? 'good' : sc.totalScore < 40 ? 'danger' : ''}>{sc.totalScore}</b></td>
+                  <td onClick={() => handleSelect(r)}><DDay dateStr={r.sale_date} /><span className="sale-date-txt">{r.sale_date ?? '-'}</span></td>
                 </tr>
               );
             })}
@@ -241,7 +257,7 @@ export default function App() {
                 key={r.id}
                 className={`card reco-edge-${reco ?? 'none'}`}
                 style={{ animationDelay: `${Math.min(i, 12) * 28}ms` }}
-                onClick={() => setSelected(r)}
+                onClick={() => handleSelect(r)}
               >
                 <div className="card-top">
                   <span className="card-addr">{r.address}</span>
@@ -276,7 +292,7 @@ export default function App() {
         </ul>
       )}
 
-      {selected && <Detail row={selected} onClose={() => setSelected(null)} onFav={() => toggleFav(selected)} />}
+      {selected && <Detail row={selected} onClose={() => setSelected(null)} onFav={() => toggleFav(selected)} loading={detailLoading === selected.case_no} />}
 
       <nav className="tabbar">
         <button className={activeTab === 'recommend' ? 'on' : ''} onClick={() => { setShowCfg(false); setOnlyFavorite(false); setOnlyPassed(true); window.scrollTo(0, 0); }}>
@@ -429,7 +445,7 @@ function Notice({ children }: { children: React.ReactNode }) {
   return <div className="notice">{children}</div>;
 }
 
-function Detail({ row, onClose, onFav }: { row: ListingItem; onClose: () => void; onFav: () => void }) {
+function Detail({ row, onClose, onFav, loading }: { row: ListingItem; onClose: () => void; onFav: () => void; loading?: boolean }) {
   const rights: RightsObj | null = row.rights;
   const loc: LocationObj | null = row.location;
   const risk = RISK[rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
@@ -449,6 +465,7 @@ function Detail({ row, onClose, onFav }: { row: ListingItem; onClose: () => void
     <div className="drawer-bg" onClick={onClose}>
       <aside className="drawer" onClick={(e) => e.stopPropagation()}>
         <button className="close" onClick={onClose}>✕</button>
+        {loading && <p className="detail-loading">상세 분석 불러오는 중…</p>}
         <h2>
           <span className="star" onClick={onFav} title="관심">{row.is_favorite ? '★' : '☆'}</span>{' '}
           {row.case_no} <span className={`badge ${risk.cls}`}>{risk.label}</span>

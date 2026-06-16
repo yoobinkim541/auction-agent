@@ -28,7 +28,7 @@ public class ListingController {
       @RequestParam(defaultValue = "false") boolean passedOnly,
       @RequestParam(defaultValue = "all") String type,
       @RequestParam(defaultValue = "") String q) {
-    return ResponseEntity.ok(service.listJson(passedOnly, type, q));
+    return ResponseEntity.ok(service.listSlimJson(passedOnly, type, q));
   }
 
   /** 매물 상세 (사건번호) */

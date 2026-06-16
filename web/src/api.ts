@@ -134,6 +134,12 @@ export async function fetchListings(params: { passedOnly?: boolean; type?: strin
   return (await res.json()) as ListingItem[];
 }
 
+export async function fetchDetail(caseNo: string): Promise<ListingItem> {
+  const res = await fetch(`${BASE}/api/listings/${encodeURIComponent(caseNo)}`);
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return (await res.json()) as ListingItem;
+}
+
 export async function triggerJob(job: 'crawl' | 'analyze' | 'eval' | 'ingest-legal'): Promise<void> {
   await fetch(`${BASE}/api/jobs/${job}`, { method: 'POST' });
 }
