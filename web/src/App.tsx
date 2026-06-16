@@ -3,7 +3,7 @@ import {
   fetchListings, triggerJob, setFavorite, apiBase, won, eok,
   type ListingItem, type RightsObj, type LocationObj,
 } from './api.ts';
-import { scoreClient, DEFAULT_CONFIG, type ScoreConfig } from './scoring.ts';
+import { scoreClient, DEFAULT_CONFIG, type ScoreConfig, type ClientScore } from './scoring.ts';
 import { acquisitionTaxRate } from './cost.ts';
 
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -59,6 +59,7 @@ export default function App() {
   const [err, setErr] = useState<string | null>(null);
   const [onlyPassed, setOnlyPassed] = useState(true);
   const [onlyFavorite, setOnlyFavorite] = useState(false);
+  const [onlyMultiRound, setOnlyMultiRound] = useState(false);
   const [type, setType] = useState('all');
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<SortKey>('score');
@@ -91,6 +92,11 @@ export default function App() {
     if (cfg.apprMaxEok > 0) v = v.filter((x) => (x.item.appraisal_value ?? 0) <= cfg.apprMaxEok * 1e8);
     if (onlyPassed) v = v.filter((x) => x.sc.passed);
     if (onlyFavorite) v = v.filter((x) => x.item.is_favorite);
+    if (onlyMultiRound) v = v.filter((x) => {
+      const rs = x.item.location?.sale_rounds ?? [];
+      const rnd = rs.find((s) => s.date === x.item.sale_date)?.round ?? (rs.length > 0 ? rs[rs.length - 1]!.round : null);
+      return rnd != null && rnd >= 2;
+    });
     if (type !== 'all') v = v.filter((x) => x.item.property_type === type);
     if (q.trim()) v = v.filter((x) => x.item.address.includes(q.trim()) || x.item.case_no.includes(q.trim()));
     v.sort((a, b) => {
@@ -104,7 +110,7 @@ export default function App() {
       return b.sc.totalScore - a.sc.totalScore;
     });
     return v;
-  }, [rows, cfg, onlyPassed, onlyFavorite, type, q, sort]);
+  }, [rows, cfg, onlyPassed, onlyFavorite, onlyMultiRound, type, q, sort]);
 
   const favCount = rows.filter((r) => r.is_favorite).length;
   const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
@@ -160,6 +166,7 @@ export default function App() {
       <div className="controls">
         <label><input type="checkbox" checked={onlyPassed} onChange={(e) => setOnlyPassed(e.target.checked)} /> 통과만</label>
         <label><input type="checkbox" checked={onlyFavorite} onChange={(e) => setOnlyFavorite(e.target.checked)} /> ★관심만 ({favCount})</label>
+        <label><input type="checkbox" checked={onlyMultiRound} onChange={(e) => setOnlyMultiRound(e.target.checked)} /> 2차↑ 유찰</label>
         <select value={type} onChange={(e) => setType(e.target.value)}>
           <option value="all">전체 종류</option>
           {Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
@@ -175,6 +182,7 @@ export default function App() {
         <button onClick={load}>새로고침</button>
         <button onClick={() => triggerJob('crawl')} title="더낙찰옥션 크롤">크롤</button>
         <button onClick={() => triggerJob('analyze')} title="분석 실행">분석</button>
+        <button onClick={() => exportCSV(view)} title="현재 목록을 CSV로 내보내기">↓ CSV</button>
         <span className="count">{view.length}건</span>
       </div>
 
@@ -370,6 +378,53 @@ function ConfigPanel({ cfg, setCfg }: { cfg: ScoreConfig; setCfg: (c: ScoreConfi
   );
 }
 
+function exportCSV(rows: Array<{ item: ListingItem; sc: ClientScore }>) {
+  const BOM = '﻿'; // Excel Korean UTF-8 BOM
+  const headers = [
+    '사건번호', '종류', '주소', '법원', '감정가(만원)', '최저가(만원)',
+    '안전마진%', '인수금액(만원)', '권리등급', '점수', '매각기일',
+    '추정시세(만원)', '진짜마진%', '전세시세(만원)', '갭(만원)', '수익률%',
+    '현재차수', '예상낙찰가(만원)', '관심',
+  ];
+  const toMw = (v: number | null | undefined) => (v != null ? Math.round(v / 10000) : '');
+  const pctStr = (v: number | null | undefined) => (v != null ? (v * 100).toFixed(1) : '');
+  const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+
+  const lines = rows.map(({ item: r, sc }) => {
+    const rounds = r.location?.sale_rounds ?? [];
+    const currentRound =
+      rounds.find((s) => s.date === r.sale_date)?.round ??
+      (rounds.length > 0 ? rounds[rounds.length - 1]!.round : null);
+    return [
+      r.case_no, TYPE_LABEL[r.property_type] ?? r.property_type, r.address, r.court ?? '',
+      toMw(r.appraisal_value), toMw(r.min_bid_price),
+      pctStr(r.location?.safety_margin),
+      toMw(r.rights?.assumed_amount ?? 0),
+      RISK[r.rights?.risk_grade ?? '']?.label ?? '-',
+      sc.totalScore, r.sale_date ?? '',
+      toMw(r.location?.market_price),
+      pctStr(r.location?.acquisition_cost?.trueSafetyMargin),
+      toMw(r.location?.income?.jeonseDeposit),
+      toMw(r.location?.income?.gapInvestment),
+      r.location?.income?.grossYieldPct != null ? r.location.income.grossYieldPct.toFixed(1) : '',
+      currentRound ?? '',
+      toMw(r.location?.expected_bid_price),
+      r.is_favorite ? '★' : '',
+    ].map(esc).join(',');
+  });
+
+  const csv = BOM + [headers.map(esc).join(','), ...lines].join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `경매분석_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function Notice({ children }: { children: React.ReactNode }) {
   return <div className="notice">{children}</div>;
 }
@@ -378,6 +433,18 @@ function Detail({ row, onClose, onFav }: { row: ListingItem; onClose: () => void
   const rights: RightsObj | null = row.rights;
   const loc: LocationObj | null = row.location;
   const risk = RISK[rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  const detailRounds = loc?.sale_rounds ?? [];
+  const currentRound =
+    detailRounds.find((s) => s.date === row.sale_date)?.round ??
+    (detailRounds.length > 0 ? detailRounds[detailRounds.length - 1]!.round : null);
+
   return (
     <div className="drawer-bg" onClick={onClose}>
       <aside className="drawer" onClick={(e) => e.stopPropagation()}>
@@ -403,6 +470,10 @@ function Detail({ row, onClose, onFav }: { row: ListingItem; onClose: () => void
         <div className="kv">
           <div><span>감정가</span><b>{eok(row.appraisal_value)}</b></div>
           <div><span>최저매각가</span><b>{eok(row.min_bid_price)}</b></div>
+          <div><span>매각기일</span><b>{row.sale_date ?? '-'}</b></div>
+          {currentRound != null && (
+            <div><span>현재 차수</span><b className={currentRound > 1 ? 'danger' : ''}>{currentRound}차{currentRound > 1 ? ` · 유찰 ${currentRound - 1}회` : ''}</b></div>
+          )}
           <div><span>추정시세</span><b>{eok(loc?.market_price)}{loc?.market_confidence ? ` · 신뢰도 ${CONF[loc.market_confidence]}` : ''}</b></div>
           <div><span>예상낙찰가</span><b>{eok(loc?.expected_bid_price)}</b></div>
           <div><span>안전마진(최저가)</span><b>{pct(loc?.safety_margin)}</b></div>
