@@ -381,6 +381,7 @@ function Detail({ row, onClose, onFav }: { row: ListingItem; onClose: () => void
         </Section>
 
         {loc?.acquisition_cost && <CostCalculator row={row} loc={loc} />}
+        {loc?.income && <IncomeBlock income={loc.income} />}
 
         {loc?.land_use_flags && loc.land_use_flags.length > 0 && (
           <Section title="토지이용 규제 · 이슈">
@@ -453,6 +454,43 @@ function Detail({ row, onClose, onFav }: { row: ListingItem; onClose: () => void
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return <section className="sect"><h3>{title}</h3>{children}</section>;
+}
+
+/** 임대수익·출구(양도세) — '이거 사면 돈 되나' */
+function IncomeBlock({ income: inc }: { income: import('./api.ts').IncomeObj }) {
+  const pctv = (n: number | null) => (n == null ? '-' : n.toFixed(1) + '%');
+  return (
+    <Section title="임대수익 · 출구 (세후)">
+      <p className="muted">임대시세: {inc.rentBasis || '표본 부족'}</p>
+      <div className="kv">
+        {inc.jeonseDeposit != null && <div><span>전세 시세</span><b>{eok(inc.jeonseDeposit)}</b></div>}
+        {inc.jeonseRatioPct != null && <div><span>전세가율</span><b>{pctv(inc.jeonseRatioPct)}</b></div>}
+        {inc.gapInvestment != null && <div><span title="총취득비용 − 전세보증금">갭(전세 실투자)</span><b>{eok(inc.gapInvestment)}</b></div>}
+        {inc.monthlyRent != null && <div><span>월세 시세</span><b>{won(inc.monthlyRent)}</b></div>}
+        {inc.grossYieldPct != null && <div><span>표면 수익률</span><b className={inc.grossYieldPct >= 4 ? 'good' : ''}>{pctv(inc.grossYieldPct)}</b></div>}
+        {inc.monthlyCashflow != null && <div><span>월 현금흐름</span><b className={inc.monthlyCashflow < 0 ? 'danger' : 'good'}>{won(inc.monthlyCashflow)}</b></div>}
+        {inc.hiddenTenantDeposit != null && <div><span className="danger">점유 임차인 보증금(추정)</span><b className="danger">{eok(inc.hiddenTenantDeposit)}</b></div>}
+      </div>
+      {inc.saleScenarios.length > 0 && (
+        <>
+          <h4>보유기간별 세후 매도 순익 (시세 동결 가정)</h4>
+          <table className="mini">
+            <thead><tr><th>보유</th><th>장특공</th><th className="num">양도세</th><th className="num">세후 순익</th></tr></thead>
+            <tbody>
+              {inc.saleScenarios.map((s) => (
+                <tr key={s.holdYears}>
+                  <td>{s.holdYears}년</td><td>{(s.ltdRate * 100).toFixed(0)}%</td>
+                  <td className="num">{won(s.yangdoTax)}</td>
+                  <td className="num"><b className={s.netCashProfit < 0 ? 'danger' : 'good'}>{eok(s.netCashProfit)}</b></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+      {inc.notes.length > 0 && <ul className="warns">{inc.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
+    </Section>
+  );
 }
 
 const RECO: Record<string, { label: string; cls: string }> = {

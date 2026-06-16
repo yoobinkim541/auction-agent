@@ -19,6 +19,9 @@ import { computeAcquisitionCost, expectedBid, marketFromSiteComps, classifyLandU
 import { buildReport } from './report/build.ts';
 import { attachGlossary } from './report/glossary.ts';
 import { assessLegalRisk } from './legal/risk.ts';
+import { addressToLawdCd } from './location/lawd-codes.ts';
+import { fetchRentDeals, estimateRent } from './income/rent.ts';
+import { analyzeIncome } from './income/yield.ts';
 
 /** 사용자 취득세 가정(개인 1주택 기본). 다주택/법인이면 여기 또는 향후 설정에서 조정. */
 const TAX_ASSUMPTION = { homeCountAfter: 1 } as const;
@@ -202,6 +205,22 @@ async function main() {
         marketPrice: loc.marketPrice,
         taxOptions: { ...TAX_ASSUMPTION, officetelAsHouse: false },
       });
+
+      // 2-c) 임대수익·출구 엔진 (MOLIT 전월세 → 전세가율·수익률·현금흐름·세후 매도 시나리오)
+      try {
+        const lawdCd = addressToLawdCd(listing.address);
+        if (lawdCd) {
+          const rent = estimateRent(await fetchRentDeals(listing.propertyType, lawdCd, 12), listing.areaM2);
+          if (rent.n > 0) {
+            loc.income = analyzeIncome({
+              marketPrice: loc.marketPrice, totalAcqCost: loc.acquisitionCost?.totalCost ?? null,
+              bidPrice: loc.acquisitionCost?.bidPrice ?? listing.minBidPrice,
+              acqTax: loc.acquisitionCost?.acqTax ?? 0, bondCost: loc.acquisitionCost?.bondCost ?? 0,
+              gongPrice, rent, hasOpposingTenant: rights.tenants.some((t) => t.hasOpposition),
+            });
+          }
+        }
+      } catch { /* 전월세 조회 실패는 무시(임대분석 생략) */ }
 
       // 3) 최대 안전 입찰가
       rights.maxSafeBid = maxSafeBid(loc.marketPrice, rights.assumedAmount, 0.1);

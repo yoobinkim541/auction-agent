@@ -149,6 +149,31 @@ export interface LegalRisk {
   factors: LegalRiskFactor[];
 }
 
+/** 보유기간별 세후 매도 시나리오 */
+export interface SaleScenario {
+  holdYears: number;
+  yangdoTax: number; // 양도세+지방세(원)
+  ltdRate: number; // 장기보유특별공제율
+  netCashProfit: number; // 실현 세후 순익(원)
+  effRatePct: number; // 양도세 실효세율(차익 대비 %)
+}
+
+/** 임대수익·출구 분석 */
+export interface IncomeAnalysis {
+  rentBasis: string;
+  jeonseDeposit: number | null;
+  monthlyDeposit: number | null;
+  monthlyRent: number | null;
+  jeonseRatioPct: number | null; // 전세가율 %
+  gapInvestment: number | null; // 갭(전세 끼고 실투자, 원)
+  grossYieldPct: number | null; // 월세 표면수익률 %
+  monthlyCashflow: number | null; // 월 순현금흐름(원)
+  cashflowNote: string;
+  hiddenTenantDeposit: number | null; // 점유 임차인 보증금 추정(원)
+  saleScenarios: SaleScenario[];
+  notes: string[];
+}
+
 /** 매물별 종합 보고서 */
 export interface ListingReport {
   headline: string; // 한 줄 결론
@@ -409,6 +434,8 @@ export interface LocationAnalysis {
   adminOffices?: Record<string, string>;
   /** 매물 사진 URL */
   photos?: string[];
+  /** 임대수익·출구 분석 */
+  income?: IncomeAnalysis;
   /** 매물별 종합 보고서 + 입찰 전 체크리스트 */
   report?: ListingReport;
 }

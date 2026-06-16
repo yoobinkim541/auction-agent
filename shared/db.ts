@@ -95,9 +95,9 @@ export async function saveLocationAnalysis(listingId: number, loc: LocationAnaly
   await query(
     `insert into gm_location_analysis
        (listing_id,market_price,comps,safety_margin,transit,schools,amenities,dev_signals,market_confidence,comp_basis,
-        expected_bid_price,expected_bid_basis,acquisition_cost,site_comps,sale_rounds,building,land_use_flags,admin_offices,report,photos,analyzed_at)
+        expected_bid_price,expected_bid_basis,acquisition_cost,site_comps,sale_rounds,building,land_use_flags,admin_offices,report,photos,income,analyzed_at)
      values ($1,$2,$3::jsonb,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9,$10,
-        $11,$12,$13::jsonb,$14::jsonb,$15::jsonb,$16::jsonb,$17::jsonb,$18::jsonb,$19::jsonb,$20::jsonb,now())
+        $11,$12,$13::jsonb,$14::jsonb,$15::jsonb,$16::jsonb,$17::jsonb,$18::jsonb,$19::jsonb,$20::jsonb,$21::jsonb,now())
      on conflict (listing_id) do update set
        market_price=excluded.market_price, comps=excluded.comps, safety_margin=excluded.safety_margin,
        transit=excluded.transit, schools=excluded.schools, amenities=excluded.amenities,
@@ -106,11 +106,11 @@ export async function saveLocationAnalysis(listingId: number, loc: LocationAnaly
        expected_bid_basis=excluded.expected_bid_basis, acquisition_cost=excluded.acquisition_cost,
        site_comps=excluded.site_comps, sale_rounds=excluded.sale_rounds, building=excluded.building,
        land_use_flags=excluded.land_use_flags, admin_offices=excluded.admin_offices, report=excluded.report,
-       photos=excluded.photos, analyzed_at=now()`,
+       photos=excluded.photos, income=excluded.income, analyzed_at=now()`,
     [listingId, loc.marketPrice, j(loc.comps), loc.safetyMargin, j(loc.transit), j(loc.schools),
      j(loc.amenities), j(loc.devSignals), loc.marketConfidence ?? null, loc.compBasis ?? null,
      loc.expectedBidPrice ?? null, loc.expectedBidBasis ?? null, j(loc.acquisitionCost), j(loc.siteComps),
-     j(loc.saleRounds), j(loc.building), j(loc.landUseFlags), j(loc.adminOffices), j(loc.report), j(loc.photos)],
+     j(loc.saleRounds), j(loc.building), j(loc.landUseFlags), j(loc.adminOffices), j(loc.report), j(loc.photos), j(loc.income)],
   );
 }
 

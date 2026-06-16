@@ -36,6 +36,7 @@ export interface LocationObj {
   land_use_flags?: LandUseFlagObj[] | null;
   admin_offices?: Record<string, string> | null;
   photos?: string[] | null;
+  income?: IncomeObj | null;
   report?: ReportObj | null;
 }
 export interface AcquisitionCostObj {
@@ -63,6 +64,16 @@ export interface LegalRiskObj {
   grade: 'manageable' | 'caution' | 'severe' | 'avoid';
   manageable: boolean; headline: string; reasoning: string;
   factors: LegalRiskFactorObj[];
+}
+export interface SaleScenarioObj { holdYears: number; yangdoTax: number; ltdRate: number; netCashProfit: number; effRatePct: number }
+export interface IncomeObj {
+  rentBasis: string;
+  jeonseDeposit: number | null; monthlyDeposit: number | null; monthlyRent: number | null;
+  jeonseRatioPct: number | null; gapInvestment: number | null; grossYieldPct: number | null;
+  monthlyCashflow: number | null; cashflowNote: string;
+  hiddenTenantDeposit: number | null;
+  saleScenarios: SaleScenarioObj[];
+  notes: string[];
 }
 export interface ReportObj {
   headline: string;
