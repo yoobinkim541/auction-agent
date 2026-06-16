@@ -141,7 +141,8 @@ export async function fetchDetail(caseNo: string): Promise<ListingItem> {
 }
 
 export async function triggerJob(job: 'crawl' | 'analyze' | 'eval' | 'ingest-legal'): Promise<void> {
-  await fetch(`${BASE}/api/jobs/${job}`, { method: 'POST' });
+  const res = await fetch(`${BASE}/api/jobs/${job}`, { method: 'POST' });
+  if (!res.ok) throw new Error(`잡 실행 실패 (${res.status})`);
 }
 
 export async function setFavorite(id: number, value: boolean): Promise<void> {

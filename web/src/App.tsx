@@ -68,6 +68,8 @@ export default function App() {
   const [showCfg, setShowCfg] = useState(false);
   const detailCacheRef = useRef(new Map<string, ListingItem>());
   const [detailLoading, setDetailLoading] = useState<string | null>(null);
+  const [jobStatus, setJobStatus] = useState<{ msg: string; ok: boolean } | null>(null);
+  const jobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = () => {
     setLoading(true); setErr(null);
@@ -81,6 +83,18 @@ export default function App() {
     setRows((rs) => rs.map((r) => (r.id === item.id ? { ...r, is_favorite: nv } : r)));
     if (selected?.id === item.id) setSelected({ ...selected, is_favorite: nv });
     setFavorite(item.id, nv).catch(() => load());
+  };
+
+  const showJob = (msg: string, ok: boolean, ttl = ok ? 4000 : 7000) => {
+    if (jobTimerRef.current) clearTimeout(jobTimerRef.current);
+    setJobStatus({ msg, ok });
+    jobTimerRef.current = setTimeout(() => setJobStatus(null), ttl);
+  };
+  const runJob = (job: 'crawl' | 'analyze' | 'eval' | 'ingest-legal', label: string) => {
+    showJob(`${label} 시작 중…`, true, 60000);
+    triggerJob(job)
+      .then(() => showJob(`${label} 실행됨`, true))
+      .catch((e: unknown) => showJob(`오류: ${e instanceof Error ? e.message : String(e)}`, false));
   };
 
   const handleSelect = (item: ListingItem) => {
@@ -196,8 +210,8 @@ export default function App() {
         </select>
         <button onClick={() => setShowCfg((s) => !s)}>{showCfg ? '조건 닫기' : '⚙ 조건·기준'}</button>
         <button onClick={load}>새로고침</button>
-        <button onClick={() => triggerJob('crawl')} title="더낙찰옥션 크롤">크롤</button>
-        <button onClick={() => triggerJob('analyze')} title="분석 실행">분석</button>
+        <button onClick={() => runJob('crawl', '크롤')} title="더낙찰옥션 크롤">크롤</button>
+        <button onClick={() => runJob('analyze', '분석')} title="분석 실행">분석</button>
         <button onClick={() => exportCSV(view)} title="현재 목록을 CSV로 내보내기">↓ CSV</button>
         <span className="count">{view.length}건</span>
       </div>
@@ -293,6 +307,12 @@ export default function App() {
       )}
 
       {selected && <Detail row={selected} onClose={() => setSelected(null)} onFav={() => toggleFav(selected)} loading={detailLoading === selected.case_no} />}
+
+      {jobStatus && (
+        <div className={`job-toast${jobStatus.ok ? '' : ' job-toast-err'}`} onClick={() => setJobStatus(null)}>
+          {jobStatus.msg}
+        </div>
+      )}
 
       <nav className="tabbar">
         <button className={activeTab === 'recommend' ? 'on' : ''} onClick={() => { setShowCfg(false); setOnlyFavorite(false); setOnlyPassed(true); window.scrollTo(0, 0); }}>
