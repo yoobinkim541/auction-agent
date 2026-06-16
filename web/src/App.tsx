@@ -6,6 +6,29 @@ import {
 import { scoreClient, DEFAULT_CONFIG, type ScoreConfig } from './scoring.ts';
 import { acquisitionTaxRate } from './cost.ts';
 
+const TODAY = new Date().toISOString().slice(0, 10);
+
+function saleDaysDiff(dateStr: string | null | undefined): number | null {
+  if (!dateStr) return null;
+  const ms = new Date(dateStr).getTime() - new Date(TODAY).getTime();
+  return Math.round(ms / 86_400_000);
+}
+
+function DDay({ dateStr }: { dateStr?: string | null }) {
+  const d = saleDaysDiff(dateStr);
+  if (d === null) return null;
+  const label = d === 0 ? 'D-Day' : d < 0 ? `D+${-d}` : `D-${d}`;
+  const cls = d <= 0 ? 'dday-urgent' : d <= 3 ? 'dday-warn' : d <= 7 ? 'dday-soon' : 'dday-ok';
+  return <span className={`dday ${cls}`} title={dateStr ?? ''}>{label}</span>;
+}
+
+const FLAG_LABEL: Record<string, string> = {
+  yuchigwon: '유치권', beopjeong_jisangwon: '법정지상권', bunmyo_gijigwon: '분묘기지권',
+  daejigwon_mideungi: '대지권미등기', toji_byeoldo_deungi: '토지별도등기',
+  jesioe_building: '제시외건물', nongchi: '농취증', senior_tenant: '대항력임차인',
+  senior_gadeungi: '선순위가등기', cheolgeo_gacheobun: '건물철거가처분',
+};
+
 const TYPE_LABEL: Record<string, string> = {
   apartment: '아파트', villa: '다세대·연립', officetel: '오피스텔',
   house: '단독·다가구', land: '토지', commercial: '상가', other: '기타',
@@ -72,7 +95,12 @@ export default function App() {
     if (q.trim()) v = v.filter((x) => x.item.address.includes(q.trim()) || x.item.case_no.includes(q.trim()));
     v.sort((a, b) => {
       if (sort === 'safety') return (b.item.location?.safety_margin ?? -1) - (a.item.location?.safety_margin ?? -1);
-      if (sort === 'sale') return (b.item.sale_date ?? '').localeCompare(a.item.sale_date ?? '');
+      if (sort === 'sale') {
+        // 임박순: 가까운 기일 우선(미래→과거). null은 맨 뒤.
+        const da = a.item.sale_date ?? '9999';
+        const db = b.item.sale_date ?? '9999';
+        return da.localeCompare(db);
+      }
       return b.sc.totalScore - a.sc.totalScore;
     });
     return v;
@@ -124,7 +152,7 @@ export default function App() {
           <thead>
             <tr>
               <th></th><th>사건번호</th><th>종류</th><th>소재지</th><th>감정가</th><th>최저가</th>
-              <th>안전마진</th><th>인수금액</th><th>권리</th><th>점수</th>
+              <th>안전마진</th><th>인수금액</th><th>권리</th><th>점수</th><th>매각기일</th>
             </tr>
           </thead>
           <tbody>
@@ -142,6 +170,7 @@ export default function App() {
                   <td className="num" onClick={() => setSelected(r)}>{r.rights ? (r.rights.assumed_amount ? eok(r.rights.assumed_amount) : '0') : '-'}</td>
                   <td onClick={() => setSelected(r)}><span className={`badge ${risk.cls}`}>{risk.label}</span></td>
                   <td className="num" onClick={() => setSelected(r)}><b>{sc.totalScore}</b></td>
+                  <td onClick={() => setSelected(r)}><DDay dateStr={r.sale_date} /><span className="sale-date-txt">{r.sale_date ?? '-'}</span></td>
                 </tr>
               );
             })}
@@ -170,8 +199,11 @@ export default function App() {
                 <div className="card-sub">
                   <span>{TYPE_LABEL[r.property_type] ?? r.property_type}</span>
                   <span className="mono">{r.case_no}</span>
-                  <span className={`badge ${risk.cls}`}>{risk.label}</span>
+                  <span className={`badge ${risk.cls}`} title={r.rights?.red_flags?.map((f) => f.message).join(' | ')}>{risk.label}</span>
                   {reco && <span className={`badge ${RECO[reco]?.cls ?? ''}`}>{RECO[reco]?.label ?? reco}</span>}
+                  {r.rights?.risk_grade === 'review_required' && (r.rights.red_flags ?? []).slice(0, 2).map((f) => (
+                    <span key={f.kind} className="flag-chip" title={f.message}>{FLAG_LABEL[f.kind] ?? f.kind}</span>
+                  ))}
                 </div>
                 <div className="card-metrics">
                   <div><span>감정가</span><b>{eok(r.appraisal_value)}</b></div>
@@ -182,6 +214,7 @@ export default function App() {
                 <div className="card-foot">
                   <span className="card-score">점수 <b>{sc.totalScore}</b></span>
                   {assumed > 0 && <span className="card-assumed">인수 {eok(assumed)}</span>}
+                  <DDay dateStr={r.sale_date} />
                   <span className="card-go">자세히 ›</span>
                 </div>
               </li>
