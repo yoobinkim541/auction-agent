@@ -60,6 +60,7 @@ export default function App() {
   const [onlyPassed, setOnlyPassed] = useState(true);
   const [onlyFavorite, setOnlyFavorite] = useState(false);
   const [onlyMultiRound, setOnlyMultiRound] = useState(false);
+  const [hideExpired, setHideExpired] = useState(true);
   const [type, setType] = useState('all');
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<SortKey>('score');
@@ -120,6 +121,7 @@ export default function App() {
     if (cfg.priceMaxEok > 0) v = v.filter((x) => (x.item.min_bid_price ?? 0) <= cfg.priceMaxEok * 1e8);
     if (cfg.apprMinEok > 0) v = v.filter((x) => (x.item.appraisal_value ?? 0) >= cfg.apprMinEok * 1e8);
     if (cfg.apprMaxEok > 0) v = v.filter((x) => (x.item.appraisal_value ?? 0) <= cfg.apprMaxEok * 1e8);
+    if (hideExpired) v = v.filter((x) => !x.item.sale_date || x.item.sale_date >= TODAY);
     if (onlyPassed) v = v.filter((x) => x.sc.passed);
     if (onlyFavorite) v = v.filter((x) => x.item.is_favorite);
     if (onlyMultiRound) v = v.filter((x) => {
@@ -140,7 +142,7 @@ export default function App() {
       return b.sc.totalScore - a.sc.totalScore;
     });
     return v;
-  }, [rows, cfg, onlyPassed, onlyFavorite, onlyMultiRound, type, q, sort]);
+  }, [rows, cfg, hideExpired, onlyPassed, onlyFavorite, onlyMultiRound, type, q, sort]);
 
   const favCount = rows.filter((r) => r.is_favorite).length;
   const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
@@ -194,6 +196,7 @@ export default function App() {
       )}
 
       <div className="controls">
+        <label><input type="checkbox" checked={hideExpired} onChange={(e) => setHideExpired(e.target.checked)} /> 기일경과 숨김</label>
         <label><input type="checkbox" checked={onlyPassed} onChange={(e) => setOnlyPassed(e.target.checked)} /> 통과만</label>
         <label><input type="checkbox" checked={onlyFavorite} onChange={(e) => setOnlyFavorite(e.target.checked)} /> ★관심만 ({favCount})</label>
         <label><input type="checkbox" checked={onlyMultiRound} onChange={(e) => setOnlyMultiRound(e.target.checked)} /> 2차↑ 유찰</label>
