@@ -58,7 +58,11 @@ export function scoreListing(
   address: string,
   cfg: ScoreConfig = DEFAULT_SCORE_CONFIG,
 ): Score {
-  const sSafety = safetyScore(loc.safetyMargin, cfg.safetyMaxAt);
+  // trueSafetyMargin(취득비용·예상낙찰가 반영)을 우선 사용, 없으면 raw safetyMargin으로 fallback
+  const trueSM = loc.acquisitionCost?.trueSafetyMargin ?? null;
+  const effectiveMargin = trueSM !== null ? trueSM : loc.safetyMargin;
+
+  const sSafety = safetyScore(effectiveMargin, cfg.safetyMaxAt);
   const sClean = cleanScore(rights);
   // 무피 보너스: 실거래 기반(non-estimated) zeroPiCandidate에만 +5점
   const zeroPiBonus = (loc.income?.zeroPiCandidate && !loc.income?.estimated) ? 5 : 0;
@@ -83,11 +87,12 @@ export function scoreListing(
     passed = false;
     reasons.push('사람 검토 필요(특수권리)');
   }
-  if (loc.safetyMargin !== null && loc.safetyMargin < cfg.minSafetyMargin) {
+  if (effectiveMargin !== null && effectiveMargin < cfg.minSafetyMargin) {
     passed = false;
-    reasons.push(`안전마진 ${(loc.safetyMargin * 100).toFixed(1)}% < 최소 ${(cfg.minSafetyMargin * 100).toFixed(0)}%`);
+    const label = trueSM !== null ? '진짜안전마진' : '안전마진';
+    reasons.push(`${label} ${(effectiveMargin * 100).toFixed(1)}% < 최소 ${(cfg.minSafetyMargin * 100).toFixed(0)}%`);
   }
-  if (loc.safetyMargin === null) {
+  if (effectiveMargin === null) {
     passed = false;
     reasons.push('시세 미확보 — 안전마진 산정 불가');
   }

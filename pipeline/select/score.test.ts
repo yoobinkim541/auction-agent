@@ -11,8 +11,17 @@ function rights(over: Partial<RightsAnalysisResult> = {}): RightsAnalysisResult 
     riskGrade: 'clean', isClean: true, warnings: [], engineVersion: '0.1.0', ...over,
   };
 }
-function loc(margin: number | null): LocationAnalysis {
-  return { caseNo: 'x', marketPrice: margin === null ? null : 10 * 억, comps: [], safetyMargin: margin };
+function loc(margin: number | null, trueSafetyMargin?: number | null): LocationAnalysis {
+  return {
+    caseNo: 'x', marketPrice: margin === null ? null : 10 * 억, comps: [], safetyMargin: margin,
+    ...(trueSafetyMargin !== undefined ? {
+      acquisitionCost: {
+        bidPrice: 5 * 억, bidBasis: '', acqTax: 0, acqTaxRatePct: 1, moveOutCost: 0,
+        bondCost: 0, assumedAmount: 0, etcCost: 0, totalCost: 5 * 억,
+        trueSafetyMargin, notes: [],
+      },
+    } : {}),
+  };
 }
 
 describe('scoreListing', () => {
@@ -52,6 +61,20 @@ describe('scoreListing', () => {
     const s = scoreListing('x', rights(), loc(null), 'apartment', '서울');
     expect(s.passedFilter).toBe(false);
     expect(s.reason).toContain('시세 미확보');
+  });
+
+  it('trueSafetyMargin 음수 → 탈락(raw safetyMargin이 높아도)', () => {
+    // raw margin 90%(최저가 기준), 하지만 취득비용 포함 진짜마진 -12%
+    const s = scoreListing('x', rights(), loc(0.9, -0.12), 'apartment', '서울');
+    expect(s.passedFilter).toBe(false);
+    expect(s.reason).toContain('진짜안전마진');
+  });
+
+  it('trueSafetyMargin 사용 — 점수 반영', () => {
+    // raw margin 90%, trueSafetyMargin 20% → safety_score = round(20%/40%*100) = 50
+    const s = scoreListing('x', rights(), loc(0.9, 0.2), 'apartment', '서울');
+    expect(s.passedFilter).toBe(true);
+    expect(s.safetyMarginScore).toBe(50);
   });
 });
 
