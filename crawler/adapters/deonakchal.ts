@@ -154,7 +154,7 @@ async function parseListPage(page: Page): Promise<ParsedRow[]> {
     if (!head) continue;
     const [, court, caseNo, typeLabel] = head;
 
-    const status = text.match(/(신건|유찰|진행|배당종결|취하|기각|각하|낙찰|변경|재진행|재매각|미진행|대금납부|배당)\s*\((\d+)%\)/);
+    const status = text.match(/(신건|유찰|진행|정지|배당종결|취하|기각|각하|낙찰|변경|재진행|재매각|미진행|대금납부|배당)\s*\((\d+)%\)/);
     if (status && TERMINAL.test(status[1]!)) continue; // 진행 매물만 수집
 
     const am = text.match(/감정가\s*([\d,]+)\s*최저가\s*([\d,]+)/);

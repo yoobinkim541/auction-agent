@@ -210,7 +210,7 @@ async function main() {
       }
 
       // 예상낙찰가(감정가×낙찰가율)
-      const eb = expectedBid(listing.appraisalValue, siteMetrics.sameBuildingSaleRatios, siteMetrics.nearbySaleRatios);
+      const eb = expectedBid(listing.appraisalValue, siteMetrics.sameBuildingSaleRatios, siteMetrics.nearbySaleRatios, listing.minBidPrice);
       loc.expectedBidPrice = eb.price;
       loc.expectedBidBasis = eb.basis;
 

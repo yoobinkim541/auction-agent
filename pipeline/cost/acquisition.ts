@@ -136,13 +136,23 @@ export function marketFromSiteComps(comps: SiteComparable[] | undefined, subject
   return { price: Math.round(p), n: prices.length, basis: `동일건물 실거래 ${prices.length}건(${near.length >= 2 ? `전용 ${subjectAreaM2}㎡±15%` : '전체평형'}) 중앙값` };
 }
 
-/** 예상낙찰가 = 감정가 × 낙찰가율(동일건물 우선, 없으면 인근 중앙값). */
-export function expectedBid(appraisalValue: number, sameBuilding?: number[], nearby?: number[]): { price: number | null; ratioPct: number | null; basis: string } {
+/**
+ * 예상낙찰가 = 감정가 × 낙찰가율(동일건물 우선, 없으면 인근 중앙값).
+ * 단, 유찰이 많아 최저가가 크게 낮아진 물건(최저가 > 감정가×비율×1.5 → 과대 추정)은
+ * 최저가 × 1.3 으로 대체(현실적 경쟁 오버비드 추정).
+ */
+export function expectedBid(appraisalValue: number, sameBuilding?: number[], nearby?: number[], minBidPrice?: number): { price: number | null; ratioPct: number | null; basis: string } {
   const ratios = (sameBuilding && sameBuilding.length) ? sameBuilding : (nearby && nearby.length ? nearby : []);
   if (!appraisalValue || !ratios.length) return { price: null, ratioPct: null, basis: '' };
   const r = median(ratios);
+  const ratioPrice = Math.round(appraisalValue * r / 100);
   const which = (sameBuilding && sameBuilding.length) ? `동일건물 낙찰가율 ${ratios.length}건` : `인근 낙찰가율 ${ratios.length}건`;
-  return { price: Math.round(appraisalValue * r / 100), ratioPct: Math.round(r), basis: `${which} 중앙값 ${Math.round(r)}%` };
+  // 최저가가 이미 낮아 비율 기반 예상가가 현실을 벗어난 경우(최저가 × 1.5 이하로 cap)
+  if (minBidPrice && minBidPrice > 0 && ratioPrice > minBidPrice * 1.5) {
+    const cappedPrice = Math.round(minBidPrice * 1.3);
+    return { price: cappedPrice, ratioPct: Math.round(r), basis: `${which} 중앙값 ${Math.round(r)}%(최저가 기준 1.3배로 조정)` };
+  }
+  return { price: ratioPrice, ratioPct: Math.round(r), basis: `${which} 중앙값 ${Math.round(r)}%` };
 }
 
 // ───────────────────── 토지이용 규제 flags ─────────────────────
