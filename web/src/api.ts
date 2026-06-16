@@ -149,6 +149,17 @@ export async function setFavorite(id: number, value: boolean): Promise<void> {
   await fetch(`${BASE}/api/listings/${id}/favorite?value=${value}`, { method: 'POST' });
 }
 
+export async function fetchLastCrawl(): Promise<{ date: string; status: string } | null> {
+  try {
+    const res = await fetch(`${BASE}/api/crawl-runs`);
+    if (!res.ok) return null;
+    const runs = (await res.json()) as { started_at: string; status: string }[];
+    const last = runs.find((r) => r.status === 'ok');
+    if (!last) return null;
+    return { date: last.started_at.slice(0, 10), status: last.status };
+  } catch { return null; }
+}
+
 export const won = (n: number | null | undefined): string =>
   n == null ? '-' : n.toLocaleString('ko-KR') + '원';
 export const eok = (n: number | null | undefined): string =>

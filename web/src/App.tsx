@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  fetchListings, fetchDetail, triggerJob, setFavorite, apiBase, won, eok,
+  fetchListings, fetchDetail, fetchLastCrawl, triggerJob, setFavorite, apiBase, won, eok,
   type ListingItem, type RightsObj, type LocationObj,
 } from './api.ts';
 import { scoreClient, DEFAULT_CONFIG, type ScoreConfig, type ClientScore } from './scoring.ts';
@@ -71,10 +71,12 @@ export default function App() {
   const [detailLoading, setDetailLoading] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<{ msg: string; ok: boolean } | null>(null);
   const jobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [lastCrawl, setLastCrawl] = useState<string | null>(null);
 
   const load = () => {
     setLoading(true); setErr(null);
     fetchListings().then(setRows).catch((e) => setErr(String(e))).finally(() => setLoading(false));
+    fetchLastCrawl().then((r) => { if (r) setLastCrawl(r.date); });
   };
   useEffect(load, []);
   useEffect(() => { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }, [cfg]);
@@ -149,21 +151,23 @@ export default function App() {
 
   const stats = useMemo(() => {
     const all = rows.map((item) => ({ item, sc: scoreClient(item, cfg) }));
-    const passed = all.filter((x) => x.sc.passed).length;
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const todayUrgent = all.filter((x) => x.sc.passed && x.item.sale_date === todayStr).length;
-    const week = all.filter((x) => {
+    const upcoming = all.filter((x) => !x.item.sale_date || x.item.sale_date >= TODAY);
+    const passed = upcoming.filter((x) => x.sc.passed).length;
+    const todayStr = TODAY;
+    const todayUrgent = upcoming.filter((x) => x.sc.passed && x.item.sale_date === todayStr).length;
+    const week = upcoming.filter((x) => {
       if (!x.sc.passed || !x.item.sale_date) return false;
       const d = saleDaysDiff(x.item.sale_date);
       return d !== null && d >= 0 && d <= 7;
     }).length;
-    return { total: rows.length, passed, todayUrgent, week };
+    const reviewCount = upcoming.filter((x) => x.item.rights?.risk_grade === 'review_required').length;
+    return { total: rows.length, passed, todayUrgent, week, reviewCount };
   }, [rows, cfg]);
 
   return (
     <div className="app">
       <header>
-        <h1>경매 매물 분석 <span className="sub">권리분석 · 입지분석</span></h1>
+        <h1>경매 매물 분석 <span className="sub">권리분석 · 입지분석</span>{lastCrawl && <span className="crawl-date">데이터 기준 {lastCrawl}</span>}</h1>
         <p className="disclaimer">
           ⚠️ 본 분석은 <b>참고용 정보</b>이며 법률자문이 아닙니다. 정확성을 보장하지 않으며 최종 판단·책임은 이용자에게 있습니다.
           입찰 전 반드시 등기부등본·매각물건명세서·현장 확인 및 변호사/법무사 상담을 권장합니다.
@@ -190,6 +194,17 @@ export default function App() {
             <div className="stat-item stat-soon">
               <span className="stat-label">7일 이내</span>
               <b className="stat-num">{stats.week}</b>
+            </div>
+          )}
+          {stats.reviewCount > 0 && (
+            <div
+              className={`stat-item stat-review${cfg.includeReviewRequired ? ' on' : ''}`}
+              onClick={() => { setCfg((c) => ({ ...c, includeReviewRequired: !c.includeReviewRequired })); setOnlyPassed(true); }}
+              title="클릭하면 검토필요 매물을 통과에 포함"
+              style={{ cursor: 'pointer' }}
+            >
+              <span className="stat-label">검토필요</span>
+              <b className="stat-num">{stats.reviewCount}</b>
             </div>
           )}
         </div>
