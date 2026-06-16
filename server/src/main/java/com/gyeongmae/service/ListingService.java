@@ -42,6 +42,7 @@ public class ListingService {
                   else jsonb_build_object(
                     'risk_grade', r.risk_grade,
                     'assumed_amount', r.assumed_amount,
+                    'max_safe_bid', r.max_safe_bid,
                     'red_flags', r.red_flags,
                     'is_clean', r.is_clean
                   ) end as rights,

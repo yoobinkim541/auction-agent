@@ -670,6 +670,7 @@ function ConfigPanel({ cfg, setCfg }: { cfg: ScoreConfig; setCfg: (c: ScoreConfi
       <div className="cfg-row cfg-checks">
         <label><input type="checkbox" checked={cfg.requireCleanRights} onChange={(e) => setCfg({ ...cfg, requireCleanRights: e.target.checked })} /> 인수금액 0만 통과</label>
         <label><input type="checkbox" checked={cfg.includeReviewRequired} onChange={(e) => setCfg({ ...cfg, includeReviewRequired: e.target.checked })} /> 검토필요(특수권리)도 통과에 포함</label>
+        <label><input type="checkbox" checked={cfg.requireMarketPrice} onChange={(e) => setCfg({ ...cfg, requireMarketPrice: e.target.checked })} /> 시세 미확보 제외</label>
         <button onClick={() => setCfg(DEFAULT_CONFIG)}>기본값</button>
       </div>
     </div>

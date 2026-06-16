@@ -88,6 +88,7 @@ export function scoreListing(
     reasons.push(`안전마진 ${(loc.safetyMargin * 100).toFixed(1)}% < 최소 ${(cfg.minSafetyMargin * 100).toFixed(0)}%`);
   }
   if (loc.safetyMargin === null) {
+    passed = false;
     reasons.push('시세 미확보 — 안전마진 산정 불가');
   }
 

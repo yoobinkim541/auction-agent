@@ -19,6 +19,7 @@ export interface ScoreConfig {
   apprMaxEok: number; // 감정가 상한(억), 0=무제한
   minTrueSafetyMarginPct: number; // 진짜마진 하한(%), -99=무제한
   maxDangerCount: number; // 허용 위험항목 최대수, -1=무제한
+  requireMarketPrice: boolean; // 시세 미확보 매물 제외
 }
 
 export const DEFAULT_CONFIG: ScoreConfig = {
@@ -36,6 +37,7 @@ export const DEFAULT_CONFIG: ScoreConfig = {
   apprMaxEok: 0,
   minTrueSafetyMarginPct: -99,
   maxDangerCount: -1,
+  requireMarketPrice: true,
 };
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
@@ -76,7 +78,10 @@ export function scoreClient(item: ListingItem, cfg: ScoreConfig): ClientScore {
   if (cfg.requireCleanRights && assumed > 0) { passed = false; reasons.push(`인수금액 ${(assumed / 1e8).toFixed(1)}억`); }
   if (grade === 'review_required' && !cfg.includeReviewRequired) { passed = false; reasons.push('검토필요(특수권리)'); }
   if (margin != null && margin < cfg.minSafetyMargin) { passed = false; reasons.push(`안전마진 ${(margin * 100).toFixed(0)}%<${(cfg.minSafetyMargin * 100).toFixed(0)}%`); }
-  if (margin == null) reasons.push('시세 미확보');
+  if (margin == null) {
+    if (cfg.requireMarketPrice) { passed = false; reasons.push('시세 미확보'); }
+    else reasons.push('시세 미확보(참고)');
+  }
   const trueMgn = item.location?.acquisition_cost?.trueSafetyMargin ?? null;
   if (cfg.minTrueSafetyMarginPct > -99 && trueMgn != null && trueMgn * 100 < cfg.minTrueSafetyMarginPct) {
     passed = false; reasons.push(`진짜마진 ${(trueMgn * 100).toFixed(0)}%<${cfg.minTrueSafetyMarginPct}%`);

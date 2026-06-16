@@ -47,6 +47,12 @@ describe('scoreListing', () => {
     const s = scoreListing('x', rights(), loc(0.3), 'land', '서울');
     expect(s.passedFilter).toBe(false);
   });
+
+  it('시세 미확보(null safetyMargin) → 탈락', () => {
+    const s = scoreListing('x', rights(), loc(null), 'apartment', '서울');
+    expect(s.passedFilter).toBe(false);
+    expect(s.reason).toContain('시세 미확보');
+  });
 });
 
 describe('maxSafeBid', () => {
