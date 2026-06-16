@@ -229,10 +229,33 @@ table.grid td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertica
   padding: 22px 22px 40px;
   position: relative;
 }
+/* ── Drawer topbar (nav + close) ── */
+.drawer-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.drawer-nav { display: flex; align-items: center; gap: 4px; }
+.nav-btn {
+  background: var(--panel2);
+  border: 1px solid var(--line-2);
+  color: var(--muted);
+  font-size: 20px;
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: border-color .15s, color .15s;
+}
+.nav-btn:disabled { opacity: .28; cursor: default; }
+.nav-btn:not(:disabled):hover { border-color: var(--accent); color: var(--text); }
+.nav-pos { font-size: 11px; font-family: var(--mono); color: var(--muted); padding: 0 6px; }
 .close {
-  position: absolute;
-  top: 16px;
-  right: 16px;
   background: var(--panel2);
   border: 1px solid var(--line-2);
   color: var(--muted);
@@ -660,8 +683,8 @@ table.mini td.num { text-align: right; font-family: var(--mono); }
     padding: 18px 16px calc(28px + env(safe-area-inset-bottom));
     animation: sheetup .28s cubic-bezier(.2,.7,.3,1) both;
   }
-  .drawer h2 { font-size: 16px; padding-right: 44px; }
-  .close { top: 12px; right: 12px; }
+  .drawer h2 { font-size: 16px; }
+  .drawer-topbar { margin-bottom: 10px; }
   .kv { grid-template-columns: 1fr; }
   .kv div { padding: 9px 13px; }
 

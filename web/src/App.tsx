@@ -164,6 +164,11 @@ export default function App() {
     return { total: rows.length, passed, todayUrgent, week, reviewCount };
   }, [rows, cfg]);
 
+  const selNavIdx = selected ? view.findIndex((x) => x.item.id === selected.id) : -1;
+  const selNavPrev = selNavIdx > 0 ? () => handleSelect(view[selNavIdx - 1]!.item) : undefined;
+  const selNavNext = selNavIdx >= 0 && selNavIdx < view.length - 1 ? () => handleSelect(view[selNavIdx + 1]!.item) : undefined;
+  const selNavPos = selNavIdx >= 0 ? `${selNavIdx + 1} / ${view.length}` : undefined;
+
   return (
     <div className="app">
       <header>
@@ -324,7 +329,11 @@ export default function App() {
         </ul>
       )}
 
-      {selected && <Detail row={selected} onClose={() => setSelected(null)} onFav={() => toggleFav(selected)} loading={detailLoading === selected.case_no} />}
+      {selected && <Detail
+        row={selected} onClose={() => setSelected(null)} onFav={() => toggleFav(selected)}
+        loading={detailLoading === selected.case_no}
+        onPrev={selNavPrev} onNext={selNavNext} position={selNavPos}
+      />}
 
       {jobStatus && (
         <div className={`job-toast${jobStatus.ok ? '' : ' job-toast-err'}`} onClick={() => setJobStatus(null)}>
@@ -483,16 +492,23 @@ function Notice({ children }: { children: React.ReactNode }) {
   return <div className="notice">{children}</div>;
 }
 
-function Detail({ row, onClose, onFav, loading }: { row: ListingItem; onClose: () => void; onFav: () => void; loading?: boolean }) {
+function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
+  row: ListingItem; onClose: () => void; onFav: () => void;
+  loading?: boolean; onPrev?: () => void; onNext?: () => void; position?: string;
+}) {
   const rights: RightsObj | null = row.rights;
   const loc: LocationObj | null = row.location;
   const risk = RISK[rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
 
   useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const h = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'ArrowLeft' && onPrev) { e.preventDefault(); onPrev(); }
+      if (e.key === 'ArrowRight' && onNext) { e.preventDefault(); onNext(); }
+    };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
-  }, [onClose]);
+  }, [onClose, onPrev, onNext]);
 
   const detailRounds = loc?.sale_rounds ?? [];
   const currentRound =
@@ -502,7 +518,14 @@ function Detail({ row, onClose, onFav, loading }: { row: ListingItem; onClose: (
   return (
     <div className="drawer-bg" onClick={onClose}>
       <aside className="drawer" onClick={(e) => e.stopPropagation()}>
-        <button className="close" onClick={onClose}>✕</button>
+        <div className="drawer-topbar">
+          <div className="drawer-nav">
+            <button className="nav-btn" disabled={!onPrev} onClick={onPrev} title="이전 (←)">‹</button>
+            {position && <span className="nav-pos">{position}</span>}
+            <button className="nav-btn" disabled={!onNext} onClick={onNext} title="다음 (→)">›</button>
+          </div>
+          <button className="close" onClick={onClose}>✕</button>
+        </div>
         {loading && <p className="detail-loading">상세 분석 불러오는 중…</p>}
         <h2>
           <span className="star" onClick={onFav} title="관심">{row.is_favorite ? '★' : '☆'}</span>{' '}
