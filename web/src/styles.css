@@ -94,6 +94,7 @@ header .crawl-date { color: var(--muted); font-size: 11px; font-weight: 400; fon
 .stat-item.stat-consider { border-color: rgba(240,192,64,.2); }
 .stat-item.stat-consider.on { background: rgba(240,192,64,.07); border-color: rgba(240,192,64,.4); }
 .stat-item.stat-soon.on { background: rgba(245,166,35,.07); border-color: rgba(245,166,35,.4); }
+.stat-item.stat-urgent.on { background: rgba(240,69,69,.07); border-color: rgba(240,69,69,.4); }
 /* legacy: hide separators if still in markup */
 .stat-sep { display: none; }
 /* legacy: if old stat-item <b> still used */
@@ -625,6 +626,26 @@ table.mini td.num { text-align: right; font-family: var(--mono); }
 .gallery { display: flex; gap: 8px; overflow-x: auto; margin: 12px 0 4px; padding-bottom: 6px; -webkit-overflow-scrolling: touch; scroll-snap-type: x mandatory; }
 .gphoto { flex: 0 0 auto; scroll-snap-align: start; }
 .gphoto img { height: 160px; width: auto; border-radius: 10px; border: 1px solid var(--line); object-fit: cover; display: block; background: var(--panel2); }
+
+/* ── Drawer keyboard shortcuts ── */
+.drawer-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 24px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.drawer-shortcuts span {
+  font-size: 10.5px;
+  font-family: var(--mono);
+  color: var(--muted);
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: default;
+}
 
 /* ── Tabbar (mobile only) ── */
 .tabbar { display: none; }

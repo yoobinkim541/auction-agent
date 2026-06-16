@@ -60,7 +60,7 @@ export function scoreClient(item: ListingItem, cfg: ScoreConfig): ClientScore {
 
   const reasons: string[] = [];
   let passed = true;
-  if (!cfg.allowedTypes.includes(item.property_type)) { passed = false; reasons.push('물건종류 제외'); }
+  if (cfg.allowedTypes.length > 0 && !cfg.allowedTypes.includes(item.property_type)) { passed = false; reasons.push('물건종류 제외'); }
   if (cfg.regionKeywords.length && !cfg.regionKeywords.some((k) => item.address.includes(k))) { passed = false; reasons.push('관심지역 외'); }
   const minBid = item.min_bid_price ?? 0;
   if (cfg.priceMinEok > 0 && minBid < cfg.priceMinEok * 1e8) { passed = false; reasons.push(`최저가 ${(minBid / 1e8).toFixed(1)}억<${cfg.priceMinEok}억`); }

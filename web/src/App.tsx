@@ -59,7 +59,7 @@ function loadConfig(): ScoreConfig {
   return DEFAULT_CONFIG;
 }
 
-type UIState = { sort?: SortKey; sortDir?: 'asc' | 'desc'; type?: string; hideExpired?: boolean };
+type UIState = { sort?: SortKey; sortDir?: 'asc' | 'desc'; type?: string; hideExpired?: boolean; onlyPassed?: boolean; onlyMultiRound?: boolean };
 function loadUIState(): UIState {
   try {
     const raw = localStorage.getItem(UI_KEY);
@@ -72,12 +72,13 @@ export default function App() {
   const [rows, setRows] = useState<ListingItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [onlyPassed, setOnlyPassed] = useState(true);
+  const [onlyPassed, setOnlyPassed] = useState<boolean>(() => loadUIState().onlyPassed ?? true);
   const [onlyFavorite, setOnlyFavorite] = useState(false);
-  const [onlyMultiRound, setOnlyMultiRound] = useState(false);
+  const [onlyMultiRound, setOnlyMultiRound] = useState<boolean>(() => loadUIState().onlyMultiRound ?? false);
   const [onlyZeroPi, setOnlyZeroPi] = useState(false);
   const [onlyConsider, setOnlyConsider] = useState(false);
   const [onlyUrgent, setOnlyUrgent] = useState(false);
+  const [onlyToday, setOnlyToday] = useState(false);
   const [maxGapEok, setMaxGapEok] = useState(0);
   const [hideExpired, setHideExpired] = useState<boolean>(() => loadUIState().hideExpired ?? true);
   const [type, setType] = useState<string>(() => loadUIState().type ?? 'all');
@@ -101,7 +102,7 @@ export default function App() {
   };
   useEffect(load, []);
   useEffect(() => { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }, [cfg]);
-  useEffect(() => { localStorage.setItem(UI_KEY, JSON.stringify({ sort, sortDir, type, hideExpired })); }, [sort, sortDir, type, hideExpired]);
+  useEffect(() => { localStorage.setItem(UI_KEY, JSON.stringify({ sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound })); }, [sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound]);
 
   const toggleFav = (item: ListingItem) => {
     const nv = !item.is_favorite;
@@ -179,6 +180,7 @@ export default function App() {
     if (onlyFavorite) v = v.filter((x) => x.item.is_favorite);
     if (onlyZeroPi) v = v.filter((x) => x.item.location?.income?.zeroPiCandidate === true);
     if (onlyConsider) v = v.filter((x) => x.item.location?.report?.recommendation === 'consider');
+    if (onlyToday) v = v.filter((x) => x.item.sale_date === TODAY);
     if (onlyUrgent) {
       const sevenDaysStr = new Date(new Date(TODAY).getTime() + 7 * 86_400_000).toISOString().slice(0, 10);
       v = v.filter((x) => x.item.sale_date && x.item.sale_date >= TODAY && x.item.sale_date <= sevenDaysStr);
@@ -193,7 +195,10 @@ export default function App() {
       return rnd != null && rnd >= 2;
     });
     if (type !== 'all') v = v.filter((x) => x.item.property_type === type);
-    if (q.trim()) v = v.filter((x) => x.item.address.includes(q.trim()) || x.item.case_no.includes(q.trim()));
+    if (q.trim()) {
+      const qt = q.trim();
+      v = v.filter((x) => x.item.address.includes(qt) || x.item.case_no.includes(qt) || (x.item.court ?? '').includes(qt));
+    }
     v.sort((a, b) => {
       let diff = 0;
       if (sort === 'safety') diff = (a.item.location?.safety_margin ?? -1) - (b.item.location?.safety_margin ?? -1);
@@ -211,7 +216,7 @@ export default function App() {
       return sortDir === 'asc' ? diff : -diff;
     });
     return v;
-  }, [rows, cfg, hideExpired, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyUrgent, maxGapEok, type, q, sort, sortDir]);
+  }, [rows, cfg, hideExpired, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyUrgent, onlyToday, maxGapEok, type, q, sort, sortDir]);
 
   const favCount = rows.filter((r) => r.is_favorite).length;
   const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
@@ -259,7 +264,12 @@ export default function App() {
             <b className="stat-num">{stats.passed}</b>
           </div>
           {stats.todayUrgent > 0 && (
-            <div className="stat-item stat-urgent">
+            <div
+              className={`stat-item stat-urgent${onlyToday ? ' on' : ''}`}
+              onClick={() => setOnlyToday((v) => !v)}
+              title="클릭하면 오늘 기일 매물만 표시"
+              style={{ cursor: 'pointer' }}
+            >
               <span className="stat-label">오늘 기일</span>
               <b className="stat-num">{stats.todayUrgent}</b>
             </div>
@@ -318,6 +328,7 @@ export default function App() {
         <label><input type="checkbox" checked={onlyMultiRound} onChange={(e) => setOnlyMultiRound(e.target.checked)} /> 2차↑ 유찰</label>
         <label><input type="checkbox" checked={onlyZeroPi} onChange={(e) => setOnlyZeroPi(e.target.checked)} /> ★무피후보</label>
         <label><input type="checkbox" checked={onlyConsider} onChange={(e) => setOnlyConsider(e.target.checked)} /> ✦검토권장</label>
+        <label><input type="checkbox" checked={onlyUrgent} onChange={(e) => setOnlyUrgent(e.target.checked)} /> ⚡7일이내</label>
         <select value={type} onChange={(e) => setType(e.target.value)}>
           <option value="all">전체 종류</option>
           {Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
@@ -377,7 +388,7 @@ export default function App() {
                 <tr key={r.id} className={`row${r.location?.report?.recommendation === 'consider' ? ' row-consider' : ''}`}>
                   <td className="star" onClick={() => toggleFav(r)} title="관심">{r.is_favorite ? '★' : '☆'}</td>
                   <td className="mono" onClick={() => handleSelect(r)}>{r.case_no}</td>
-                  <td onClick={() => handleSelect(r)}>{TYPE_LABEL[r.property_type] ?? r.property_type}</td>
+                  <td onClick={() => handleSelect(r)} title={r.area_m2 != null ? `전용 ${r.area_m2.toFixed(1)}㎡` : undefined}>{TYPE_LABEL[r.property_type] ?? r.property_type}</td>
                   <td className="addr" onClick={() => handleSelect(r)}>{r.address}</td>
                   <td className="num" onClick={() => handleSelect(r)}>{eok(r.appraisal_value)}</td>
                   <td className="num" onClick={() => handleSelect(r)}>{eok(r.min_bid_price)}</td>
@@ -436,7 +447,7 @@ export default function App() {
                   <span className="card-star" onClick={(e) => { e.stopPropagation(); toggleFav(r); }}>{r.is_favorite ? '★' : '☆'}</span>
                 </div>
                 <div className="card-sub">
-                  <span>{TYPE_LABEL[r.property_type] ?? r.property_type}</span>
+                  <span>{TYPE_LABEL[r.property_type] ?? r.property_type}{r.area_m2 != null ? ` · ${r.area_m2.toFixed(0)}㎡` : ''}</span>
                   <span className="mono">{r.case_no}</span>
                   <span className={`badge ${risk.cls}`} title={r.rights?.red_flags?.map((f) => f.message).join(' | ')}>{risk.label}</span>
                   {reco && <span className={`badge ${RECO[reco]?.cls ?? ''}`}>{RECO[reco]?.label ?? reco}</span>}
@@ -507,11 +518,17 @@ const PRICE_BANDS: { label: string; min: number; max: number }[] = [
   { label: '5억 이상', min: 5, max: 0 },
 ];
 
+const ALLOWED_TYPES = ['apartment', 'villa', 'officetel', 'house', 'land', 'commercial', 'other'] as const;
+
 function ConfigPanel({ cfg, setCfg }: { cfg: ScoreConfig; setCfg: (c: ScoreConfig) => void }) {
   const safetyPct = Math.round(cfg.wSafety * 100);
   const toggleRegion = (r: string) => {
     const has = cfg.regionKeywords.includes(r);
     setCfg({ ...cfg, regionKeywords: has ? cfg.regionKeywords.filter((x) => x !== r) : [...cfg.regionKeywords, r] });
+  };
+  const toggleType = (t: string) => {
+    const has = cfg.allowedTypes.includes(t);
+    setCfg({ ...cfg, allowedTypes: has ? cfg.allowedTypes.filter((x) => x !== t) : [...cfg.allowedTypes, t] });
   };
   return (
     <div className="cfg">
@@ -519,6 +536,13 @@ function ConfigPanel({ cfg, setCfg }: { cfg: ScoreConfig; setCfg: (c: ScoreConfi
         <span className="cfg-label">지역</span>
         {REGIONS.map((r) => (
           <label key={r}><input type="checkbox" checked={cfg.regionKeywords.includes(r)} onChange={() => toggleRegion(r)} /> {r}</label>
+        ))}
+        <span className="muted">(전체 해제 = 제한 없음)</span>
+      </div>
+      <div className="cfg-row cfg-checks">
+        <span className="cfg-label">물건종류</span>
+        {ALLOWED_TYPES.map((t) => (
+          <label key={t}><input type="checkbox" checked={cfg.allowedTypes.includes(t)} onChange={() => toggleType(t)} /> {TYPE_LABEL[t] ?? t}</label>
         ))}
         <span className="muted">(전체 해제 = 제한 없음)</span>
       </div>
@@ -833,6 +857,14 @@ function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
             <p className="muted">관할: {Object.entries(loc.admin_offices).map(([k, v]) => `${k} ${v}`).join(' · ')}</p>
           )}
         </Section>
+        <div className="drawer-shortcuts">
+          <span title="이전 매물">← 이전</span>
+          <span title="다음 매물">→ 다음</span>
+          <span title="관심 토글">f 관심</span>
+          <span title="원본 페이지 열기">o 원본</span>
+          <span title="사건번호 복사">c 복사</span>
+          <span title="닫기">Esc 닫기</span>
+        </div>
       </aside>
     </div>
   );
