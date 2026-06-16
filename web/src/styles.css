@@ -37,6 +37,13 @@ header .sub { color: var(--muted); font-size: 14px; font-weight: 400; }
 .disclaimer { background: #2a2010; border: 1px solid #5a4a1a; color: #f0d99a;
   padding: 10px 12px; border-radius: 8px; font-size: 12.5px; line-height: 1.5; margin: 8px 0 16px; }
 
+.stat-banner { display: flex; align-items: center; gap: 10px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; margin-bottom: 10px; font-size: 13px; flex-wrap: wrap; }
+.stat-item { color: var(--muted); }
+.stat-item b { font-size: 15px; margin-left: 3px; }
+.stat-item.good b { color: var(--clean); }
+.stat-urgent b { color: #ff4d4d; }
+.stat-soon b { color: var(--caution); }
+.stat-sep { color: var(--line); }
 .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
 .controls input[type=text], .controls input:not([type]), .controls select, .controls input[type=checkbox] + * { }
 .controls input, .controls select { background: var(--panel2); color: var(--text);

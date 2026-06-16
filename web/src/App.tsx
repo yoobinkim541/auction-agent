@@ -42,7 +42,7 @@ const RISK: Record<string, { label: string; cls: string }> = {
 const pct = (n: number | null | undefined) => (n == null ? '-' : (n * 100).toFixed(1) + '%');
 const CONF: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' };
 
-type SortKey = 'score' | 'safety' | 'sale';
+type SortKey = 'score' | 'safety' | 'sale' | 'price';
 const CFG_KEY = 'gm_score_config';
 
 function loadConfig(): ScoreConfig {
@@ -96,11 +96,11 @@ export default function App() {
     v.sort((a, b) => {
       if (sort === 'safety') return (b.item.location?.safety_margin ?? -1) - (a.item.location?.safety_margin ?? -1);
       if (sort === 'sale') {
-        // 임박순: 가까운 기일 우선(미래→과거). null은 맨 뒤.
         const da = a.item.sale_date ?? '9999';
         const db = b.item.sale_date ?? '9999';
         return da.localeCompare(db);
       }
+      if (sort === 'price') return (a.item.min_bid_price ?? Infinity) - (b.item.min_bid_price ?? Infinity);
       return b.sc.totalScore - a.sc.totalScore;
     });
     return v;
@@ -108,6 +108,19 @@ export default function App() {
 
   const favCount = rows.filter((r) => r.is_favorite).length;
   const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
+
+  const stats = useMemo(() => {
+    const all = rows.map((item) => ({ item, sc: scoreClient(item, cfg) }));
+    const passed = all.filter((x) => x.sc.passed).length;
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayUrgent = all.filter((x) => x.sc.passed && x.item.sale_date === todayStr).length;
+    const week = all.filter((x) => {
+      if (!x.sc.passed || !x.item.sale_date) return false;
+      const d = saleDaysDiff(x.item.sale_date);
+      return d !== null && d >= 0 && d <= 7;
+    }).length;
+    return { total: rows.length, passed, todayUrgent, week };
+  }, [rows, cfg]);
 
   return (
     <div className="app">
@@ -118,6 +131,16 @@ export default function App() {
           입찰 전 반드시 등기부등본·매각물건명세서·현장 확인 및 변호사/법무사 상담을 권장합니다.
         </p>
       </header>
+
+      {!loading && rows.length > 0 && (
+        <div className="stat-banner">
+          <span className="stat-item">전체 <b>{stats.total}</b></span>
+          <span className="stat-sep">|</span>
+          <span className="stat-item good">통과 <b>{stats.passed}</b></span>
+          {stats.todayUrgent > 0 && <><span className="stat-sep">|</span><span className="stat-item stat-urgent">오늘 기일 <b>{stats.todayUrgent}</b></span></>}
+          {stats.week > 0 && <><span className="stat-sep">|</span><span className="stat-item stat-soon">7일 이내 <b>{stats.week}</b></span></>}
+        </div>
+      )}
 
       <div className="controls">
         <label><input type="checkbox" checked={onlyPassed} onChange={(e) => setOnlyPassed(e.target.checked)} /> 통과만</label>
@@ -130,7 +153,8 @@ export default function App() {
         <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
           <option value="score">점수순</option>
           <option value="safety">안전마진순</option>
-          <option value="sale">매각기일순</option>
+          <option value="sale">임박순</option>
+          <option value="price">최저가순</option>
         </select>
         <button onClick={() => setShowCfg((s) => !s)}>{showCfg ? '조건 닫기' : '⚙ 조건·기준'}</button>
         <button onClick={load}>새로고침</button>
