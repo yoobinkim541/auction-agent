@@ -30,7 +30,17 @@ export async function geocodeNaver(address: string): Promise<{ lat: number; lng:
 export interface PoiResult {
   amenities: Record<string, number>; // 카테고리별 반경 내 개수
   stationCount: number; // 지하철/철도역 수(1.2km)
+  nearest: Record<string, number>; // 카테고리별 최근접 거리(m)
+  walkMinToStation: number | null; // 최근접 역 도보 추정(분)
+  schools: { elementary: number; middle: number; high: number }; // 주변 초/중/고 개수
   noiseFlags: string[]; // 소음·혐오 근접 플래그
+}
+
+const R = 6371000;
+function haversine(la1: number, lo1: number, la2: number, lo2: number): number {
+  const t = (d: number) => (d * Math.PI) / 180;
+  const a = Math.sin(t(la2 - la1) / 2) ** 2 + Math.cos(t(la1)) * Math.cos(t(la2)) * Math.sin(t(lo2 - lo1) / 2) ** 2;
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 }
 
 // 카테고리: [라벨, overpass selector, 반경m]
@@ -58,7 +68,7 @@ export async function fetchPoiCounts(lat: number, lng: number): Promise<PoiResul
     ...CATS.map(([, sel, r]) => `${sel}(around:${r},${lat},${lng});`),
     ...NUISANCE.map(([, sel, r]) => `${sel}(around:${r},${lat},${lng});`),
   ].join('');
-  const query = `[out:json][timeout:25];(${parts});out tags;`;
+  const query = `[out:json][timeout:25];(${parts});out tags center;`;
   for (const ep of OVERPASS_MIRRORS) {
     try {
       const r = await fetch(ep, {
@@ -67,33 +77,46 @@ export async function fetchPoiCounts(lat: number, lng: number): Promise<PoiResul
         signal: AbortSignal.timeout(30000),
       });
       if (!r.ok) continue;
-      const j = (await r.json()) as { elements?: { tags?: Record<string, string> }[] };
+      const j = (await r.json()) as { elements?: OsmEl[] };
       const els = j.elements ?? [];
       if (!Array.isArray(els)) continue;
-      return tally(els);
+      return tally(els, lat, lng);
     } catch { /* 다음 미러 */ }
   }
   return null;
 }
 
-function tally(els: { tags?: Record<string, string> }[]): PoiResult {
+interface OsmEl { tags?: Record<string, string>; lat?: number; lon?: number; center?: { lat: number; lon: number } }
+
+function tally(els: OsmEl[], lat: number, lng: number): PoiResult {
   const amenities: Record<string, number> = {};
+  const nearest: Record<string, number> = {};
   const noise = new Set<string>();
-  for (const [label, sel] of CATS) amenities[label] = 0;
+  const schools = { elementary: 0, middle: 0, high: 0 };
+  for (const [label] of CATS) amenities[label] = 0;
   for (const e of els) {
     const t = e.tags ?? {};
-    // 카테고리 매칭
+    const ll = e.lat != null ? { lat: e.lat, lon: e.lon! } : e.center;
+    const dist = ll ? haversine(lat, lng, ll.lat, ll.lon) : null;
     for (const [label, sel] of CATS) {
       const m = sel.match(/\["(\w+)"="([^"]+)"\]/);
-      if (m && t[m[1]!] === m[2]) { amenities[label] = (amenities[label] ?? 0) + 1; break; }
+      if (m && t[m[1]!] === m[2]) {
+        amenities[label] = (amenities[label] ?? 0) + 1;
+        if (dist != null && (nearest[label] == null || dist < nearest[label]!)) nearest[label] = dist;
+        if (label === '학교') {
+          const nm = t['name'] ?? '';
+          if (/초등/.test(nm)) schools.elementary++; else if (/중학교|중학/.test(nm)) schools.middle++; else if (/고등|고교/.test(nm)) schools.high++;
+        }
+        break;
+      }
     }
-    // 소음·혐오
     if (t.power === 'tower') noise.add('고압 송전탑 인접');
     if (t.highway && /^(motorway|trunk|primary)$/.test(t.highway)) noise.add('대로변(소음)');
     if (t.railway === 'rail') noise.add('철도 인접(소음)');
     if (t.landuse === 'industrial') noise.add('공장 인접');
   }
-  // 0인 카테고리 제거(노이즈 줄이기)
   for (const k of Object.keys(amenities)) if (amenities[k] === 0) delete amenities[k];
-  return { amenities, stationCount: amenities['지하철·기차역'] ?? 0, noiseFlags: [...noise] };
+  const stM = nearest['지하철·기차역'];
+  const walkMinToStation = stM != null ? Math.max(1, Math.round((stM * 1.3) / 67)) : null; // 도보 67m/분, 우회 1.3
+  return { amenities, stationCount: amenities['지하철·기차역'] ?? 0, nearest, walkMinToStation, schools, noiseFlags: [...noise] };
 }

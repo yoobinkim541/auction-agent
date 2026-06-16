@@ -17,12 +17,13 @@ async function main() {
   const all = process.argv.includes('--all');
   const delay = parseInt(process.env.POI_DELAY_MS ?? '1500', 10);
   // 대상: 분석 완료 + (기본) 통과 매물. lat/lng 캐시 있으면 지오코딩 생략.
-  const rows = await query<{ id: number; address: string; lat: number | null; lng: number | null; passed: boolean | null; land_use_flags: LandUseFlag[] | null }>(
-    `select l.id, l.address, l.lat, l.lng, s.passed_filter as passed, loc.land_use_flags
+  type Transit = { nearestStation?: string; walkMinutes?: number; lines?: number; stations?: unknown[] } | null;
+  const rows = await query<{ id: number; address: string; lat: number | null; lng: number | null; passed: boolean | null; land_use_flags: LandUseFlag[] | null; transit: Transit }>(
+    `select l.id, l.address, l.lat, l.lng, s.passed_filter as passed, loc.land_use_flags, loc.transit
      from gm_listings l
      join gm_location_analysis loc on loc.listing_id = l.id
      left join gm_scores s on s.listing_id = l.id
-     where loc.amenities is null ${all ? '' : 'and s.passed_filter = true'}
+     where (loc.transit->>'walkMinutes') is null ${all ? '' : 'and s.passed_filter = true'}
      order by s.total_score desc nulls last`,
   );
   console.log(`POI 보강 대상: ${rows.length}건 ${all ? '(전체)' : '(통과만)'} · 지연 ${delay}ms`);
@@ -43,8 +44,16 @@ async function main() {
         for (const n of poi.noiseFlags) {
           if (!flags.some((f) => f.label === n)) flags.push({ keyword: n, label: n, kind: 'risk', severity: 'low', impact: 'OSM 기반 근접 추정 — 실제 소음·영향은 현장 확인' });
         }
-        await query('update gm_location_analysis set amenities=$2::jsonb, land_use_flags=$3::jsonb where listing_id=$1',
-          [r.id, JSON.stringify(poi.amenities), JSON.stringify(flags)]);
+        // amenities + 학군(초/중/고) 개수
+        const amen: Record<string, number> = { ...poi.amenities };
+        if (poi.schools.elementary) amen['초등학교'] = poi.schools.elementary;
+        if (poi.schools.middle) amen['중학교'] = poi.schools.middle;
+        if (poi.schools.high) amen['고등학교'] = poi.schools.high;
+        // transit: 기존(역세권 site_metrics) 유지 + 도보분/최근접 역거리 추가
+        const transit = { ...(r.transit ?? {}), walkMinutes: poi.walkMinToStation ?? undefined, osmStationCount: poi.stationCount, nearestStationM: poi.nearest['지하철·기차역'] };
+        const schools = { schoolCount: poi.schools.elementary + poi.schools.middle + poi.schools.high, assignedElementary: undefined, assignedMiddle: undefined };
+        await query('update gm_location_analysis set amenities=$2::jsonb, land_use_flags=$3::jsonb, transit=$4::jsonb, schools=coalesce(schools,$5::jsonb) where listing_id=$1',
+          [r.id, JSON.stringify(amen), JSON.stringify(flags), JSON.stringify(transit), JSON.stringify(schools)]);
         ok++;
       }
       done++;
