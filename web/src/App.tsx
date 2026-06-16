@@ -78,6 +78,7 @@ export default function App() {
   const [onlyZeroPi, setOnlyZeroPi] = useState(false);
   const [onlyConsider, setOnlyConsider] = useState(false);
   const [onlyUrgent, setOnlyUrgent] = useState(false);
+  const [maxGapEok, setMaxGapEok] = useState(0);
   const [hideExpired, setHideExpired] = useState<boolean>(() => loadUIState().hideExpired ?? true);
   const [type, setType] = useState<string>(() => loadUIState().type ?? 'all');
   const [q, setQ] = useState('');
@@ -182,6 +183,10 @@ export default function App() {
       const sevenDaysStr = new Date(new Date(TODAY).getTime() + 7 * 86_400_000).toISOString().slice(0, 10);
       v = v.filter((x) => x.item.sale_date && x.item.sale_date >= TODAY && x.item.sale_date <= sevenDaysStr);
     }
+    if (maxGapEok > 0) v = v.filter((x) => {
+      const gap = x.item.location?.income?.gapInvestment;
+      return gap == null || gap <= maxGapEok * 1e8;
+    });
     if (onlyMultiRound) v = v.filter((x) => {
       const rs = x.item.location?.sale_rounds ?? [];
       const rnd = rs.find((s) => s.date === x.item.sale_date)?.round ?? (rs.length > 0 ? rs[rs.length - 1]!.round : null);
@@ -206,7 +211,7 @@ export default function App() {
       return sortDir === 'asc' ? diff : -diff;
     });
     return v;
-  }, [rows, cfg, hideExpired, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyUrgent, type, q, sort, sortDir]);
+  }, [rows, cfg, hideExpired, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyUrgent, maxGapEok, type, q, sort, sortDir]);
 
   const favCount = rows.filter((r) => r.is_favorite).length;
   const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
@@ -327,6 +332,13 @@ export default function App() {
           <option value="appraisal">감정가순</option>
           <option value="assumed">인수금액순</option>
           <option value="gap">갭(소자본)순</option>
+        </select>
+        <select value={maxGapEok} onChange={(e) => setMaxGapEok(Number(e.target.value))}>
+          <option value={0}>갭 제한 없음</option>
+          <option value={0.5}>갭 5천만↓</option>
+          <option value={1}>갭 1억↓</option>
+          <option value={2}>갭 2억↓</option>
+          <option value={3}>갭 3억↓</option>
         </select>
         <button onClick={() => setShowCfg((s) => !s)}>{showCfg ? '조건 닫기' : '⚙ 조건·기준'}</button>
         <button onClick={load}>새로고침</button>
