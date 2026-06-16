@@ -76,6 +76,7 @@ export default function App() {
   const [onlyFavorite, setOnlyFavorite] = useState(false);
   const [onlyMultiRound, setOnlyMultiRound] = useState(false);
   const [onlyZeroPi, setOnlyZeroPi] = useState(false);
+  const [onlyConsider, setOnlyConsider] = useState(false);
   const [hideExpired, setHideExpired] = useState<boolean>(() => loadUIState().hideExpired ?? true);
   const [type, setType] = useState<string>(() => loadUIState().type ?? 'all');
   const [q, setQ] = useState('');
@@ -175,6 +176,7 @@ export default function App() {
     if (onlyPassed) v = v.filter((x) => x.sc.passed);
     if (onlyFavorite) v = v.filter((x) => x.item.is_favorite);
     if (onlyZeroPi) v = v.filter((x) => x.item.location?.income?.zeroPiCandidate === true);
+    if (onlyConsider) v = v.filter((x) => x.item.location?.report?.recommendation === 'consider');
     if (onlyMultiRound) v = v.filter((x) => {
       const rs = x.item.location?.sale_rounds ?? [];
       const rnd = rs.find((s) => s.date === x.item.sale_date)?.round ?? (rs.length > 0 ? rs[rs.length - 1]!.round : null);
@@ -199,7 +201,7 @@ export default function App() {
       return sortDir === 'asc' ? diff : -diff;
     });
     return v;
-  }, [rows, cfg, hideExpired, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, type, q, sort, sortDir]);
+  }, [rows, cfg, hideExpired, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, type, q, sort, sortDir]);
 
   const favCount = rows.filter((r) => r.is_favorite).length;
   const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
@@ -217,7 +219,8 @@ export default function App() {
     }).length;
     const reviewCount = upcoming.filter((x) => x.item.rights?.risk_grade === 'review_required').length;
     const zeroPiCount = upcoming.filter((x) => x.item.location?.income?.zeroPiCandidate === true).length;
-    return { total: rows.length, passed, todayUrgent, week, reviewCount, zeroPiCount };
+    const considerCount = upcoming.filter((x) => x.item.location?.report?.recommendation === 'consider').length;
+    return { total: rows.length, passed, todayUrgent, week, reviewCount, zeroPiCount, considerCount };
   }, [rows, cfg]);
 
   const selNavIdx = selected ? view.findIndex((x) => x.item.id === selected.id) : -1;
@@ -279,6 +282,17 @@ export default function App() {
               <b className="stat-num">{stats.zeroPiCount}</b>
             </div>
           )}
+          {stats.considerCount > 0 && (
+            <div
+              className={`stat-item stat-consider${onlyConsider ? ' on' : ''}`}
+              onClick={() => { setOnlyConsider((v) => !v); setOnlyPassed(false); }}
+              title="클릭하면 검토 권장 매물만 표시"
+              style={{ cursor: 'pointer' }}
+            >
+              <span className="stat-label">검토권장 ✦</span>
+              <b className="stat-num">{stats.considerCount}</b>
+            </div>
+          )}
         </div>
       )}
 
@@ -288,6 +302,7 @@ export default function App() {
         <label><input type="checkbox" checked={onlyFavorite} onChange={(e) => setOnlyFavorite(e.target.checked)} /> ★관심만 ({favCount})</label>
         <label><input type="checkbox" checked={onlyMultiRound} onChange={(e) => setOnlyMultiRound(e.target.checked)} /> 2차↑ 유찰</label>
         <label><input type="checkbox" checked={onlyZeroPi} onChange={(e) => setOnlyZeroPi(e.target.checked)} /> ★무피후보</label>
+        <label><input type="checkbox" checked={onlyConsider} onChange={(e) => setOnlyConsider(e.target.checked)} /> ✦검토권장</label>
         <select value={type} onChange={(e) => setType(e.target.value)}>
           <option value="all">전체 종류</option>
           {Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
@@ -337,7 +352,7 @@ export default function App() {
             {view.map(({ item: r, sc }) => {
               const risk = RISK[r.rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
               return (
-                <tr key={r.id} className="row">
+                <tr key={r.id} className={`row${r.location?.report?.recommendation === 'consider' ? ' row-consider' : ''}`}>
                   <td className="star" onClick={() => toggleFav(r)} title="관심">{r.is_favorite ? '★' : '☆'}</td>
                   <td className="mono" onClick={() => handleSelect(r)}>{r.case_no}</td>
                   <td onClick={() => handleSelect(r)}>{TYPE_LABEL[r.property_type] ?? r.property_type}</td>
@@ -345,14 +360,22 @@ export default function App() {
                   <td className="num" onClick={() => handleSelect(r)}>{eok(r.appraisal_value)}</td>
                   <td className="num" onClick={() => handleSelect(r)}>{eok(r.min_bid_price)}</td>
                   <td className="num safety-cell" onClick={() => handleSelect(r)}>
-                    {pct(r.location?.safety_margin)}
+                    {r.location?.safety_margin == null
+                      ? <span className="no-mkt" title="시세 미확보 — 안전마진 산정 불가">?</span>
+                      : pct(r.location.safety_margin)}
                     {r.location?.acquisition_cost?.trueSafetyMargin != null && (
                       <span className="true-margin" title="진짜 안전마진(취득비용 반영)"> / {pct(r.location.acquisition_cost.trueSafetyMargin)}</span>
                     )}
                   </td>
                   <td className="num" onClick={() => handleSelect(r)}>{r.rights ? (r.rights.assumed_amount ? eok(r.rights.assumed_amount) : '0') : '-'}</td>
-                  <td onClick={() => handleSelect(r)}><span className={`badge ${risk.cls}`}>{risk.label}</span></td>
-                  <td className="num" onClick={() => handleSelect(r)}><b className={sc.totalScore >= 70 ? 'good' : sc.totalScore < 40 ? 'danger' : ''}>{sc.totalScore}</b></td>
+                  <td onClick={() => handleSelect(r)}>
+                    <span className={`badge ${risk.cls}`}>{risk.label}</span>
+                    {r.location?.report?.recommendation === 'consider' && <span className="badge reco-consider reco-badge">권장✦</span>}
+                  </td>
+                  <td className="num" onClick={() => handleSelect(r)} title={sc.reasons.length ? sc.reasons.join(' · ') : undefined}>
+                    <b className={sc.totalScore >= 70 ? 'good' : sc.totalScore < 40 ? 'danger' : ''}>{sc.totalScore}</b>
+                    {!sc.passed && sc.reasons.length > 0 && <span className="score-fail-hint">{sc.reasons[0]}</span>}
+                  </td>
                   <td onClick={() => handleSelect(r)}>
                     <DDay dateStr={r.sale_date} /><span className="sale-date-txt">{r.sale_date ?? '-'}</span>
                     {(() => {
@@ -536,7 +559,7 @@ function exportCSV(rows: Array<{ item: ListingItem; sc: ClientScore }>) {
   const BOM = '﻿'; // Excel Korean UTF-8 BOM
   const headers = [
     '사건번호', '종류', '주소', '법원', '감정가(만원)', '최저가(만원)',
-    '안전마진%', '인수금액(만원)', '권리등급', '점수', '매각기일',
+    '안전마진%', '인수금액(만원)', '권리등급', '점수', '통과', '미통과사유', '매각기일',
     '추정시세(만원)', '진짜마진%', '전세시세(만원)', '갭(만원)', '수익률%',
     '현재차수', '예상낙찰가(만원)', '관심',
   ];
@@ -555,7 +578,7 @@ function exportCSV(rows: Array<{ item: ListingItem; sc: ClientScore }>) {
       pctStr(r.location?.safety_margin),
       toMw(r.rights?.assumed_amount ?? 0),
       RISK[r.rights?.risk_grade ?? '']?.label ?? '-',
-      sc.totalScore, r.sale_date ?? '',
+      sc.totalScore, sc.passed ? '○' : '✕', sc.reasons.join(' · '), r.sale_date ?? '',
       toMw(r.location?.market_price),
       pctStr(r.location?.acquisition_cost?.trueSafetyMargin),
       toMw(r.location?.income?.jeonseDeposit),
@@ -612,10 +635,14 @@ function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
         e.preventDefault();
         copyCase();
       }
+      if (e.key === 'f' && !e.metaKey && !e.ctrlKey && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as Element)?.tagName)) {
+        e.preventDefault();
+        onFav();
+      }
     };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
-  }, [onClose, onPrev, onNext, row.source_url, row.case_no]);
+  }, [onClose, onPrev, onNext, row.source_url, row.case_no, onFav]);
 
   const detailRounds = loc?.sale_rounds ?? [];
   const currentRound =
@@ -635,7 +662,7 @@ function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
         </div>
         {loading && <p className="detail-loading">상세 분석 불러오는 중…</p>}
         <h2>
-          <span className="star" onClick={onFav} title="관심">{row.is_favorite ? '★' : '☆'}</span>{' '}
+          <span className="star" onClick={onFav} title="관심 (단축키: f)">{row.is_favorite ? '★' : '☆'}</span>{' '}
           {row.case_no}{' '}
           <button className="copy-btn" onClick={copyCase} title="사건번호 복사 (단축키: c)">{copied ? '✓' : '⧉'}</button>{' '}
           <span className={`badge ${risk.cls}`}>{risk.label}</span>
@@ -661,7 +688,7 @@ function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
           {currentRound != null && (
             <div><span>현재 차수</span><b className={currentRound > 1 ? 'danger' : ''}>{currentRound}차{currentRound > 1 ? ` · 유찰 ${currentRound - 1}회` : ''}</b></div>
           )}
-          <div><span>추정시세</span><b>{eok(loc?.market_price)}{loc?.market_confidence ? ` · 신뢰도 ${CONF[loc.market_confidence]}` : ''}</b></div>
+          <div><span>추정시세</span><b>{loc?.market_price == null ? <span className="muted">미확보 — 안전마진 산정 불가</span> : <>{eok(loc.market_price)}{loc.market_confidence ? ` · 신뢰도 ${CONF[loc.market_confidence]}` : ''}</>}</b></div>
           <div><span>예상낙찰가</span><b>{eok(loc?.expected_bid_price)}</b></div>
           <div><span>안전마진(최저가)</span><b>{pct(loc?.safety_margin)}</b></div>
           <div><span title="시세 − 총취득비용(취득세·명도비·채권·인수 포함)">진짜 안전마진</span><b className={(loc?.acquisition_cost?.trueSafetyMargin ?? 0) < 0 ? 'danger' : ''}>{pct(loc?.acquisition_cost?.trueSafetyMargin)}</b></div>
@@ -832,6 +859,9 @@ function IncomeBlock({ income: inc }: { income: import('./api.ts').IncomeObj }) 
     <Section title={`임대수익 · 출구 (세후)${inc.estimated ? ' · 추정' : ''}`}>
       {inc.zeroPiCandidate && !inc.estimated && (
         <p className="zero-pi-badge">★ 무피(無피) 가능성 — 전세보증금이 총취득비용을 충당. 자기 자본 투입 최소화 가능(현장·보증보험 확인 필요)</p>
+      )}
+      {inc.zeroPiCandidate && inc.estimated && (
+        <p className="zero-pi-badge">★ 무피(無피) 가능성 (추정) — 전세가율 가정 기준 갭이 0 이하. 실제 전세 시세 확인 시 무피 투자 구조 가능성 있음(현장·보증보험 필수 확인)</p>
       )}
       {inc.estimated && <p className="warn-badge">⚠ 전월세 실거래 미확보 — 전세가율 가정 기반 <b>추정치</b>(저신뢰). 갭만 참고하고 실제 임대시세는 별도 확인하세요.</p>}
       <p className="muted">임대시세: {inc.rentBasis || '표본 부족'}</p>

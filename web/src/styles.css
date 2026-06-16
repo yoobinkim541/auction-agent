@@ -90,6 +90,9 @@ header .crawl-date { color: var(--muted); font-size: 11px; font-weight: 400; fon
 .stat-item.stat-zeropi .stat-num { color: var(--clean); }
 .stat-item.stat-zeropi { border-color: rgba(30,199,88,.2); }
 .stat-item.stat-zeropi.on { background: rgba(30,199,88,.07); border-color: rgba(30,199,88,.4); }
+.stat-item.stat-consider .stat-num { color: #f0c040; }
+.stat-item.stat-consider { border-color: rgba(240,192,64,.2); }
+.stat-item.stat-consider.on { background: rgba(240,192,64,.07); border-color: rgba(240,192,64,.4); }
 /* legacy: hide separators if still in markup */
 .stat-sep { display: none; }
 /* legacy: if old stat-item <b> still used */
@@ -157,9 +160,13 @@ table.grid th.sortable { cursor: pointer; user-select: none; }
 table.grid th.sortable:hover { color: var(--muted-2); }
 table.grid th.sorted { color: var(--text); }
 .sort-ind { color: var(--accent); font-size: 10px; }
+.score-fail-hint { display: block; font-size: 9px; color: var(--muted); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80px; }
 table.grid td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 .row { cursor: pointer; transition: background .1s; }
 .row:hover { background: var(--panel); }
+.row-consider { background: rgba(30,199,88,.025); }
+.row-consider:hover { background: rgba(30,199,88,.06) !important; }
+.reco-badge { font-size: 9px !important; padding: 1px 4px !important; margin-left: 4px; vertical-align: middle; }
 .addr { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-2); font-size: 12.5px; }
 
 /* ── Numbers / Monospace ── */
@@ -494,6 +501,7 @@ table.mini td.num { text-align: right; font-family: var(--mono); }
 .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
 .true-margin { color: var(--muted); font-size: 11px; }
 .safety-cell { white-space: nowrap; }
+.no-mkt { color: var(--muted); font-family: var(--mono); font-size: 11px; cursor: help; }
 
 /* ── Recommendation badges ── */
 .reco-consider { background: rgba(30,199,88,.1); color: var(--clean); border: 1px solid rgba(30,199,88,.25); }
