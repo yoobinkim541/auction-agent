@@ -59,7 +59,7 @@ function loadConfig(): ScoreConfig {
   return DEFAULT_CONFIG;
 }
 
-type UIState = { sort?: SortKey; sortDir?: 'asc' | 'desc'; type?: string; hideExpired?: boolean; onlyPassed?: boolean; onlyMultiRound?: boolean };
+type UIState = { sort?: SortKey; sortDir?: 'asc' | 'desc'; type?: string; hideExpired?: boolean; onlyPassed?: boolean; onlyMultiRound?: boolean; hideIncomplete?: boolean };
 function loadUIState(): UIState {
   try {
     const raw = localStorage.getItem(UI_KEY);
@@ -83,6 +83,7 @@ export default function App() {
   const [filterDate, setFilterDate] = useState<string | null>(null);
   const [maxGapEok, setMaxGapEok] = useState(0);
   const [hideExpired, setHideExpired] = useState<boolean>(() => loadUIState().hideExpired ?? true);
+  const [hideIncomplete, setHideIncomplete] = useState<boolean>(() => loadUIState().hideIncomplete ?? false);
   const [type, setType] = useState<string>(() => loadUIState().type ?? 'all');
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<SortKey>(() => loadUIState().sort ?? 'score');
@@ -104,7 +105,7 @@ export default function App() {
   };
   useEffect(load, []);
   useEffect(() => { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }, [cfg]);
-  useEffect(() => { localStorage.setItem(UI_KEY, JSON.stringify({ sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound })); }, [sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound]);
+  useEffect(() => { localStorage.setItem(UI_KEY, JSON.stringify({ sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete })); }, [sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete]);
 
   const toggleFav = (item: ListingItem) => {
     const nv = !item.is_favorite;
@@ -178,6 +179,7 @@ export default function App() {
     if (cfg.apprMinEok > 0) v = v.filter((x) => (x.item.appraisal_value ?? 0) >= cfg.apprMinEok * 1e8);
     if (cfg.apprMaxEok > 0) v = v.filter((x) => (x.item.appraisal_value ?? 0) <= cfg.apprMaxEok * 1e8);
     if (hideExpired) v = v.filter((x) => !x.item.sale_date || x.item.sale_date >= TODAY);
+    if (hideIncomplete) v = v.filter((x) => !x.item.location?.report?.headline?.startsWith('[데이터 불완전]'));
     if (onlyPassed) v = v.filter((x) => x.sc.passed);
     if (onlyFavorite) v = v.filter((x) => x.item.is_favorite);
     if (onlyZeroPi) v = v.filter((x) => x.item.location?.income?.zeroPiCandidate === true);
@@ -220,7 +222,7 @@ export default function App() {
       return sortDir === 'asc' ? diff : -diff;
     });
     return v;
-  }, [rows, cfg, hideExpired, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyPassedAvoid, onlyUrgent, onlyToday, filterDate, maxGapEok, type, q, sort, sortDir]);
+  }, [rows, cfg, hideExpired, hideIncomplete, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyPassedAvoid, onlyUrgent, onlyToday, filterDate, maxGapEok, type, q, sort, sortDir]);
 
   const favCount = rows.filter((r) => r.is_favorite).length;
   const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
@@ -240,6 +242,7 @@ export default function App() {
     const zeroPiCount = upcoming.filter((x) => x.item.location?.income?.zeroPiCandidate === true).length;
     const considerCount = upcoming.filter((x) => x.item.location?.report?.recommendation === 'consider').length;
     const passedAvoidCount = upcoming.filter((x) => x.sc.passed && x.item.location?.report?.recommendation === 'avoid').length;
+    const incompleteCount = rows.filter((r) => r.location?.report?.headline?.startsWith('[데이터 불완전]')).length;
     const weekDist: Record<string, { total: number; passed: number }> = {};
     for (const x of upcoming) {
       if (!x.item.sale_date) continue;
@@ -250,7 +253,7 @@ export default function App() {
       weekDist[k]!.total++;
       if (x.sc.passed) weekDist[k]!.passed++;
     }
-    return { total: rows.length, passed, todayUrgent, week, reviewCount, zeroPiCount, considerCount, passedAvoidCount, weekDist };
+    return { total: rows.length, passed, todayUrgent, week, reviewCount, zeroPiCount, considerCount, passedAvoidCount, incompleteCount, weekDist };
   }, [rows, cfg]);
 
   const selNavIdx = selected ? view.findIndex((x) => x.item.id === selected.id) : -1;
@@ -344,6 +347,12 @@ export default function App() {
               <b className="stat-num">{stats.passedAvoidCount}</b>
             </div>
           )}
+          {stats.incompleteCount > 0 && (
+            <div className="stat-item stat-incomplete" title={`등기 미수집(빌라 ${stats.incompleteCount}건) — 권리분석 보류 상태`}>
+              <span className="stat-label">등기미수집</span>
+              <b className="stat-num">{stats.incompleteCount}</b>
+            </div>
+          )}
         </div>
       )}
 
@@ -372,6 +381,7 @@ export default function App() {
 
       <div className="controls">
         <label><input type="checkbox" checked={hideExpired} onChange={(e) => setHideExpired(e.target.checked)} /> 기일경과 숨김</label>
+        <label title="등기 미수집(빌라 일부) 제외"><input type="checkbox" checked={hideIncomplete} onChange={(e) => setHideIncomplete(e.target.checked)} /> 등기미수집 제외</label>
         <label><input type="checkbox" checked={onlyPassed} onChange={(e) => setOnlyPassed(e.target.checked)} /> 통과만</label>
         <label><input type="checkbox" checked={onlyFavorite} onChange={(e) => setOnlyFavorite(e.target.checked)} /> ★관심만 ({favCount})</label>
         <label><input type="checkbox" checked={onlyMultiRound} onChange={(e) => setOnlyMultiRound(e.target.checked)} /> 2차↑ 유찰</label>
@@ -456,13 +466,18 @@ export default function App() {
                   </td>
                   <td className="num" onClick={() => handleSelect(r)}>{r.rights ? (r.rights.assumed_amount ? eok(r.rights.assumed_amount) : '0') : '-'}</td>
                   <td onClick={() => handleSelect(r)}>
-                    <span className={`badge ${risk.cls}`}>{risk.label}</span>
+                    {r.location?.report?.headline?.startsWith('[데이터 불완전]')
+                      ? <span className="badge badge-incomplete" title="등기 미수집 — 권리분석 보류(재수집 필요)">등기?</span>
+                      : <span className={`badge ${risk.cls}`}>{risk.label}</span>}
                     {r.location?.report?.recommendation === 'consider' && <span className="badge reco-consider reco-badge">권장✦</span>}
                     {sc.passed && r.location?.report?.recommendation === 'avoid' && (
                       <span className="badge reco-avoid reco-badge pass-avoid-badge" title="점수는 통과 기준이지만 AI 보고서가 회피 권고 — 상세 확인 필요">⚠회피</span>
                     )}
                     {(r.location?.report?.dangerCount ?? 0) > 0 && (
                       <span className="danger-cnt-chip" title={`위험항목 ${r.location!.report!.dangerCount}건`}>🔴{r.location!.report!.dangerCount}</span>
+                    )}
+                    {(r.location?.report?.dangerCount ?? 0) === 0 && (r.location?.report?.warnCount ?? 0) > 0 && (
+                      <span className="warn-cnt-chip" title={`주의항목 ${r.location!.report!.warnCount}건`}>🟡{r.location!.report!.warnCount}</span>
                     )}
                   </td>
                   <td className="num" onClick={() => handleSelect(r)} title={sc.reasons.length ? sc.reasons.join(' · ') : undefined}>
@@ -495,6 +510,7 @@ export default function App() {
             const currentRound = rounds.find((s) => s.date === r.sale_date)?.round
               ?? (rounds.length > 0 ? rounds[rounds.length - 1]!.round : null);
             const expBid = r.location?.expected_bid_price;
+            const isIncomplete = r.location?.report?.headline?.startsWith('[데이터 불완전]') ?? false;
             const passedAvoid = sc.passed && reco === 'avoid';
             return (
               <li
@@ -510,7 +526,9 @@ export default function App() {
                 <div className="card-sub">
                   <span>{TYPE_LABEL[r.property_type] ?? r.property_type}{r.area_m2 != null ? ` · ${r.area_m2.toFixed(0)}㎡` : ''}</span>
                   <span className="mono">{r.case_no}</span>
-                  <span className={`badge ${risk.cls}`} title={r.rights?.red_flags?.map((f) => f.message).join(' | ')}>{risk.label}</span>
+                  {isIncomplete
+                    ? <span className="badge badge-incomplete" title="등기 미수집 — 권리분석 보류">등기?</span>
+                    : <span className={`badge ${risk.cls}`} title={r.rights?.red_flags?.map((f) => f.message).join(' | ')}>{risk.label}</span>}
                   {reco && <span className={`badge ${RECO[reco]?.cls ?? ''}`}>{RECO[reco]?.label ?? reco}</span>}
                   {r.rights?.risk_grade === 'review_required' && (r.rights.red_flags ?? []).slice(0, 2).map((f) => (
                     <span key={f.kind} className="flag-chip" title={f.message}>{FLAG_LABEL[f.kind] ?? f.kind}</span>

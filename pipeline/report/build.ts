@@ -45,6 +45,7 @@ export function buildReport(args: {
       recommendation, summary: ['⚠️ 원천 데이터(등기·명세서) 미수집으로 권리분석 보류', `감정가 ${eok(listing.appraisalValue)} · 최저가 ${eok(listing.minBidPrice)}`],
       rightsSummary: '등기 미수집 — 권리분석 불가(재수집 필요).', locationSummary: loc.compBasis ?? '', costSummary: '',
       checklist, dangerCount, warnCount, sourceUrl: listing.sourceUrl,
+      fieldwork: buildFieldwork(rights, loc, listing),
     };
   }
 

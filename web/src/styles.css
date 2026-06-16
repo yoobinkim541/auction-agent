@@ -98,6 +98,8 @@ header .crawl-date { color: var(--muted); font-size: 11px; font-weight: 400; fon
 .stat-item.stat-pass-avoid .stat-num { color: var(--caution); }
 .stat-item.stat-pass-avoid { border-color: rgba(245,166,35,.25); }
 .stat-item.stat-pass-avoid.on { background: rgba(245,166,35,.07); border-color: rgba(245,166,35,.45); }
+.stat-item.stat-incomplete .stat-num { color: var(--muted); }
+.stat-item.stat-incomplete { border-color: rgba(140,140,160,.2); opacity: .8; }
 /* legacy: hide separators if still in markup */
 .stat-sep { display: none; }
 /* legacy: if old stat-item <b> still used */
@@ -225,6 +227,7 @@ table.grid td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertica
 .risk-caution { background: rgba(245,166,35,.1); color: var(--caution); border-color: rgba(245,166,35,.25); }
 .risk-risky { background: rgba(240,69,69,.1); color: var(--risky); border-color: rgba(240,69,69,.25); }
 .risk-review { background: rgba(155,124,247,.1); color: var(--review); border-color: rgba(155,124,247,.25); }
+.badge-incomplete { background: rgba(140,140,160,.07); color: var(--muted); border-color: rgba(140,140,160,.2); font-style: italic; }
 
 /* ── Mobile card list ── */
 .cards { display: none; list-style: none; margin: 0; padding: 0; flex-direction: column; gap: 8px; }
@@ -481,6 +484,7 @@ table.mini td.num { text-align: right; font-family: var(--mono); }
   margin-left: 2px;
 }
 .danger-cnt-chip { font-size: 10px; margin-left: 3px; cursor: default; vertical-align: middle; }
+.warn-cnt-chip { font-size: 10px; margin-left: 3px; cursor: default; vertical-align: middle; opacity: .7; }
 .cfg-hint { font-size: 10.5px; color: var(--muted); font-weight: 400; }
 .zero-pi-chip {
   display: inline-block;

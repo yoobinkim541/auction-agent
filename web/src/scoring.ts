@@ -63,10 +63,13 @@ export function scoreClient(item: ListingItem, cfg: ScoreConfig): ClientScore {
 
   const wSum = cfg.wSafety + cfg.wClean || 1;
   const zeroPiBonus = (item.location?.income?.zeroPiCandidate && !item.location?.income?.estimated) ? 5 : 0;
-  const totalScore = Math.min(100, Math.round((cfg.wSafety * safetyScore + cfg.wClean * cleanScore) / wSum) + zeroPiBonus);
+  const dangerCnt = item.location?.report?.dangerCount ?? 0;
+  const dangerPenalty = Math.min(30, dangerCnt * 8); // -8점/위험항목, 최대 -30
+  const totalScore = Math.max(0, Math.min(100, Math.round((cfg.wSafety * safetyScore + cfg.wClean * cleanScore) / wSum) + zeroPiBonus - dangerPenalty));
 
   const reasons: string[] = [];
   let passed = true;
+  if (item.location?.report?.headline?.startsWith('[데이터 불완전]')) { passed = false; reasons.push('등기 미수집'); }
   if (cfg.allowedTypes.length > 0 && !cfg.allowedTypes.includes(item.property_type)) { passed = false; reasons.push('물건종류 제외'); }
   if (cfg.regionKeywords.length && !cfg.regionKeywords.some((k) => item.address.includes(k))) { passed = false; reasons.push('관심지역 외'); }
   const minBid = item.min_bid_price ?? 0;
@@ -86,7 +89,6 @@ export function scoreClient(item: ListingItem, cfg: ScoreConfig): ClientScore {
   if (cfg.minTrueSafetyMarginPct > -99 && trueMgn != null && trueMgn * 100 < cfg.minTrueSafetyMarginPct) {
     passed = false; reasons.push(`진짜마진 ${(trueMgn * 100).toFixed(0)}%<${cfg.minTrueSafetyMarginPct}%`);
   }
-  const dangerCnt = item.location?.report?.dangerCount ?? 0;
   if (cfg.maxDangerCount >= 0 && dangerCnt > cfg.maxDangerCount) {
     passed = false; reasons.push(`위험항목 ${dangerCnt}건>${cfg.maxDangerCount}건`);
   }

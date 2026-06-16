@@ -290,8 +290,12 @@ async function main() {
         }
       }
 
-      // 5) 점수
+      // 5) 점수 (데이터 불완전이면 통과 불가 — 등기 미수집 상태에서 점수 통과하면 오탐)
       const score = scoreListing(listing.caseNo, rights, loc, listing.propertyType, listing.address, DEFAULT_SCORE_CONFIG);
+      if (!dataComplete && score.passedFilter) {
+        score.passedFilter = false;
+        score.reason = (score.reason ? score.reason + '; ' : '') + '등기 미수집 — 권리분석 보류';
+      }
 
       // 6) 저장
       await saveRightsAnalysis(r.id, rights, modelVersion, citations);
