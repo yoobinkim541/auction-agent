@@ -23,11 +23,46 @@ import { addressToLawdCd } from './location/lawd-codes.ts';
 import { fetchRentDeals, estimateRent, estimateRentFromSalePrice } from './income/rent.ts';
 import { analyzeIncome } from './income/yield.ts';
 import { analyzeEviction } from './eviction/index.ts';
+import { parseKoreanMoney, parseKoreanDate } from '../crawler/normalize.ts';
 
 /** 사용자 취득세 가정(개인 1주택 기본). 다주택/법인이면 여기 또는 향후 설정에서 조정. */
 const TAX_ASSUMPTION = { homeCountAfter: 1 } as const;
 
 const num = (v: string | number | null): number => (v == null ? 0 : typeof v === 'number' ? v : parseFloat(v));
+
+/**
+ * 매각물건명세서 "매각효력" 노트에서 임차인 정보 추출.
+ * 임차권등기 유형의 임차인은 구조화 테이블(임차인현황) 대신 매각효력 자연어 문장에
+ * 보증금·전입일·확정일이 기재되는 경우가 많음. 이를 보완 파싱하여 엔진에 전달한다.
+ * — 출처 표기(raw 필드)로 구분, 크롤러 파싱 결과가 있으면 이 함수는 호출되지 않음.
+ */
+function extractTenantsFromNotes(notes: string[]): Tenant[] {
+  const tenants: Tenant[] = [];
+  for (const note of notes) {
+    if (!/매각효력/.test(note)) continue;
+    if (!/대항할\s*수\s*있는/.test(note)) continue;
+    // 단일 메모에 복수 임차인이 기재될 수 있으므로 블록 단위로 분리
+    // "매수인에게 대항할 수 있는 ..." 또는 "대항할 수 있는 임차인이 있음 ..."
+    const blocks = note.split(/(?=매수인에게\s*대항할|대항할\s*수\s*있는\s*임차인)/);
+    for (const block of blocks) {
+      if (!/대항할\s*수\s*있는/.test(block)) continue;
+      const depositM = block.match(/(?:임차보증금|임대차보증금)\s*금?\s*([\d,]+)/);
+      const moveInM = block.match(/(?:전입일자|주민등록일자)\s*(\d{4}[.년-]\d{1,2}[.월-]\d{1,2})/);
+      const fixedM = block.match(/확정일자\s*(?:\(\s*1차\s*\))?\s*(\d{4}[.년-]\d{1,2}[.월-]\d{1,2})/);
+      if (!depositM && !moveInM) continue; // 최소 하나 이상의 정량 정보 필요
+      tenants.push({
+        moveInDate: moveInM ? parseKoreanDate(moveInM[1]) : undefined,
+        occupancyDate: moveInM ? parseKoreanDate(moveInM[1]) : undefined,
+        fixedDate: fixedM ? parseKoreanDate(fixedM[1]) : undefined,
+        deposit: depositM ? (parseKoreanMoney(depositM[1]) ?? 0) : 0,
+        demandedDistribution: false, // 임차권등기는 별도 배당요구 없이 우선변제
+        occupied: true,
+        raw: `(매각효력노트추출) ${block.slice(0, 300)}`,
+      });
+    }
+  }
+  return tenants;
+}
 
 function rowToListing(r: ListingRow): Listing {
   return {
@@ -89,6 +124,14 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<{ 
     }
     if (typeof p.notes === 'string') notes.push(p.notes);
     if (Array.isArray(p.notes)) notes.push(...p.notes);
+  }
+
+  // 임차인현황 테이블 미탐지(임차권등기 유형 등) → 매각효력 노트에서 보완 추출
+  if (tenants.length === 0) {
+    const notesTenants = extractTenantsFromNotes(notes);
+    if (notesTenants.length > 0) {
+      tenants = notesTenants;
+    }
   }
 
   return {
