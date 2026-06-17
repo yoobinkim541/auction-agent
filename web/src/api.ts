@@ -157,6 +157,24 @@ export async function setFavorite(id: number, value: boolean): Promise<void> {
   await fetch(`${BASE}/api/listings/${id}/favorite?value=${value}`, { method: 'POST' });
 }
 
+// 현장 임장 체크리스트 메모 (매물별, 재분석에도 보존되는 사용자 입력)
+export interface FieldworkNote { item_key: string; checked: boolean; note: string; updated_at?: string }
+
+export async function fetchFieldworkNotes(id: number): Promise<FieldworkNote[]> {
+  const res = await fetch(`${BASE}/api/listings/${id}/fieldwork`);
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return (await res.json()) as FieldworkNote[];
+}
+
+export async function saveFieldworkNote(id: number, itemKey: string, checked: boolean, note: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/listings/${id}/fieldwork`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ itemKey, checked, note }),
+  });
+  if (!res.ok) throw new Error(`저장 실패 (${res.status})`);
+}
+
 export async function fetchLastCrawl(): Promise<{ date: string; status: string } | null> {
   try {
     const res = await fetch(`${BASE}/api/crawl-runs`);

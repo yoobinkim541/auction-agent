@@ -122,6 +122,29 @@ public class ListingService {
     return jdbc.getJdbcTemplate().update("update gm_listings set is_favorite=? where id=?", favorite, id);
   }
 
+  /** 현장 임장 체크리스트 메모(매물별) — JSON 배열 문자열 */
+  public String fieldworkNotesJson(long id) {
+    String sql = "select coalesce(json_agg(jsonb_build_object("
+        + "'item_key', item_key, 'checked', checked, 'note', note, 'updated_at', updated_at)"
+        + " order by item_key), '[]'::json)::text"
+        + " from gm_fieldwork_notes where listing_id = :id";
+    return jdbc.queryForObject(sql, new MapSqlParameterSource("id", id), String.class);
+  }
+
+  /** 체크리스트 항목 1건 upsert (체크 여부 + 메모) */
+  public void saveFieldworkNote(long id, String itemKey, boolean checked, String note) {
+    String sql = "insert into gm_fieldwork_notes(listing_id, item_key, checked, note, updated_at)"
+        + " values(:id, :k, :c, :n, now())"
+        + " on conflict (listing_id, item_key)"
+        + " do update set checked = excluded.checked, note = excluded.note, updated_at = now()";
+    var params = new MapSqlParameterSource()
+        .addValue("id", id)
+        .addValue("k", itemKey)
+        .addValue("c", checked)
+        .addValue("n", note == null ? "" : note);
+    jdbc.update(sql, params);
+  }
+
   /** 최근 크롤 실행 로그 */
   public List<Map<String, Object>> crawlRuns() {
     return jdbc.getJdbcTemplate().queryForList(

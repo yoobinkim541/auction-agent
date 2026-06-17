@@ -179,3 +179,15 @@ create table if not exists gm_molit_cache (
   fetched_at timestamptz not null default now(),
   primary key (ep, lawd_cd, ym)
 );
+
+-- 현장 임장 체크리스트 — 사용자가 직접 체크/메모하는 데이터.
+-- 주의: report(gm_location_analysis.report)는 매일 재분석 시 덮어쓰이므로 사용자 입력은 여기 별도 보관.
+-- item_key = 발품 체크리스트 항목 라벨(매물별 고유·안정적). 재분석돼도 라벨이 같으면 메모 유지.
+create table if not exists gm_fieldwork_notes (
+  listing_id bigint not null references gm_listings(id) on delete cascade,
+  item_key   text not null,                       -- 체크리스트 항목 식별자(라벨)
+  checked    boolean not null default false,      -- 현장 확인 완료 여부
+  note       text not null default '',            -- 현장 메모
+  updated_at timestamptz not null default now(),
+  primary key (listing_id, item_key)
+);

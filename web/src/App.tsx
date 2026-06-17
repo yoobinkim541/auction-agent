@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  fetchListings, fetchDetail, fetchLastCrawl, triggerJob, fetchJobStatus, setFavorite, apiBase, won, eok,
+  fetchListings, fetchDetail, fetchLastCrawl, triggerJob, fetchJobStatus, setFavorite,
+  fetchFieldworkNotes, saveFieldworkNote, apiBase, won, eok,
   type ListingItem, type RightsObj, type LocationObj,
 } from './api.ts';
 import { scoreClient, DEFAULT_CONFIG, type ScoreConfig, type ClientScore } from './scoring.ts';
@@ -852,7 +853,8 @@ function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
           <div><span>최대안전입찰가</span><b>{won(rights?.max_safe_bid)}</b></div>
         </div>
 
-        {loc?.report && <ReportBlock report={loc.report} />}
+        {/* 목록(slim) report에는 checklist/fieldwork가 없음 → 풀 상세 로드 후에만 렌더(빈 드로어 크래시 방지) */}
+        {loc?.report && Array.isArray(loc.report.checklist) && <ReportBlock report={loc.report} listingId={row.id} />}
 
         <Section title="권리분석">
           <p className="muted">말소기준권리: {rights?.malso_basis?.note ?? '-'}</p>
@@ -1077,7 +1079,87 @@ const LRISK: Record<string, { label: string; cls: string }> = {
 };
 
 /** 매물별 종합 보고서 + 입찰 전 필수 확인사항 */
-function ReportBlock({ report }: { report: import('./api.ts').ReportObj }) {
+/**
+ * 현장 임장 체크리스트 — 매물 맞춤 확인 항목별로 체크 + 메모.
+ * 입력은 gm_fieldwork_notes(매물ID, 항목라벨)에 저장돼 매일 재분석에도 보존된다.
+ * 체크 토글은 즉시 저장, 메모는 입력 후 포커스 해제(blur) 시 저장.
+ */
+function FieldVisitChecklist({ listingId, items }: {
+  listingId: number; items: { label: string; why: string }[];
+}) {
+  const [state, setState] = useState<Record<string, { checked: boolean; note: string }>>({});
+  const [savedKey, setSavedKey] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setState({});
+    fetchFieldworkNotes(listingId)
+      .then((notes) => {
+        if (!active) return;
+        const m: Record<string, { checked: boolean; note: string }> = {};
+        for (const n of notes) m[n.item_key] = { checked: n.checked, note: n.note };
+        setState(m);
+      })
+      .catch(() => { if (active) setError(true); });
+    return () => { active = false; };
+  }, [listingId]);
+
+  const cur = (key: string) => state[key] ?? { checked: false, note: '' };
+  const persist = (key: string, next: { checked: boolean; note: string }) => {
+    saveFieldworkNote(listingId, key, next.checked, next.note)
+      .then(() => {
+        setError(false);
+        setSavedKey(key);
+        setTimeout(() => setSavedKey((k) => (k === key ? null : k)), 1400);
+      })
+      .catch(() => setError(true));
+  };
+  const toggle = (key: string) => {
+    const next = { ...cur(key), checked: !cur(key).checked };
+    setState((s) => ({ ...s, [key]: next }));
+    persist(key, next);
+  };
+  const editNote = (key: string, note: string) =>
+    setState((s) => ({ ...s, [key]: { ...cur(key), note } }));
+  const blurNote = (key: string) => persist(key, cur(key));
+
+  const doneCount = items.filter((it) => cur(it.label).checked).length;
+
+  return (
+    <>
+      <h4>🚶 현장 가서 이것만 확인하세요
+        <span className={`fw-progress${doneCount === items.length ? ' fw-progress-done' : ''}`}>
+          {doneCount}/{items.length} 확인
+        </span>
+        {error && <span className="fw-err" title="저장 실패 — 다시 시도하세요">⚠ 저장 오류</span>}
+      </h4>
+      {items.map((f) => {
+        const c = cur(f.label);
+        return (
+          <div key={f.label} className={`fw-item fw-check${c.checked ? ' fw-checked' : ''}`}>
+            <label className="fw-row">
+              <input type="checkbox" checked={c.checked} onChange={() => toggle(f.label)} />
+              <span className="fw-label"><b>{f.label}</b><div className="muted">{f.why}</div></span>
+              {savedKey === f.label && <span className="fw-saved">저장됨 ✓</span>}
+            </label>
+            <textarea
+              className="fw-note"
+              rows={2}
+              placeholder="현장 메모 (예: 천장 모서리 누수 흔적 / 점유자 부재·우편물 쌓임 / 미납 관리비 32만원 …)"
+              value={c.note}
+              onChange={(e) => editNote(f.label, e.target.value)}
+              onBlur={() => blurNote(f.label)}
+            />
+          </div>
+        );
+      })}
+      <p className="muted" style={{ marginTop: 8 }}>※ 체크·메모는 자동 저장됩니다(메모는 입력 후 칸 밖을 클릭하면 저장). 매물별로 보관돼 재분석에도 유지됩니다.</p>
+    </>
+  );
+}
+
+function ReportBlock({ report, listingId }: { report: import('./api.ts').ReportObj; listingId: number }) {
   const reco = RECO[report.recommendation] ?? RECO.caution!;
   const danger = report.checklist.filter((c) => c.severity === 'danger');
   const warn = report.checklist.filter((c) => c.severity === 'warn');
@@ -1101,10 +1183,7 @@ function ReportBlock({ report }: { report: import('./api.ts').ReportObj }) {
               <span key={i} className={r.ok ? 'fw-ok' : 'fw-no'}>{r.ok ? '✓' : '·'} {r.label}</span>
             ))}
           </div>
-          <h4>🚶 현장 가서 이것만 확인하세요</h4>
-          {report.fieldwork.fieldChecklist.map((f, i) => (
-            <div key={i} className="fw-item"><b>{f.label}</b><div className="muted">{f.why}</div></div>
-          ))}
+          <FieldVisitChecklist listingId={listingId} items={report.fieldwork.fieldChecklist} />
         </Section>
       )}
 

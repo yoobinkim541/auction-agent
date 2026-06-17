@@ -672,6 +672,22 @@ table.mini td.num { text-align: right; font-family: var(--mono); }
 .fw-done .fw-no { color: var(--muted); }
 .fw-item { border-left: 3px solid var(--caution); padding: 6px 11px; margin: 5px 0; background: var(--panel2); border-radius: 0 8px 8px 0; font-size: 12.5px; }
 
+/* ── Field-visit interactive checklist ── */
+.fw-progress { margin-left: 8px; font-size: 11.5px; font-weight: 600; color: var(--muted); padding: 1px 8px; border-radius: 10px; background: var(--panel2); }
+.fw-progress-done { color: var(--clean); border: 1px solid var(--clean); }
+.fw-err { margin-left: 8px; font-size: 11.5px; color: var(--danger); }
+.fw-check { transition: border-color .2s, background .2s; }
+.fw-check.fw-checked { border-left-color: var(--clean); opacity: .82; }
+.fw-row { display: flex; align-items: flex-start; gap: 9px; cursor: pointer; }
+.fw-row input[type="checkbox"] { margin-top: 2px; width: 16px; height: 16px; flex: 0 0 auto; cursor: pointer; accent-color: var(--clean); }
+.fw-check.fw-checked .fw-label b { text-decoration: line-through; text-decoration-color: var(--muted); }
+.fw-label { flex: 1; }
+.fw-saved { font-size: 11px; color: var(--clean); flex: 0 0 auto; align-self: center; animation: fwfade .3s ease; }
+@keyframes fwfade { from { opacity: 0; } to { opacity: 1; } }
+.fw-note { width: 100%; box-sizing: border-box; margin-top: 7px; padding: 6px 8px; font-size: 12.5px; font-family: inherit; line-height: 1.45; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; resize: vertical; }
+.fw-note:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+.fw-note::placeholder { color: var(--muted); }
+
 /* ── Gallery ── */
 .gallery { display: flex; gap: 8px; overflow-x: auto; margin: 12px 0 4px; padding-bottom: 6px; -webkit-overflow-scrolling: touch; scroll-snap-type: x mandatory; }
 .gphoto { flex: 0 0 auto; scroll-snap-align: start; }
