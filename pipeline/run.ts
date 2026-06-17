@@ -9,7 +9,7 @@
 import 'dotenv/config';
 import {
   saveRightsAnalysis, saveLocationAnalysis, saveScore,
-  fetchListingsForAnalysis, fetchListingDocs, type ListingRow,
+  fetchListingsForAnalysis, fetchListingDocs, type ListingRow, query,
 } from '../shared/db.ts';
 import type { Listing, RightsInput, RegistryEntry, Tenant, SiteMetrics } from '../shared/types.ts';
 import { analyzeRights } from './rights/engine.ts';
@@ -361,6 +361,10 @@ async function main() {
       await saveRightsAnalysis(r.id, rights, modelVersion, citations);
       await saveLocationAnalysis(r.id, loc);
       await saveScore(r.id, score);
+      // 분석 중 지오코딩으로 새로 얻은 좌표를 gm_listings에 캐시
+      if (loc.resolvedLat != null && loc.resolvedLng != null && (r.lat == null || r.lng == null)) {
+        await query('UPDATE gm_listings SET lat=$2, lng=$3 WHERE id=$1', [r.id, loc.resolvedLat, loc.resolvedLng]);
+      }
 
       done++;
       const tm = loc.acquisitionCost?.trueSafetyMargin;

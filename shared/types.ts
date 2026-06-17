@@ -440,6 +440,9 @@ export interface LocationAnalysis {
   schools?: { assignedElementary?: string; assignedMiddle?: string; academyCount?: number; schoolCount?: number };
   amenities?: Record<string, number>; // 카테고리별 반경 내 개수
   devSignals?: string[];
+  /** 분석 중 지오코딩으로 얻은 좌표 — gm_listings.lat/lng에 캐시. 이미 DB에 있으면 undefined. */
+  resolvedLat?: number;
+  resolvedLng?: number;
 
   // ── 상세페이지 부가요소 기반 확장 ──
   /** 예상낙찰가(감정가 × 낙찰가율) */

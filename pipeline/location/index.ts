@@ -5,6 +5,7 @@
 import type { Listing, LocationAnalysis, Comparable, PropertyType } from '../../shared/types.ts';
 import { addressToLawdCd } from './lawd-codes.ts';
 import { fetchMolitRaw, molitQuotaHit } from '../../shared/molit-cache.ts';
+import { geocodeNaver } from './osm.ts';
 
 const KAKAO = 'https://dapi.kakao.com/v2/local';
 // 국토부 실거래가 — 물건종류별 base 엔드포인트(DB 캐시는 shared/molit-cache 가 담당)
@@ -181,11 +182,20 @@ export interface LocationOptions {
 }
 
 export async function analyzeLocation(listing: Listing, opts: LocationOptions = {}): Promise<LocationAnalysis> {
-  const geo = listing.lat && listing.lng
-    ? { lat: listing.lat, lng: listing.lng, lawdCd: addressToLawdCd(listing.address) }
-    : await kakaoGeocode(listing.roadAddress || listing.address);
+  let geo: GeocodeResult | null = null;
+  if (listing.lat && listing.lng) {
+    geo = { lat: listing.lat, lng: listing.lng, lawdCd: addressToLawdCd(listing.address) };
+  } else {
+    // 카카오(키 있을 때) → 네이버(fallback) 순으로 지오코딩 시도
+    const addr = listing.roadAddress || listing.address;
+    geo = await kakaoGeocode(addr);
+    if (!geo) {
+      const n = await geocodeNaver(addr);
+      if (n) geo = { lat: n.lat, lng: n.lng, lawdCd: addressToLawdCd(listing.address) };
+    }
+  }
 
-  // 카카오 지오코딩이 없어도 주소→법정동코드 테이블로 LAWD_CD 확보(안전마진용)
+  // 지오코딩 없어도 주소→법정동코드 테이블로 LAWD_CD 확보(안전마진용)
   const lawdCd = geo?.lawdCd ?? addressToLawdCd(listing.address);
 
   let comps: Comparable[] = [];
@@ -242,5 +252,10 @@ export async function analyzeLocation(listing: Listing, opts: LocationOptions = 
     transit,
     schools,
     amenities,
+    resolvedLat: geo?.lat,
+    resolvedLng: geo?.lng,
   };
 }
+
+/** 주소 → 카카오 좌표 (외부에서 단독 사용, 예: bulk geocoding). */
+export { kakaoGeocode };
