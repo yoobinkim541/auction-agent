@@ -116,6 +116,11 @@ export interface ListingItem {
   source_url: string | null;
   is_favorite: boolean | null;
   crawled_at: string | null;
+  lat: number | null;
+  lng: number | null;
+  field_done: number | null;   // 현장 체크리스트 확인 완료 개수
+  field_total: number | null;  // 현장 체크리스트 전체 개수
+  field_notes: number | null;  // 현장 메모 작성 개수
   rights: RightsObj | null;
   location: LocationObj | null;
   total_score: number | null;

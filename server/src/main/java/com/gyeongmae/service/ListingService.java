@@ -37,7 +37,10 @@ public class ListingService {
   private static final String SELECT_SLIM = """
       select l.id, l.case_no, l.court, l.address, l.property_type,
              l.appraisal_value, l.min_bid_price, l.fail_count, l.sale_date, l.area_m2, l.source,
-             l.source_url, l.is_favorite, l.crawled_at,
+             l.source_url, l.is_favorite, l.crawled_at, l.lat, l.lng,
+             (select count(*) from gm_fieldwork_notes fn where fn.listing_id = l.id and fn.checked) as field_done,
+             coalesce(jsonb_array_length(loc.report->'fieldwork'->'fieldChecklist'), 0) as field_total,
+             (select count(*) from gm_fieldwork_notes fn where fn.listing_id = l.id and fn.note <> '') as field_notes,
              case when r.id is null then null
                   else jsonb_build_object(
                     'risk_grade', r.risk_grade,

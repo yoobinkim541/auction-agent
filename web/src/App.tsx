@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import {
   fetchListings, fetchDetail, fetchLastCrawl, triggerJob, fetchJobStatus, setFavorite,
   fetchFieldworkNotes, saveFieldworkNote, apiBase, won, eok,
@@ -57,14 +59,189 @@ const RISK: Record<string, { label: string; cls: string }> = {
 const pct = (n: number | null | undefined) => (n == null ? '-' : (n * 100).toFixed(1) + '%');
 const CONF: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' };
 
-type SortKey = 'score' | 'safety' | 'trueSafety' | 'sale' | 'price' | 'appraisal' | 'assumed' | 'gap';
+type SortKey = 'score' | 'safety' | 'trueSafety' | 'sale' | 'price' | 'appraisal' | 'assumed' | 'gap' | 'fieldwork';
 const CFG_KEY = 'gm_score_config';
 const UI_KEY = 'gm_ui_state';
 
 const SORT_DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
   score: 'desc', safety: 'desc', trueSafety: 'desc', sale: 'asc',
-  price: 'asc', appraisal: 'desc', assumed: 'asc', gap: 'asc',
+  price: 'asc', appraisal: 'desc', assumed: 'asc', gap: 'asc', fieldwork: 'desc',
 };
+
+/** 임장 진행 가중치: 진행중(체크 일부) > 메모만 > 미시작 > 완료(끝난 건 뒤로). 진행도순 정렬·배지 공용. */
+function fieldworkRank(r: ListingItem): number {
+  const total = r.field_total ?? 0;
+  const done = r.field_done ?? 0;
+  const notes = r.field_notes ?? 0;
+  if (total > 0 && done >= total) return 1;          // 완료 → 맨 뒤
+  if (done > 0) return 1000 + done;                   // 진행중(많이 한 것 우선)
+  if (notes > 0) return 500 + notes;                  // 메모만
+  return 0;                                            // 미시작
+}
+
+/** 임장 진행 배지 — 현장 체크를 시작한 매물에만 표시(미시작은 숨겨 목록을 깔끔히). */
+function FieldProgress({ r }: { r: ListingItem }) {
+  const total = r.field_total ?? 0;
+  const done = r.field_done ?? 0;
+  const notes = r.field_notes ?? 0;
+  if (total === 0 || (done === 0 && notes === 0)) return null;
+  const complete = done >= total;
+  return (
+    <span className={`fv-chip${complete ? ' fv-chip-done' : ''}`}
+      title={`현장 확인 ${done}/${total}${notes ? ` · 메모 ${notes}건` : ''}${complete ? ' · 임장 완료' : ''}`}>
+      🚶{done}/{total}{notes > 0 ? ' 📝' : ''}
+    </span>
+  );
+}
+
+/** 마진(진짜마진 우선) → 핀 색. 시세 없으면 회색. */
+function marginColor(r: ListingItem): string {
+  const tm = r.location?.acquisition_cost?.trueSafetyMargin ?? r.location?.safety_margin ?? null;
+  if (tm == null) return '#7a8699';
+  if (tm >= 0.3) return '#1ec758';
+  if (tm >= 0.1) return '#a3d977';
+  if (tm >= 0) return '#f5a623';
+  return '#f04545';
+}
+
+/** 지도 뷰 — 위경도 있는 매물을 마진색 원형 핀으로. 핀 팝업 → 상세. Leaflet 명령형 제어. */
+function MapView({ items, onSelect }: { items: ListingItem[]; onSelect: (r: ListingItem) => void }) {
+  const elRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const onSelectRef = useRef(onSelect);
+  useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
+  const pts = useMemo(() => items.filter((r) => r.lat != null && r.lng != null), [items]);
+
+  useEffect(() => {
+    if (!elRef.current || mapRef.current) return;
+    const map = L.map(elRef.current, { scrollWheelZoom: true, attributionControl: true }).setView([37.55, 126.98], 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 19 }).addTo(map);
+    mapRef.current = map;
+    return () => { map.remove(); mapRef.current = null; };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const layer = L.layerGroup().addTo(map);
+    const bounds: [number, number][] = [];
+    for (const r of pts) {
+      const lat = r.lat!, lng = r.lng!;
+      bounds.push([lat, lng]);
+      const tm = r.location?.acquisition_cost?.trueSafetyMargin ?? r.location?.safety_margin ?? null;
+      const m = L.circleMarker([lat, lng], { radius: 8, color: '#0b0e14', weight: 1, fillColor: marginColor(r), fillOpacity: 0.92 });
+      m.bindPopup(
+        `<div class="map-pop"><b>${r.address}</b><br/><span class="map-pop-sub">${TYPE_LABEL[r.property_type] ?? r.property_type} · ${r.case_no}</span><br/>` +
+        `최저가 ${eok(r.min_bid_price)} · 마진 ${tm != null ? (tm * 100).toFixed(1) + '%' : '-'}<br/>` +
+        `<button class="map-open" type="button">상세 보기 ›</button></div>`,
+      );
+      m.on('popupopen', (e) => {
+        const root = (e as unknown as { popup: L.Popup }).popup.getElement();
+        root?.querySelector<HTMLButtonElement>('.map-open')?.addEventListener('click', () => onSelectRef.current(r));
+      });
+      m.addTo(layer);
+    }
+    if (bounds.length) map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+    setTimeout(() => map.invalidateSize(), 60);
+    return () => { layer.remove(); };
+  }, [pts]);
+
+  return (
+    <div className="map-wrap">
+      <div ref={elRef} className="map-canvas" />
+      <div className="map-legend">
+        <span><i style={{ background: '#1ec758' }} />마진 30%↑</span>
+        <span><i style={{ background: '#a3d977' }} />10–30%</span>
+        <span><i style={{ background: '#f5a623' }} />0–10%</span>
+        <span><i style={{ background: '#f04545' }} />음수</span>
+        <span><i style={{ background: '#7a8699' }} />시세없음</span>
+      </div>
+      <p className="map-count muted">{pts.length}건 표시 · 좌표 없는 {items.length - pts.length}건 제외</p>
+    </div>
+  );
+}
+
+/** 관심 매물 나란히 비교 — slim 데이터만으로 핵심 지표를 표로. 항목별 최우수 셀을 초록 강조. */
+function CompareView({ items, cfg, onClose, onSelect }: {
+  items: ListingItem[]; cfg: ScoreConfig; onClose: () => void; onSelect: (r: ListingItem) => void;
+}) {
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  type Row = { label: string; rank?: (r: ListingItem) => number | null; dir?: 'max' | 'min'; cell: (r: ListingItem) => React.ReactNode };
+  const score = (r: ListingItem) => scoreClient(r, cfg).totalScore;
+  const rows: Row[] = [
+    { label: '종류·면적', cell: (r) => `${TYPE_LABEL[r.property_type] ?? r.property_type}${r.area_m2 != null ? ` · ${r.area_m2.toFixed(0)}㎡` : ''}` },
+    { label: '감정가', cell: (r) => eok(r.appraisal_value) },
+    { label: '최저가', dir: 'min', rank: (r) => r.min_bid_price, cell: (r) => eok(r.min_bid_price) },
+    { label: '안전마진', dir: 'max', rank: (r) => r.location?.safety_margin ?? null, cell: (r) => pct(r.location?.safety_margin) },
+    { label: '진짜마진', dir: 'max', rank: (r) => r.location?.acquisition_cost?.trueSafetyMargin ?? null, cell: (r) => pct(r.location?.acquisition_cost?.trueSafetyMargin) },
+    { label: '예상낙찰가', cell: (r) => eok(r.location?.expected_bid_price) },
+    { label: '인수금액', dir: 'min', rank: (r) => r.rights?.assumed_amount ?? 0, cell: (r) => (r.rights?.assumed_amount ? eok(r.rights.assumed_amount) : '0') },
+    { label: '갭(소자본)', dir: 'min', rank: (r) => r.location?.income?.gapInvestment ?? null, cell: (r) => (r.location?.income?.gapInvestment != null ? eok(r.location.income.gapInvestment) : '-') },
+    { label: '점수', dir: 'max', rank: (r) => score(r), cell: (r) => <b>{score(r)}</b> },
+    { label: '권리', cell: (r) => (RISK[r.rights?.risk_grade ?? '']?.label ?? '-') },
+    { label: '매각기일', cell: (r) => <>{r.sale_date ?? '-'} <DDay dateStr={r.sale_date} /></> },
+    { label: '무피', cell: (r) => (r.location?.income?.zeroPiCandidate ? '★' : '-') },
+    { label: '현장확인', cell: (r) => `${r.field_done ?? 0}/${r.field_total ?? 0}${(r.field_notes ?? 0) > 0 ? ' 📝' : ''}` },
+  ];
+
+  const bestIdx = (row: Row): number => {
+    if (!row.rank || !row.dir) return -1;
+    let bi = -1, bv = row.dir === 'max' ? -Infinity : Infinity;
+    items.forEach((r, i) => {
+      const v = row.rank!(r);
+      if (v == null) return;
+      if ((row.dir === 'max' && v > bv) || (row.dir === 'min' && v < bv)) { bv = v; bi = i; }
+    });
+    return bi;
+  };
+
+  return (
+    <div className="cmp-bg" onClick={onClose}>
+      <div className="cmp-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="cmp-head">
+          <h2>⚖ 관심 매물 비교 <span className="muted">({items.length}건)</span></h2>
+          <button className="close" onClick={onClose}>✕</button>
+        </div>
+        <div className="cmp-scroll">
+          <table className="cmp-table">
+            <thead>
+              <tr>
+                <th className="cmp-rowlabel"></th>
+                {items.map((r) => (
+                  <th key={r.id} className="cmp-col-head">
+                    <button className="cmp-open" onClick={() => { onClose(); onSelect(r); }} title="상세 열기">
+                      <span className="cmp-addr">{r.address}</span>
+                      <span className="mono cmp-case">{r.case_no} ›</span>
+                    </button>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const bi = bestIdx(row);
+                return (
+                  <tr key={row.label}>
+                    <td className="cmp-rowlabel">{row.label}</td>
+                    {items.map((r, i) => (
+                      <td key={r.id} className={`cmp-cell${i === bi ? ' cmp-best' : ''}`}>{row.cell(r)}</td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="muted cmp-foot">초록 = 항목별 최우수(최저가·최고마진·최저인수·최고점수 등). 열 머리 클릭 시 상세.</p>
+      </div>
+    </div>
+  );
+}
 
 function loadConfig(): ScoreConfig {
   try {
@@ -104,6 +281,8 @@ export default function App() {
   const [sort, setSort] = useState<SortKey>(() => loadUIState().sort ?? 'score');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => loadUIState().sortDir ?? 'desc');
   const [selected, setSelected] = useState<ListingItem | null>(null);
+  const [showCompare, setShowCompare] = useState(false);
+  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [cfg, setCfg] = useState<ScoreConfig>(loadConfig);
   const [showCfg, setShowCfg] = useState(false);
   const detailCacheRef = useRef(new Map<string, ListingItem>());
@@ -233,6 +412,7 @@ export default function App() {
         const gb = b.item.location?.income?.gapInvestment ?? Infinity;
         diff = ga - gb;
       }
+      else if (sort === 'fieldwork') diff = fieldworkRank(a.item) - fieldworkRank(b.item);
       else diff = a.sc.totalScore - b.sc.totalScore;
       return sortDir === 'asc' ? diff : -diff;
     });
@@ -241,6 +421,7 @@ export default function App() {
 
   const favCount = rows.filter((r) => r.is_favorite).length;
   const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
+  const activeFilterCount = [hideExpired, hideIncomplete, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyUrgent].filter(Boolean).length;
 
   const stats = useMemo(() => {
     const all = rows.map((item) => ({ item, sc: scoreClient(item, cfg) }));
@@ -395,14 +576,23 @@ export default function App() {
       )}
 
       <div className="controls">
-        <label><input type="checkbox" checked={hideExpired} onChange={(e) => setHideExpired(e.target.checked)} /> 기일경과 숨김</label>
-        <label title="등기 미수집(빌라 일부) 제외"><input type="checkbox" checked={hideIncomplete} onChange={(e) => setHideIncomplete(e.target.checked)} /> 등기미수집 제외</label>
-        <label><input type="checkbox" checked={onlyPassed} onChange={(e) => setOnlyPassed(e.target.checked)} /> 통과만</label>
-        <label><input type="checkbox" checked={onlyFavorite} onChange={(e) => setOnlyFavorite(e.target.checked)} /> ★관심만 ({favCount})</label>
-        <label><input type="checkbox" checked={onlyMultiRound} onChange={(e) => setOnlyMultiRound(e.target.checked)} /> 2차↑ 유찰</label>
-        <label><input type="checkbox" checked={onlyZeroPi} onChange={(e) => setOnlyZeroPi(e.target.checked)} /> ★무피후보</label>
-        <label><input type="checkbox" checked={onlyConsider} onChange={(e) => setOnlyConsider(e.target.checked)} /> ✦검토권장</label>
-        <label><input type="checkbox" checked={onlyUrgent} onChange={(e) => setOnlyUrgent(e.target.checked)} /> ⚡7일이내</label>
+        <details className="filter-menu">
+          <summary>🔎 필터{activeFilterCount > 0 ? ` · ${activeFilterCount}` : ''}</summary>
+          <div className="filter-pop">
+            <label><input type="checkbox" checked={onlyPassed} onChange={(e) => setOnlyPassed(e.target.checked)} /> 통과만</label>
+            <label><input type="checkbox" checked={onlyFavorite} onChange={(e) => setOnlyFavorite(e.target.checked)} /> ★관심만 ({favCount})</label>
+            <label><input type="checkbox" checked={onlyConsider} onChange={(e) => setOnlyConsider(e.target.checked)} /> ✦검토권장</label>
+            <label><input type="checkbox" checked={onlyZeroPi} onChange={(e) => setOnlyZeroPi(e.target.checked)} /> ★무피후보</label>
+            <label><input type="checkbox" checked={onlyUrgent} onChange={(e) => setOnlyUrgent(e.target.checked)} /> ⚡7일이내</label>
+            <label><input type="checkbox" checked={onlyMultiRound} onChange={(e) => setOnlyMultiRound(e.target.checked)} /> 2차↑ 유찰</label>
+            <div className="filter-sep" />
+            <label><input type="checkbox" checked={hideExpired} onChange={(e) => setHideExpired(e.target.checked)} /> 기일경과 숨김</label>
+            <label title="등기 미수집(빌라 일부) 제외"><input type="checkbox" checked={hideIncomplete} onChange={(e) => setHideIncomplete(e.target.checked)} /> 등기미수집 제외</label>
+            {activeFilterCount > 0 && (
+              <button className="filter-clear" onClick={() => { setHideExpired(false); setHideIncomplete(false); setOnlyPassed(false); setOnlyFavorite(false); setOnlyMultiRound(false); setOnlyZeroPi(false); setOnlyConsider(false); setOnlyUrgent(false); }}>필터 초기화</button>
+            )}
+          </div>
+        </details>
         <select value={type} onChange={(e) => setType(e.target.value)}>
           <option value="all">전체 종류</option>
           {Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
@@ -417,6 +607,7 @@ export default function App() {
           <option value="appraisal">감정가순</option>
           <option value="assumed">인수금액순</option>
           <option value="gap">갭(소자본)순</option>
+          <option value="fieldwork">🚶 임장 진행도순</option>
         </select>
         <select value={maxGapEok} onChange={(e) => setMaxGapEok(Number(e.target.value))}>
           <option value={0}>갭 제한 없음</option>
@@ -430,18 +621,40 @@ export default function App() {
         <button onClick={() => runJob('crawl', '크롤')} title="더낙찰옥션 크롤">크롤</button>
         <button onClick={() => runJob('analyze', '분석')} title="분석 실행">분석</button>
         <button onClick={() => exportCSV(view)} title="현재 목록을 CSV로 내보내기">↓ CSV</button>
+        {favCount >= 2 && <button className="cmp-btn" onClick={() => setShowCompare(true)} title="관심 매물을 나란히 비교">⚖ 비교 ({favCount})</button>}
+        <button className={`viewmode-btn${viewMode === 'map' ? ' on' : ''}`} onClick={() => setViewMode((m) => (m === 'list' ? 'map' : 'list'))} title="목록/지도 전환">
+          {viewMode === 'list' ? '🗺 지도' : '📋 목록'}
+        </button>
         <span className="count">{view.length}건</span>
       </div>
 
       {showCfg && <ConfigPanel cfg={cfg} setCfg={setCfg} />}
 
-      {loading && <Notice>불러오는 중…</Notice>}
+      {loading && <SkeletonList />}
       {err && <Notice>API 연결 오류: {err} <br />백엔드(<code>{apiBase}</code>) 실행 확인 (<code>server/run.sh</code>).</Notice>}
       {!loading && !err && view.length === 0 && (
-        <Notice>표시할 매물이 없습니다. 상단 <b>크롤</b>→<b>분석</b> 또는 기준을 완화해 보세요.</Notice>
+        <div className="empty-state">
+          <div className="empty-emoji">🔍</div>
+          {activeFilterCount > 0 || q.trim() || type !== 'all' || filterDate || onlyToday || maxGapEok > 0 ? (
+            <>
+              <p>조건에 맞는 매물이 없습니다.</p>
+              <button onClick={() => {
+                setHideExpired(false); setHideIncomplete(false); setOnlyPassed(false); setOnlyFavorite(false);
+                setOnlyMultiRound(false); setOnlyZeroPi(false); setOnlyConsider(false); setOnlyUrgent(false);
+                setOnlyToday(false); setFilterDate(null); setMaxGapEok(0); setType('all'); setQ('');
+              }}>모든 필터 초기화</button>
+            </>
+          ) : (
+            <p>표시할 매물이 없습니다. 상단 <b>크롤</b>→<b>분석</b>으로 매물을 수집·분석하세요.</p>
+          )}
+        </div>
       )}
 
-      {view.length > 0 && (
+      {viewMode === 'map' && view.length > 0 && (
+        <MapView items={view.map((v) => v.item)} onSelect={handleSelect} />
+      )}
+
+      {viewMode === 'list' && view.length > 0 && (
         <table className="grid">
           <thead>
             <tr>
@@ -464,6 +677,7 @@ export default function App() {
                   <td className="mono" onClick={() => handleSelect(r)}>
                     {r.case_no}
                     {r.crawled_at && r.crawled_at.slice(0, 10) >= TODAY && <span className="new-chip" title={`신규 수집: ${r.crawled_at.slice(0, 10)}`}>NEW</span>}
+                    <FieldProgress r={r} />
                   </td>
                   <td onClick={() => handleSelect(r)} title={r.area_m2 != null ? `전용 ${r.area_m2.toFixed(1)}㎡` : undefined}>{TYPE_LABEL[r.property_type] ?? r.property_type}</td>
                   <td className="addr" onClick={() => handleSelect(r)}>{r.address}</td>
@@ -514,7 +728,7 @@ export default function App() {
         </table>
       )}
 
-      {view.length > 0 && (
+      {viewMode === 'list' && view.length > 0 && (
         <ul className="cards">
           {view.map(({ item: r, sc }, i) => {
             const risk = RISK[r.rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
@@ -561,6 +775,7 @@ export default function App() {
                   {assumed > 0 && <span className="card-assumed">인수 {eok(assumed)}</span>}
                   {r.location?.income?.zeroPiCandidate && <span className="zero-pi-chip">★무피</span>}
                   {currentRound && currentRound > 1 && <span className="round-badge">{currentRound}차 진행</span>}
+                  <FieldProgress r={r} />
                   <DDay dateStr={r.sale_date} />
                   <span className="card-go">자세히 ›</span>
                 </div>
@@ -575,6 +790,15 @@ export default function App() {
         loading={detailLoading === selected.case_no}
         onPrev={selNavPrev} onNext={selNavNext} position={selNavPos}
       />}
+
+      {showCompare && (
+        <CompareView
+          items={rows.filter((r) => r.is_favorite)}
+          cfg={cfg}
+          onClose={() => setShowCompare(false)}
+          onSelect={handleSelect}
+        />
+      )}
 
       {jobStatus && (
         <div className={`job-toast${jobStatus.ok ? '' : ' job-toast-err'}`} onClick={() => setJobStatus(null)}>
@@ -759,6 +983,21 @@ function exportCSV(rows: Array<{ item: ListingItem; sc: ClientScore }>) {
   URL.revokeObjectURL(url);
 }
 
+/** 목록 로딩 스켈레톤 — 빈 화면 대신 shimmer 행으로 체감 지연 완화. */
+function SkeletonList() {
+  return (
+    <div className="skeleton" aria-busy="true" aria-label="불러오는 중">
+      {Array.from({ length: 9 }).map((_, i) => (
+        <div key={i} className="sk-row">
+          <span className="sk-cell sk-w1" /><span className="sk-cell sk-w2" />
+          <span className="sk-cell sk-w3" /><span className="sk-cell sk-w1" />
+          <span className="sk-cell sk-w1" /><span className="sk-cell sk-w2" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Notice({ children }: { children: React.ReactNode }) {
   return <div className="notice">{children}</div>;
 }
@@ -772,6 +1011,9 @@ function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
   const risk = RISK[rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
 
   const [copied, setCopied] = useState(false);
+  const [fieldMode, setFieldMode] = useState(false);
+  const fieldwork = loc?.report?.fieldwork;
+  useEffect(() => { setFieldMode(false); }, [row.case_no]); // 매물 바뀌면 현장모드 해제
   const copyCase = () => {
     navigator.clipboard.writeText(row.case_no).then(() => {
       setCopied(true);
@@ -807,15 +1049,29 @@ function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
 
   return (
     <div className="drawer-bg" onClick={onClose}>
-      <aside className="drawer" onClick={(e) => e.stopPropagation()}>
+      <aside className={`drawer${fieldMode ? ' drawer-fieldmode' : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="drawer-topbar">
           <div className="drawer-nav">
             <button className="nav-btn" disabled={!onPrev} onClick={onPrev} title="이전 (←)">‹</button>
             {position && <span className="nav-pos">{position}</span>}
             <button className="nav-btn" disabled={!onNext} onClick={onNext} title="다음 (→)">›</button>
           </div>
+          {fieldwork && (
+            <button className={`fieldmode-btn${fieldMode ? ' on' : ''}`} onClick={() => setFieldMode((v) => !v)} title="현장에서 체크리스트만 크게 보기">
+              🚶 {fieldMode ? '분석 보기' : '현장모드'}
+            </button>
+          )}
           <button className="close" onClick={onClose}>✕</button>
         </div>
+
+        {fieldMode && fieldwork && (
+          <div className="fieldmode">
+            <h2><span className="star" onClick={onFav}>{row.is_favorite ? '★' : '☆'}</span> {row.case_no}</h2>
+            <p className="addr">{row.address} · {TYPE_LABEL[row.property_type]}</p>
+            {row.source_url && <p className="srclink"><a href={row.source_url} target="_blank" rel="noopener noreferrer">🔗 원본 상세페이지 ↗</a></p>}
+            <FieldVisitChecklist listingId={row.id} items={fieldwork.fieldChecklist} big />
+          </div>
+        )}
         {loading && <p className="detail-loading">상세 분석 불러오는 중…</p>}
         <h2>
           <span className="star" onClick={onFav} title="관심 (단축키: f)">{row.is_favorite ? '★' : '☆'}</span>{' '}
@@ -1084,8 +1340,8 @@ const LRISK: Record<string, { label: string; cls: string }> = {
  * 입력은 gm_fieldwork_notes(매물ID, 항목라벨)에 저장돼 매일 재분석에도 보존된다.
  * 체크 토글은 즉시 저장, 메모는 입력 후 포커스 해제(blur) 시 저장.
  */
-function FieldVisitChecklist({ listingId, items }: {
-  listingId: number; items: { label: string; why: string }[];
+function FieldVisitChecklist({ listingId, items, big }: {
+  listingId: number; items: { label: string; why: string }[]; big?: boolean;
 }) {
   const [state, setState] = useState<Record<string, { checked: boolean; note: string }>>({});
   const [savedKey, setSavedKey] = useState<string | null>(null);
@@ -1127,7 +1383,7 @@ function FieldVisitChecklist({ listingId, items }: {
   const doneCount = items.filter((it) => cur(it.label).checked).length;
 
   return (
-    <>
+    <div className={big ? 'fw-list fw-big' : 'fw-list'}>
       <h4>🚶 현장 가서 이것만 확인하세요
         <span className={`fw-progress${doneCount === items.length ? ' fw-progress-done' : ''}`}>
           {doneCount}/{items.length} 확인
@@ -1155,7 +1411,7 @@ function FieldVisitChecklist({ listingId, items }: {
         );
       })}
       <p className="muted" style={{ marginTop: 8 }}>※ 체크·메모는 자동 저장됩니다(메모는 입력 후 칸 밖을 클릭하면 저장). 매물별로 보관돼 재분석에도 유지됩니다.</p>
-    </>
+    </div>
   );
 }
 
