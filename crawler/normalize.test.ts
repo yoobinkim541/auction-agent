@@ -1,19 +1,38 @@
 import { describe, it, expect } from 'vitest';
-import { parseKoreanMoney, parseKoreanDate, mapPropertyType, mapRightKind, parseAreaToM2 } from './normalize.ts';
+import { parseKoreanMoney, parseKoreanDate, mapPropertyType, mapRightKind, parseAreaToM2, extractAmountFromText } from './normalize.ts';
 
 describe('parseKoreanMoney', () => {
   it('콤마 숫자', () => expect(parseKoreanMoney('530,000,000원')).toBe(530_000_000));
   it('억+만', () => expect(parseKoreanMoney('5억3,000만')).toBe(530_000_000));
   it('억만 단순', () => expect(parseKoreanMoney('5억')).toBe(500_000_000));
   it('만 단위', () => expect(parseKoreanMoney('8,500만원')).toBe(85_000_000));
+  it('억+천만(천 표기)', () => expect(parseKoreanMoney('5억3천만')).toBe(530_000_000));
+  it('천만 단독', () => expect(parseKoreanMoney('3천만원')).toBe(30_000_000));
+  it('억+천만+백만 혼합', () => expect(parseKoreanMoney('5억3천만')).toBe(530_000_000));
+  it('단위만 있고 숫자 없음→null', () => expect(parseKoreanMoney('억')).toBeNull());
   it('빈값', () => expect(parseKoreanMoney('')).toBeNull());
+});
+
+describe('extractAmountFromText (등기 한 줄에서 금액만)', () => {
+  it('날짜·순위번호 무시하고 채권액만', () =>
+    expect(extractAmountFromText('1 2023.09.06 근저당권설정 우리은행 530,000,000원')).toBe(530_000_000));
+  it('억/천만 표기', () =>
+    expect(extractAmountFromText('2 2020-01-15 전세권 김철수 5억3천만원')).toBe(530_000_000));
+  it('금액 없는 줄→null', () =>
+    expect(extractAmountFromText('3 2020.01.01 가압류 서울중앙지법')).toBeNull());
+  it('여러 금액이면 최댓값(채권최고액)', () =>
+    expect(extractAmountFromText('근저당 채권최고액 660,000,000 (원금 550,000,000)')).toBe(660_000_000));
 });
 
 describe('parseKoreanDate', () => {
   it('점 구분', () => expect(parseKoreanDate('2024.05.01')).toBe('2024-05-01'));
   it('한글', () => expect(parseKoreanDate('2024년 5월 1일')).toBe('2024-05-01'));
   it('붙은 8자리', () => expect(parseKoreanDate('20240501')).toBe('2024-05-01'));
+  it('접두 텍스트 있어도 추출', () => expect(parseKoreanDate('설정 2023.09.06')).toBe('2023-09-06'));
   it('실패', () => expect(parseKoreanDate('미정')).toBeUndefined());
+  it('불가능한 월/일 거부', () => expect(parseKoreanDate('2023.13.45')).toBeUndefined());
+  it('2월 30일 거부', () => expect(parseKoreanDate('2023.02.30')).toBeUndefined());
+  it('더 긴 숫자열 안에서는 매칭 안 함', () => expect(parseKoreanDate('120230906')).toBeUndefined());
 });
 
 describe('mapPropertyType', () => {

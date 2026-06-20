@@ -20,7 +20,7 @@ import type { Adapter, CrawlFilter, ScrapedListing } from './types.ts';
 import { sleep } from './types.ts';
 import {
   parseKoreanMoney, parseKoreanDate, mapPropertyType, mapRightKind,
-  normalizeCaseNo, parseAreaToM2,
+  normalizeCaseNo, parseAreaToM2, extractAmountFromText,
 } from '../normalize.ts';
 
 const BASE = 'https://www.xn--b20bu5cuwtpue8ui.com'; // 더낙찰옥션.com (punycode)
@@ -332,7 +332,8 @@ export function extractRegistryRowsFromText(lines: string[]): { kind: ReturnType
     .map((ln) => ({
       kind: mapRightKind(ln),
       receiptDate: parseKoreanDate(ln),
-      amount: parseKoreanMoney(ln),
+      // 줄 전체를 parseKoreanMoney 에 넣으면 날짜·순위번호까지 합쳐져 오값 → 금액 토큰만 추출
+      amount: extractAmountFromText(ln),
     }))
     .filter((r) => r.kind !== 'other' && r.receiptDate);
 }

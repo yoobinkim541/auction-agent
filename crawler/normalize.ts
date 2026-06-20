@@ -9,31 +9,80 @@ export function parseKoreanMoney(input: string | null | undefined): number | nul
   const s = input.replace(/[\s원]/g, '');
   if (!s) return null;
 
-  // 억/만 단위 표기
-  if (/[억만]/.test(s)) {
-    let total = 0;
-    const eok = s.match(/([0-9,]+)\s*억/);
-    const man = s.match(/([0-9,]+)\s*만/);
-    if (eok) total += parseInt(eok[1]!.replace(/,/g, ''), 10) * 100_000_000;
-    if (man) total += parseInt(man[1]!.replace(/,/g, ''), 10) * 10_000;
-    // "억"만 있고 "만" 없을 때 남은 숫자 처리는 생략(드묾)
-    return total > 0 ? total : null;
+  // 억/만/천/백 단위 표기 (예: "5억3천만", "5억3,000만", "53,000만") — CJK 누진 파싱
+  if (/[억만천백]/.test(s)) {
+    const UNIT: Record<string, number> = { 억: 100_000_000, 만: 10_000, 천: 1_000, 백: 100 };
+    let total = 0; // 억·만으로 확정된 누계
+    let section = 0; // 천·백 누계(다음 큰 단위에 합산)
+    let cur = 0; // 직전 숫자
+    let sawUnit = false;
+    const tokens = s.match(/[0-9,]+|[억만천백]/g);
+    if (!tokens) return null;
+    for (const tk of tokens) {
+      const u = UNIT[tk];
+      if (u !== undefined) {
+        sawUnit = true;
+        if (u >= 10_000) {
+          total += (section + cur) * u; // 억·만: 큰 단위로 확정
+          section = 0;
+          cur = 0;
+        } else {
+          section += cur * u; // 천·백: 작은 단위
+          cur = 0;
+        }
+      } else {
+        const n = parseInt(tk.replace(/,/g, ''), 10);
+        if (!Number.isNaN(n)) cur = n;
+      }
+    }
+    total += section + cur; // 단위 없는 잔여 끝자리
+    return sawUnit && total > 0 ? total : null;
   }
   // 순수 숫자(콤마)
   const digits = s.replace(/[^0-9]/g, '');
   return digits ? parseInt(digits, 10) : null;
 }
 
+/**
+ * 한 줄(날짜·순위번호·권리자·금액이 섞인 등기 텍스트)에서 '금액'만 추출.
+ * parseKoreanMoney 를 줄 전체에 쓰면 날짜·순위번호 숫자까지 합쳐져 천문학적 오값이 나오므로,
+ * 날짜 토큰을 먼저 제거하고 금액 후보(억/만/천 표기 또는 천단위 콤마 그룹)만 골라 최댓값을 채권액으로 본다.
+ * 실패 시 null(= 금액 미상). 잘못된 큰 숫자를 만들어내는 것보다 null 이 안전하다.
+ */
+export function extractAmountFromText(input: string | null | undefined): number | null {
+  if (!input) return null;
+  const cleaned = input
+    .replace(/(?<!\d)\d{4}\s*[년.\-/]\s*\d{1,2}\s*[월.\-/]\s*\d{1,2}(?!\d)/g, ' ') // YYYY.MM.DD 날짜 제거
+    .replace(/(?<!\d)\d{8}(?!\d)/g, ' '); // 붙은 8자리 날짜 제거
+  const cands = cleaned.match(
+    /[0-9][0-9,]*\s*억(?:\s*[0-9,]+\s*(?:천만|천|만))?원?|[0-9][0-9,]*\s*(?:천만|천|만)원?|[0-9]{1,3}(?:,[0-9]{3})+/g,
+  );
+  if (!cands) return null;
+  let best: number | null = null;
+  for (const c of cands) {
+    const v = parseKoreanMoney(c);
+    if (v != null && (best == null || v > best)) best = v; // 채권액은 통상 최댓값
+  }
+  return best;
+}
+
 /** "2024.05.01" / "2024-5-1" / "2024년 5월 1일" / "20240501" → "YYYY-MM-DD" */
 export function parseKoreanDate(input: string | null | undefined): string | undefined {
   if (!input) return undefined;
   const s = input.trim();
-  let m =
-    s.match(/(\d{4})\s*[년.\-/]\s*(\d{1,2})\s*[월.\-/]\s*(\d{1,2})/) ||
+  const m =
+    s.match(/(?<!\d)(\d{4})\s*[년.\-/]\s*(\d{1,2})\s*[월.\-/]\s*(\d{1,2})(?!\d)/) ||
     s.match(/^(\d{4})(\d{2})(\d{2})$/);
   if (!m) return undefined;
-  const [, y, mo, d] = m;
-  return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  // 불가능한 날짜(2023.13.45, 2월30일 등) 거부 — Date 왕복 검증
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) {
+    return undefined;
+  }
+  return `${m[1]}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
 const TYPE_RULES: [RegExp, PropertyType][] = [
