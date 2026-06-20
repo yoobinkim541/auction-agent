@@ -426,7 +426,21 @@ export default function App() {
 
   const favCount = rows.filter((r) => r.is_favorite).length;
   const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
-  const activeFilterCount = [hideExpired, hideIncomplete, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyUrgent].filter(Boolean).length;
+  // 배지 카운트 — 결과를 좁히는 '숨은' 필터(오늘기일·달력일·갭·발품회피 등)까지 포함해야
+  // 목록이 비었을 때 원인을 알 수 있다(과거: 절반 누락 → 0건인데 배지 0).
+  const activeFilterCount = [
+    hideExpired, hideIncomplete, onlyPassed, onlyFavorite, onlyMultiRound,
+    onlyZeroPi, onlyConsider, onlyUrgent, onlyPassedAvoid, onlyToday,
+    !!filterDate, maxGapEok > 0,
+  ].filter(Boolean).length;
+
+  // 모든 필터 초기화(검색어·종류 포함) — 팝오버/빈상태 버튼이 동일하게 사용
+  const resetFilters = () => {
+    setHideExpired(false); setHideIncomplete(false); setOnlyPassed(false); setOnlyFavorite(false);
+    setOnlyMultiRound(false); setOnlyZeroPi(false); setOnlyConsider(false); setOnlyUrgent(false);
+    setOnlyPassedAvoid(false); setOnlyToday(false); setFilterDate(null); setMaxGapEok(0);
+    setType('all'); setQ('');
+  };
 
   const stats = useMemo(() => {
     const all = rows.map((item) => ({ item, sc: scoreClient(item, cfg) }));
@@ -594,7 +608,7 @@ export default function App() {
             <label><input type="checkbox" checked={hideExpired} onChange={(e) => setHideExpired(e.target.checked)} /> 기일경과 숨김</label>
             <label title="등기 미수집(빌라 일부) 제외"><input type="checkbox" checked={hideIncomplete} onChange={(e) => setHideIncomplete(e.target.checked)} /> 등기미수집 제외</label>
             {activeFilterCount > 0 && (
-              <button className="filter-clear" onClick={() => { setHideExpired(false); setHideIncomplete(false); setOnlyPassed(false); setOnlyFavorite(false); setOnlyMultiRound(false); setOnlyZeroPi(false); setOnlyConsider(false); setOnlyUrgent(false); }}>필터 초기화</button>
+              <button className="filter-clear" onClick={resetFilters}>필터 초기화</button>
             )}
           </div>
         </details>
@@ -643,11 +657,7 @@ export default function App() {
           {activeFilterCount > 0 || q.trim() || type !== 'all' || filterDate || onlyToday || maxGapEok > 0 ? (
             <>
               <p>조건에 맞는 매물이 없습니다.</p>
-              <button onClick={() => {
-                setHideExpired(false); setHideIncomplete(false); setOnlyPassed(false); setOnlyFavorite(false);
-                setOnlyMultiRound(false); setOnlyZeroPi(false); setOnlyConsider(false); setOnlyUrgent(false);
-                setOnlyToday(false); setFilterDate(null); setMaxGapEok(0); setType('all'); setQ('');
-              }}>모든 필터 초기화</button>
+              <button onClick={resetFilters}>모든 필터 초기화</button>
             </>
           ) : (
             <p>표시할 매물이 없습니다. 상단 <b>크롤</b>→<b>분석</b>으로 매물을 수집·분석하세요.</p>
