@@ -142,8 +142,9 @@ function MapView({ items, onSelect }: { items: ListingItem[]; onSelect: (r: List
       m.addTo(layer);
     }
     if (bounds.length) map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
-    setTimeout(() => map.invalidateSize(), 60);
-    return () => { layer.remove(); };
+    // 철거된 맵에서 invalidateSize 호출 방지 — 타이머 핸들 정리 + 살아있는지 확인
+    const sizeTimer = setTimeout(() => { if (mapRef.current) mapRef.current.invalidateSize(); }, 60);
+    return () => { clearTimeout(sizeTimer); layer.remove(); };
   }, [pts]);
 
   return (
@@ -304,7 +305,11 @@ export default function App() {
   const toggleFav = (item: ListingItem) => {
     const nv = !item.is_favorite;
     setRows((rs) => rs.map((r) => (r.id === item.id ? { ...r, is_favorite: nv } : r)));
-    if (selected?.id === item.id) setSelected({ ...selected, is_favorite: nv });
+    // 함수형 업데이트 — 상세 로드로 교체된 최신 selected(전체 데이터)를 slim 으로 덮어쓰지 않도록
+    setSelected((cur) => (cur && cur.id === item.id ? { ...cur, is_favorite: nv } : cur));
+    // 상세 캐시도 동기화 — 재오픈 시 별 상태가 토글 이전 값으로 되돌아가는 문제 방지
+    const cached = detailCacheRef.current.get(item.case_no);
+    if (cached) detailCacheRef.current.set(item.case_no, { ...cached, is_favorite: nv });
     setFavorite(item.id, nv).catch(() => load());
   };
 
