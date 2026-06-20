@@ -6,6 +6,9 @@ import type { Listing, LocationAnalysis, Comparable, PropertyType } from '../../
 import { addressToLawdCd } from './lawd-codes.ts';
 import { fetchMolitRaw, molitQuotaHit } from '../../shared/molit-cache.ts';
 import { geocodeNaver } from './osm.ts';
+import {
+  parseMolitDealAmount, extractDong, extractBuildingName, estimateMarketPrice,
+} from './comps.ts';
 
 const KAKAO = 'https://dapi.kakao.com/v2/local';
 // 국토부 실거래가 — 물건종류별 base 엔드포인트(DB 캐시는 shared/molit-cache 가 담당)
@@ -70,7 +73,7 @@ function parseMolitJson(item: MolitItem | MolitItem[] | undefined): Comparable[]
   const items = Array.isArray(item) ? item : item ? [item] : [];
   const comps: Comparable[] = [];
   for (const it of items) {
-    const dealAmount = parseInt(String(it.dealAmount ?? '').replace(/[^0-9]/g, ''), 10) * 10_000; // 만원→원
+    const dealAmount = parseMolitDealAmount(it.dealAmount); // 음수·정정표기·비정상값 거부
     const areaM2 = parseFloat(String(it.excluUseAr ?? ''));
     if (!dealAmount || !areaM2) continue;
     const name = it.aptNm || it.mhouseNm || it.offiNm;
@@ -87,21 +90,6 @@ function parseMolitJson(item: MolitItem | MolitItem[] | undefined): Comparable[]
   return comps;
 }
 
-/** 주소에서 법정동(예: 천호동) 추출 */
-function extractDong(addr: string): string | undefined {
-  const parts = addr.replace(/[,()]/g, ' ').split(/\s+/).filter(Boolean);
-  for (let i = 0; i < parts.length - 1; i++) {
-    if (/[구군]$/.test(parts[i]!) && /[동읍면리가]$/.test(parts[i + 1]!)) return parts[i + 1];
-  }
-  return parts.find((p) => /[동읍면]$/.test(p) && p.length >= 2 && !/[구군시]$/.test(p));
-}
-
-/** 주소의 "(동,단지명)" 패턴에서 건물명 추출 */
-function extractBuildingName(addr: string): string | undefined {
-  const m = addr.match(/\([^,)]*,\s*([^)]+)\)/);
-  return m ? m[1]!.trim() : undefined;
-}
-
 function recentYearMonths(months: number): string[] {
   const out: string[] = [];
   const now = new Date();
@@ -110,45 +98,6 @@ function recentYearMonths(months: number): string[] {
     out.push(`${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
   }
   return out;
-}
-
-function median(nums: number[]): number | null {
-  if (!nums.length) return null;
-  const s = [...nums].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid]! : Math.round((s[mid - 1]! + s[mid]!) / 2);
-}
-
-interface Estimate { marketPrice: number | null; used: Comparable[]; confidence: 'high' | 'medium' | 'low' | null; basis: string }
-
-/**
- * 비교군을 동일건물 → 법정동+면적 → 법정동 → 구+면적 순으로 좁혀 시세 추정.
- * 빌라(연립다세대)는 단지가 이질적이라 '구 전체 중위값'은 부정확 → 법정동·면적 매칭을 우선하고
- * 매칭 수준을 confidence로 표기. 최근 거래 우선.
- */
-function estimateMarketPrice(
-  comps: Comparable[],
-  opts: { areaM2?: number; dong?: string; buildingName?: string },
-): Estimate {
-  const recent = [...comps].sort((a, b) => (a.dealDate < b.dealDate ? 1 : -1)); // 최근 우선
-  const areaOk = (c: Comparable) => !opts.areaM2 || Math.abs(c.areaM2 - opts.areaM2) <= opts.areaM2 * 0.15;
-  const dongOk = (c: Comparable) => !!opts.dong && !!c.dong && c.dong.includes(opts.dong);
-  const nameOk = (c: Comparable) =>
-    !!opts.buildingName && !!c.apartmentName && c.apartmentName.replace(/\s/g, '').includes(opts.buildingName.replace(/\s/g, ''));
-
-  const tiers: { basis: string; conf: 'high' | 'medium' | 'low'; sel: Comparable[]; need: number }[] = [];
-  if (opts.buildingName) tiers.push({ basis: `'${opts.buildingName}' 동일건물·면적`, conf: 'high', need: 2, sel: recent.filter((c) => nameOk(c) && areaOk(c)) });
-  if (opts.dong) tiers.push({ basis: `${opts.dong}·면적`, conf: 'high', need: 3, sel: recent.filter((c) => dongOk(c) && areaOk(c)) });
-  if (opts.dong) tiers.push({ basis: `${opts.dong} 전체`, conf: 'medium', need: 3, sel: recent.filter((c) => dongOk(c)) });
-  tiers.push({ basis: '구 전체·면적', conf: 'low', need: 3, sel: recent.filter((c) => areaOk(c)) });
-
-  for (const t of tiers) {
-    if (t.sel.length >= t.need) {
-      const used = t.sel.slice(0, 20);
-      return { marketPrice: median(used.map((c) => c.dealAmount)), used, confidence: t.conf, basis: `${t.basis} ${used.length}건` };
-    }
-  }
-  return { marketPrice: null, used: [], confidence: null, basis: '비교군 부족' };
 }
 
 async function kakaoCategoryCount(code: string, lat: number, lng: number, radius: number): Promise<number> {
