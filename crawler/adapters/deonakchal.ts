@@ -20,8 +20,9 @@ import type { Adapter, CrawlFilter, ScrapedListing } from './types.ts';
 import { sleep } from './types.ts';
 import {
   parseKoreanMoney, parseKoreanDate, mapPropertyType, mapRightKind,
-  normalizeCaseNo, parseAreaToM2, extractAmountFromText,
+  normalizeCaseNo, extractAmountFromText,
 } from '../normalize.ts';
+import { parseResultRowText, type ParsedRow } from './parse-row.ts';
 
 const BASE = 'https://www.xn--b20bu5cuwtpue8ui.com'; // 더낙찰옥션.com (punycode)
 const AUTH_DIR = '.auth';
@@ -48,10 +49,6 @@ const SEL = {
 //            9 임대수익다가구, 12 반값빌라, 25 특수물건, 26 오늘공고신건, 27 역세권물건, 11 유치권
 //  혼합/빌라 테마를 앞에 두어 maxItems가 아파트로만 채워지지 않게 함. (전원주택1·고가4·토지8/10 제외)
 const THEME_OPTS = ['12', '3', '9', '27', '26', '25', '5', '6', '7', '2', '11'];
-// 종결/취하 등 입찰 불가 상태(건너뜀)
-const TERMINAL = /(배당종결|취하|기각|각하|낙찰|대금납부|^배당|취소)/;
-// 특수권리 플래그(목록의 [..] 표기) — 엔진 레드플래그 스캐너가 인식
-const FLAG_TOKENS = ['유치권', '법정지상권', '분묘', '대지권미등기', '토지별도등기', '임금채권', '대항력있는임차인', '선순위', '지분', '농지', '제시외'];
 
 // ── 휴먼 페이싱: 사람이 매물을 '보는' 것처럼 수집(차단 임계치 회피용 폴라이트 정책) ──
 //   가변 지연 + 페이지 스크롤(읽기) + 중간 휴식 + 기본 직렬(1건씩). IP/UA 위장·봇탐지 우회 없음.
@@ -139,9 +136,7 @@ async function newPage(browser: Browser): Promise<Page> {
   return ctx.newPage();
 }
 
-interface ParsedRow { listing: Listing; notes: string[]; productId?: string }
-
-/** 결과 행 텍스트를 정규식으로 파싱. 종결/취하 등 입찰불가 상태는 제외. */
+/** 결과 행 텍스트를 정규식으로 파싱. 종결/취하 등 입찰불가 상태는 제외. (파싱은 parse-row.ts 순수함수) */
 async function parseListPage(page: Page): Promise<ParsedRow[]> {
   const rows = page.locator(SEL.resultRow);
   const n = await rows.count();
@@ -150,47 +145,8 @@ async function parseListPage(page: Page): Promise<ParsedRow[]> {
     const rid = (await rows.nth(i).getAttribute('id').catch(() => '')) ?? '';
     const productId = rid.startsWith('tr_') ? rid.slice(3) : undefined;
     const text = (await rows.nth(i).innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
-    const head = text.match(/(\S+계)\s+(20\d\d-\d{3,6}(?:-\d+)?)\s+\[([^\]]+)\]/);
-    if (!head) continue;
-    const [, court, caseNo, typeLabel] = head;
-
-    // "유찰 15회 (0%)" 형태도 포함: (?:\s*\d+회)? 옵션 그룹으로 N회 건너뜀
-    const status = text.match(/(신건|유찰|진행|정지|배당종결|취하|기각|각하|낙찰|변경|재진행|재매각|미진행|대금납부|배당)(?:\s*\d+회)?\s*\((\d+)%\)/);
-    if (status && TERMINAL.test(status[1]!)) continue; // 진행 매물만 수집
-
-    // 유찰 횟수: "유찰 N회" 또는 "재진행 N회" 텍스트에서 직접 추출
-    const failCountM = text.match(/(?:유찰|재진행)\s*(\d+)회/);
-    const failCount = failCountM ? parseInt(failCountM[1]!, 10) : 0;
-
-    const am = text.match(/감정가\s*([\d,]+)\s*최저가\s*([\d,]+)/);
-    const addrM = text.match(/((?:서울특별시|인천광역시|경기도)[^[]*?)\s*(?:건물|토지|감정가)/);
-    const bldM = text.match(/건물\s*([\d.]+)\s*㎡/);
-    const dates = text.match(/20\d\d-\d\d-\d\d/g) ?? [];
-    const notes = FLAG_TOKENS
-      .filter((t) => new RegExp(`\\[[^\\]]*${t}[^\\]]*\\]`).test(text))
-      .map((t) => `목록 특수권리 표기: ${t}`);
-
-    out.push({
-      listing: {
-        caseNo: normalizeCaseNo(caseNo),
-        court: court!,
-        address: addrM ? addrM[1]!.trim() : '(소재지 미상)',
-        propertyType: mapPropertyType(typeLabel),
-        appraisalValue: parseKoreanMoney(am?.[1]) ?? 0,
-        minBidPrice: parseKoreanMoney(am?.[2]) ?? 0,
-        minBidRatio: status ? parseInt(status[2]!, 10) : undefined,
-        failCount,
-        saleDate: dates.length ? dates[dates.length - 1] : undefined,
-        areaM2: bldM ? parseFloat(bldM[1]!) : parseAreaToM2(text),
-        isCollectiveBuilding: /아파트|오피스텔|다세대|연립|도시형생활/.test(typeLabel!),
-        source: 'deonakchal',
-        sourceUrl: BASE + SEL.listPath,
-        rawJson: { rowText: text, status: status?.[1] },
-        crawledAt: new Date().toISOString(),
-      },
-      notes,
-      productId,
-    });
+    const parsed = parseResultRowText(text, { productId, sourceUrl: BASE + SEL.listPath });
+    if (parsed) out.push(parsed);
   }
   return out;
 }
