@@ -93,10 +93,10 @@ export function buildPreBidChecklist(args: {
   }
 
   // 4) 임차인 대항력/배당
-  for (const ta of rights.tenants) {
+  for (const [i, ta] of rights.tenants.entries()) {
     if (ta.hasOpposition) {
       const noDemand = !ta.tenant.demandedDistribution;
-      push({ id: `tenant-opp-${ta.tenant.name ?? ta.tenant.moveInDate ?? Math.random()}`, label: `선순위 대항력 임차인${noDemand ? '(배당요구 안 함 — 전액 인수)' : ''}`, category: '임차인배당', severity: 'danger', detail: `대항력 있는 임차인${ta.tenant.name ? ` ${ta.tenant.name}` : ''} 보증금 ${won(ta.tenant.deposit)}. ${noDemand ? '배당요구를 하지 않아 보증금 전액을 낙찰자가 인수.' : '배당에서 미회수 잔액을 낙찰자가 인수.'}`, source: '임차인현황/등기', verify: '전입세대열람·확정일자, 배당요구 여부·종기' });
+      push({ id: `tenant-opp-${ta.tenant.name ?? ta.tenant.moveInDate ?? i}`, label: `선순위 대항력 임차인${noDemand ? '(배당요구 안 함 — 전액 인수)' : ''}`, category: '임차인배당', severity: 'danger', detail: `대항력 있는 임차인${ta.tenant.name ? ` ${ta.tenant.name}` : ''} 보증금 ${won(ta.tenant.deposit)}. ${noDemand ? '배당요구를 하지 않아 보증금 전액을 낙찰자가 인수.' : '배당에서 미회수 잔액을 낙찰자가 인수.'}`, source: '임차인현황/등기', verify: '전입세대열람·확정일자, 배당요구 여부·종기' });
     }
   }
   if (rights.malsoBasis.entry == null) {
