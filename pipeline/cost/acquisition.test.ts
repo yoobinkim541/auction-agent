@@ -87,18 +87,26 @@ describe('토지규제 flags', () => {
     ].join(', ');
     const flags = classifyLandUseFlags(text);
     const find = (s: string) => flags.find((f) => f.label.includes(s));
-    expect(find('군사시설보호구역')).toMatchObject({ kind: 'risk', severity: 'medium' });
+    expect(find('군사시설보호구역')).toMatchObject({ kind: 'info', severity: 'low' }); // 제한보호구역/비행안전(통제 없음) → info/low
     expect(find('도시계획시설 저촉')).toMatchObject({ kind: 'risk', severity: 'medium' });
-    expect(find('농지')).toMatchObject({ kind: 'risk', severity: 'medium' });
+    expect(find('농업용도지역')).toMatchObject({ kind: 'risk', severity: 'medium' });
     expect(find('보전산지')).toMatchObject({ kind: 'risk', severity: 'high' });
     expect(find('녹지지역')).toMatchObject({ kind: 'risk', severity: 'medium' });
     expect(find('상수원보호구역')).toMatchObject({ kind: 'risk', severity: 'high' });
     expect(find('문화재보호구역')).toMatchObject({ kind: 'risk', severity: 'medium' });
   });
 
-  it('통제보호구역/비행안전구역 단독 표기도 군사시설 flag로 탐지', () => {
-    expect(classifyLandUseFlags('통제보호구역').find((f) => f.label.includes('군사시설'))?.severity).toBe('medium');
-    expect(classifyLandUseFlags('비행안전구역').find((f) => f.label.includes('군사시설'))?.severity).toBe('medium');
+  it('군사 분할: 통제보호구역=risk/high, 제한·비행안전=info/low, 통제 동반 표기 시 info 억제', () => {
+    expect(classifyLandUseFlags('통제보호구역').find((f) => f.label.includes('통제보호구역')))
+      .toMatchObject({ kind: 'risk', severity: 'high' });
+    expect(classifyLandUseFlags('제한보호구역').find((f) => f.label.includes('군사시설보호구역')))
+      .toMatchObject({ kind: 'info', severity: 'low' });
+    expect(classifyLandUseFlags('비행안전구역').find((f) => f.label.includes('군사시설보호구역')))
+      .toMatchObject({ kind: 'info', severity: 'low' });
+    // 표준 표기 '군사기지 및 군사시설 보호구역(통제보호구역)' → high만, info 중복 발화 억제
+    const std = classifyLandUseFlags('군사기지 및 군사시설 보호구역(통제보호구역)');
+    expect(std.find((f) => f.label.includes('통제보호구역'))?.severity).toBe('high');
+    expect(std.find((f) => f.kind === 'info')).toBeUndefined();
   });
 
   it('보전관리지역/자연환경보전지역 → 보전산지 flag(high)', () => {
@@ -111,6 +119,41 @@ describe('토지규제 flags', () => {
     expect(f?.impact).toContain('권리산정기준일');
     expect(f?.impact).toContain('현금청산');
     expect(f?.impact).toContain('입주권 불가');
+  });
+
+  it('저촉: 풀어쓴 "…에 저촉/저촉됨"·도로등급 잡고, 부정문·인접·-대로 조사는 제외', () => {
+    const has = (t: string, label: string) => classifyLandUseFlags(t).some((f) => f.label.includes(label));
+    expect(has('도시계획시설(도로)에 저촉됨', '도로 저촉')).toBe(true);
+    expect(has('소로3류에 저촉', '도로 저촉')).toBe(true);
+    expect(has('도시계획시설(공원)에 저촉됨', '도시계획시설 저촉')).toBe(true);
+    expect(has('근린공원에 저촉되는 부분', '도시계획시설 저촉')).toBe(true);
+    expect(has('도시계획시설 저촉', '도시계획시설 저촉')).toBe(true); // 시설명 없는 두 번째 대안 커버
+    expect(has('도로에 저촉되지 않음', '도로 저촉')).toBe(false); // 부정문
+    expect(has('도로 저촉 없음', '도로 저촉')).toBe(false);
+    expect(has('남측 도로는 양호, 북측 공원에 저촉', '도로 저촉')).toBe(false); // 콤마 너머 타 시설
+    expect(has('종전대로 저촉', '도로 저촉')).toBe(false); // '-대로' 조사 오탐 가드(lookbehind)
+    expect(has('근린공원 인접', '도시계획시설 저촉')).toBe(false); // 저촉 없는 단순 인접
+  });
+
+  it('농지: 용도지역·괄호 지목·과수원 잡고, 평범한 서술의 전/답은 오탐 아님', () => {
+    const isNongji = (t: string) => classifyLandUseFlags(t).some((f) => f.label.includes('농업용도지역'));
+    ['농업진흥구역', '농업보호구역', '농업진흥지역', '농림지역', '절대농지', '과수원', '지목 (전), 자연녹지지역']
+      .forEach((t) => expect(isNongji(t)).toBe(true));
+    ['지목 전체적으로 정리됨', '전세권 설정, 전용면적 84㎡', '임차인 답변서 제출', '전용주거지역']
+      .forEach((t) => expect(isNongji(t)).toBe(false));
+  });
+
+  it('상수원: 보호구역·수질보전특별대책·수변구역·N권역 잡고, 대기·권고문은 오탐 아님', () => {
+    const isWater = (t: string) => classifyLandUseFlags(t).some((f) => f.label.includes('상수원보호구역'));
+    ['상수원보호구역', '수질보전특별대책지역', '수질보전 특별대책지역', '특별대책지역 1권역', '한강수계 수변구역']
+      .forEach((t) => expect(isWater(t)).toBe(true));
+    ['대기보전특별대책지역', '특별대책지역(대기) 울산국가산업단지', '하천 수질보전에 유의 요망']
+      .forEach((t) => expect(isWater(t)).toBe(false));
+  });
+
+  it('음성(오탐 회귀): 평범한 용도지역 텍스트엔 flag 0개', () => {
+    ['제2종일반주거지역, 도시지역', '계획관리지역', '자연취락지구, 제3종일반주거지역', '준주거지역']
+      .forEach((t) => expect(classifyLandUseFlags(t).length).toBe(0));
   });
 });
 
