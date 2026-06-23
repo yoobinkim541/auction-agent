@@ -10,18 +10,29 @@
  * manageable=true 는 grade ∈ {manageable, caution} (개인 투자자 감당 가능선).
  */
 import type {
-  RightsAnalysisResult, LocationAnalysis, PreBidItem, LegalRisk, LegalRiskFactor,
+  RightsAnalysisResult, LocationAnalysis, PreBidItem, LegalRisk, LegalRiskFactor, RightKind,
 } from '../../shared/types.ts';
 import { matchLegalChunksKeyword } from '../../shared/db.ts';
 import { LEGAL_MAP, type LegalMapEntry } from './legal-map.ts';
 
-const KIND_KO: Record<string, string> = { jeonse: '전세권', jisangwon: '지상권', imchagwon: '임차권', hwanmae: '환매', jiyeokgwon: '지역권' };
+/** 인수 등기권리 종류(RightKind) → LEGAL_MAP 키. 매핑 누락 시 해당 factor에 근거 법령이 빠지므로
+ *  법령 항목이 있는 종류는 명시(키는 RightKind 타입이라 종류명 오타를 컴파일타임 검출).
+ *  소유권상실 종류(보전가등기·건물철거가처분)는 전용 rf- 법령 엔트리로 연결 — 이전 KIND_KO 누락으로
+ *  이 두 종류의 assumed 항목이 항상 근거 법령 없이 노출되던 버그 수정. */
+const KIND_TO_LEGAL: Partial<Record<RightKind, string>> = {
+  jeonse: 'assumed-전세권', jisangwon: 'assumed-지상권', imchagwon: 'assumed-임차권',
+  hwanmae: 'assumed-환매', jiyeokgwon: 'assumed-지역권',
+  bowjeon_gadeungi: 'rf-senior_gadeungi', cheolgeo_gacheobun: 'rf-cheolgeo_gacheobun',
+};
 
-/** 체크리스트 항목 → LEGAL_MAP 엔트리 매칭(id 정확 → 종류 → note/luf 퍼지) */
+/** 체크리스트 항목 → LEGAL_MAP 엔트리 매칭(id 정확 → 인수권리 종류 → note/luf 퍼지) */
 function lookup(item: PreBidItem): LegalMapEntry | undefined {
   if (LEGAL_MAP[item.id]) return LEGAL_MAP[item.id];
   const am = item.id.match(/^assumed-([a-z_]+)-/);
-  if (am && KIND_KO[am[1]!] && LEGAL_MAP[`assumed-${KIND_KO[am[1]!]}`]) return LEGAL_MAP[`assumed-${KIND_KO[am[1]!]}`];
+  if (am) {
+    const key = KIND_TO_LEGAL[am[1] as RightKind];
+    if (key && LEGAL_MAP[key]) return LEGAL_MAP[key];
+  }
   if (item.id.startsWith('note-')) {
     const core = item.id.slice(5);
     for (const k of Object.keys(LEGAL_MAP)) if (k.startsWith('note-') && (k.slice(5).includes(core) || core.includes(k.slice(5)))) return LEGAL_MAP[k];

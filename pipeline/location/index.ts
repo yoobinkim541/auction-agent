@@ -26,17 +26,23 @@ interface GeocodeResult {
   bCode?: string;
 }
 
-async function kakaoGeocode(address: string): Promise<GeocodeResult | null> {
+/** Kakao Local API GET — 키 없거나 네트워크/비정상응답이면 null(throw-safe, graceful degradation). */
+async function kakaoGet<T>(path: string): Promise<T | null> {
   const key = process.env.KAKAO_REST_KEY;
   if (!key) return null;
-  const res = await fetch(`${KAKAO}/search/address.json?query=${encodeURIComponent(address)}`, {
-    headers: { Authorization: `KakaoAK ${key}` }, signal: AbortSignal.timeout(12000),
-  });
-  if (!res.ok) return null;
-  const j = (await res.json()) as {
+  try {
+    const res = await fetch(`${KAKAO}${path}`, {
+      headers: { Authorization: `KakaoAK ${key}` }, signal: AbortSignal.timeout(12000),
+    });
+    return res.ok ? ((await res.json()) as T) : null;
+  } catch { return null; }
+}
+
+async function kakaoGeocode(address: string): Promise<GeocodeResult | null> {
+  const j = await kakaoGet<{
     documents: { x: string; y: string; address?: { b_code?: string }; road_address?: { address_name?: string } }[];
-  };
-  const d = j.documents?.[0];
+  }>(`/search/address.json?query=${encodeURIComponent(address)}`);
+  const d = j?.documents?.[0];
   if (!d) return null;
   const bCode = d.address?.b_code;
   return {
@@ -101,27 +107,17 @@ function recentYearMonths(months: number): string[] {
 }
 
 async function kakaoCategoryCount(code: string, lat: number, lng: number, radius: number): Promise<number> {
-  const key = process.env.KAKAO_REST_KEY;
-  if (!key) return 0;
-  const res = await fetch(
-    `${KAKAO}/search/category.json?category_group_code=${code}&x=${lng}&y=${lat}&radius=${radius}&size=15`,
-    { headers: { Authorization: `KakaoAK ${key}` }, signal: AbortSignal.timeout(12000) },
+  const j = await kakaoGet<{ meta?: { total_count?: number } }>(
+    `/search/category.json?category_group_code=${code}&x=${lng}&y=${lat}&radius=${radius}&size=15`,
   );
-  if (!res.ok) return 0;
-  const j = (await res.json()) as { meta?: { total_count?: number } };
-  return j.meta?.total_count ?? 0;
+  return j?.meta?.total_count ?? 0;
 }
 
 async function nearestStation(lat: number, lng: number): Promise<{ name?: string; distanceM?: number } | null> {
-  const key = process.env.KAKAO_REST_KEY;
-  if (!key) return null;
-  const res = await fetch(
-    `${KAKAO}/search/category.json?category_group_code=SW8&x=${lng}&y=${lat}&radius=1500&sort=distance&size=1`,
-    { headers: { Authorization: `KakaoAK ${key}` }, signal: AbortSignal.timeout(12000) },
+  const j = await kakaoGet<{ documents: { place_name: string; distance: string }[] }>(
+    `/search/category.json?category_group_code=SW8&x=${lng}&y=${lat}&radius=1500&sort=distance&size=1`,
   );
-  if (!res.ok) return null;
-  const j = (await res.json()) as { documents: { place_name: string; distance: string }[] };
-  const d = j.documents?.[0];
+  const d = j?.documents?.[0];
   return d ? { name: d.place_name, distanceM: parseInt(d.distance, 10) } : null;
 }
 
