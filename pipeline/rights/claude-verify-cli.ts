@@ -8,6 +8,7 @@
  */
 import { spawn } from 'node:child_process';
 import type { VerifyArgs, VerifyOutput } from './claude-verify.ts';
+import { parseVerifyOutput } from './claude-verify.ts';
 
 export const VERIFY_CLI_MODEL = 'claude-cli(subscription)';
 
@@ -35,7 +36,7 @@ function buildPrompt(args: VerifyArgs): string {
     .join('\n');
 }
 
-function extractJson(text: string): VerifyOutput {
+export function extractJson(text: string): VerifyOutput {
   let t = text.trim();
   // 코드펜스 제거
   t = t.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
@@ -43,7 +44,7 @@ function extractJson(text: string): VerifyOutput {
   const s = t.indexOf('{');
   const e = t.lastIndexOf('}');
   if (s >= 0 && e > s) t = t.slice(s, e + 1);
-  return JSON.parse(t) as VerifyOutput;
+  return parseVerifyOutput(JSON.parse(t));
 }
 
 export async function verifyRightsCli(args: VerifyArgs, model?: string): Promise<VerifyOutput> {

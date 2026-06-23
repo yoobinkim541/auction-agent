@@ -37,6 +37,23 @@ export interface VerifyOutput {
   recommendedChecks: string[];
 }
 
+/** 외부(LLM API/CLI) 산출 객체를 VerifyOutput 형상으로 안전 정규화 — 필수 필드 누락/타입오류 시
+ *  하류 undefined 접근·잘못된 값 저장을 막는다(검증은 보조 기능이라 throw 대신 보정). API·CLI 두 경로 공유. */
+export function parseVerifyOutput(raw: unknown): VerifyOutput {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
+  const arr = <T>(v: unknown, map: (x: Record<string, unknown>) => T): T[] =>
+    Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => !!x && typeof x === 'object').map(map) : [];
+  return {
+    agrees: o.agrees === true,
+    discrepancies: arr(o.discrepancies, (d) => ({ field: str(d.field), engineSays: str(d.engineSays), concern: str(d.concern) })),
+    explanation: str(o.explanation),
+    riskSummary: str(o.riskSummary),
+    citations: arr(o.citations, (c) => ({ law: str(c.law), article: str(c.article), quote: str(c.quote) })),
+    recommendedChecks: Array.isArray(o.recommendedChecks) ? o.recommendedChecks.map(str).filter(Boolean) : [],
+  };
+}
+
 const OUTPUT_TOOL: Anthropic.Tool = {
   name: 'submit_verification',
   description: '권리분석 검증 결과를 제출한다.',
@@ -119,5 +136,5 @@ export async function verifyRights(args: VerifyArgs): Promise<VerifyOutput> {
     (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use' && b.name === 'submit_verification',
   );
   if (!toolUse) throw new Error('Claude가 submit_verification 도구를 호출하지 않았습니다');
-  return toolUse.input as VerifyOutput;
+  return parseVerifyOutput(toolUse.input);
 }
