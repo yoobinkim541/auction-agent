@@ -7,6 +7,7 @@ import {
   type ListingItem, type RightsObj, type LocationObj, type CrawlStatus,
 } from './api.ts';
 import { scoreClient, DEFAULT_CONFIG, type ScoreConfig, type ClientScore } from './scoring.ts';
+import { applyListingFilters, sortRows, type SortKey } from './filters.ts';
 import { acquisitionTaxRate } from './cost.ts';
 
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -59,7 +60,7 @@ const RISK: Record<string, { label: string; cls: string }> = {
 const pct = (n: number | null | undefined) => (n == null ? '-' : (n * 100).toFixed(1) + '%');
 const CONF: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' };
 
-type SortKey = 'score' | 'safety' | 'trueSafety' | 'sale' | 'price' | 'appraisal' | 'assumed' | 'gap' | 'fieldwork';
+// SortKey는 filters.ts에서 import
 const CFG_KEY = 'gm_score_config';
 const UI_KEY = 'gm_ui_state';
 
@@ -69,15 +70,7 @@ const SORT_DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
 };
 
 /** 임장 진행 가중치: 진행중(체크 일부) > 메모만 > 미시작 > 완료(끝난 건 뒤로). 진행도순 정렬·배지 공용. */
-function fieldworkRank(r: ListingItem): number {
-  const total = r.field_total ?? 0;
-  const done = r.field_done ?? 0;
-  const notes = r.field_notes ?? 0;
-  if (total > 0 && done >= total) return 1;          // 완료 → 맨 뒤
-  if (done > 0) return 1000 + done;                   // 진행중(많이 한 것 우선)
-  if (notes > 0) return 500 + notes;                  // 메모만
-  return 0;                                            // 미시작
-}
+// fieldworkRank는 filters.ts로 이동
 
 /** 임장 진행 배지 — 현장 체크를 시작한 매물에만 표시(미시작은 숨겨 목록을 깔끔히). */
 function FieldProgress({ r }: { r: ListingItem }) {
@@ -370,58 +363,11 @@ export default function App() {
 
   const view = useMemo(() => {
     const scored = rows.map((item) => ({ item, sc: scoreClient(item, cfg) }));
-    let v = scored;
-    // 조건 필터(통과 여부와 무관하게 항상 적용): 지역 · 가격대
-    if (cfg.regionKeywords.length) v = v.filter((x) => cfg.regionKeywords.some((k) => x.item.address.includes(k)));
-    if (cfg.priceMinEok > 0) v = v.filter((x) => (x.item.min_bid_price ?? 0) >= cfg.priceMinEok * 1e8);
-    if (cfg.priceMaxEok > 0) v = v.filter((x) => (x.item.min_bid_price ?? 0) <= cfg.priceMaxEok * 1e8);
-    if (cfg.apprMinEok > 0) v = v.filter((x) => (x.item.appraisal_value ?? 0) >= cfg.apprMinEok * 1e8);
-    if (cfg.apprMaxEok > 0) v = v.filter((x) => (x.item.appraisal_value ?? 0) <= cfg.apprMaxEok * 1e8);
-    if (hideExpired) v = v.filter((x) => !x.item.sale_date || x.item.sale_date >= TODAY);
-    if (hideIncomplete) v = v.filter((x) => !x.item.location?.report?.headline?.startsWith('[데이터 불완전]'));
-    if (onlyPassed) v = v.filter((x) => x.sc.passed);
-    if (onlyFavorite) v = v.filter((x) => x.item.is_favorite);
-    if (onlyZeroPi) v = v.filter((x) => x.item.location?.income?.zeroPiCandidate === true);
-    if (onlyConsider) v = v.filter((x) => x.item.location?.report?.recommendation === 'consider');
-    if (onlyPassedAvoid) v = v.filter((x) => x.sc.passed && x.item.location?.report?.recommendation === 'avoid');
-    if (onlyToday) v = v.filter((x) => x.item.sale_date === TODAY);
-    if (filterDate) v = v.filter((x) => x.item.sale_date === filterDate);
-    if (onlyUrgent) {
-      const sevenDaysStr = new Date(new Date(TODAY).getTime() + 7 * 86_400_000).toISOString().slice(0, 10);
-      v = v.filter((x) => x.item.sale_date && x.item.sale_date >= TODAY && x.item.sale_date <= sevenDaysStr);
-    }
-    if (maxGapEok > 0) v = v.filter((x) => {
-      const gap = x.item.location?.income?.gapInvestment;
-      return gap == null || gap <= maxGapEok * 1e8;
+    const filtered = applyListingFilters(scored, {
+      cfg, hideExpired, hideIncomplete, onlyPassed, onlyFavorite, onlyZeroPi, onlyConsider,
+      onlyPassedAvoid, onlyToday, filterDate, onlyUrgent, maxGapEok, onlyMultiRound, type, q, today: TODAY,
     });
-    if (onlyMultiRound) v = v.filter((x) => {
-      const rs = x.item.location?.sale_rounds ?? [];
-      const rnd = rs.find((s) => s.date === x.item.sale_date)?.round ?? (rs.length > 0 ? rs[rs.length - 1]!.round : null);
-      return (rnd != null && rnd >= 2) || (rs.length === 0 && (x.item.fail_count ?? 0) >= 1);
-    });
-    if (type !== 'all') v = v.filter((x) => x.item.property_type === type);
-    if (q.trim()) {
-      const qt = q.trim();
-      v = v.filter((x) => x.item.address.includes(qt) || x.item.case_no.includes(qt) || (x.item.court ?? '').includes(qt));
-    }
-    v.sort((a, b) => {
-      let diff = 0;
-      if (sort === 'safety') diff = (a.item.location?.safety_margin ?? -1) - (b.item.location?.safety_margin ?? -1);
-      else if (sort === 'sale') diff = (a.item.sale_date ?? '9999').localeCompare(b.item.sale_date ?? '9999');
-      else if (sort === 'trueSafety') diff = (a.item.location?.acquisition_cost?.trueSafetyMargin ?? -1) - (b.item.location?.acquisition_cost?.trueSafetyMargin ?? -1);
-      else if (sort === 'price') diff = (a.item.min_bid_price ?? Infinity) - (b.item.min_bid_price ?? Infinity);
-      else if (sort === 'appraisal') diff = (a.item.appraisal_value ?? 0) - (b.item.appraisal_value ?? 0);
-      else if (sort === 'assumed') diff = (a.item.rights?.assumed_amount ?? 0) - (b.item.rights?.assumed_amount ?? 0);
-      else if (sort === 'gap') {
-        const ga = a.item.location?.income?.gapInvestment ?? Infinity;
-        const gb = b.item.location?.income?.gapInvestment ?? Infinity;
-        diff = ga - gb;
-      }
-      else if (sort === 'fieldwork') diff = fieldworkRank(a.item) - fieldworkRank(b.item);
-      else diff = a.sc.totalScore - b.sc.totalScore;
-      return sortDir === 'asc' ? diff : -diff;
-    });
-    return v;
+    return sortRows(filtered, sort, sortDir);
   }, [rows, cfg, hideExpired, hideIncomplete, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyPassedAvoid, onlyUrgent, onlyToday, filterDate, maxGapEok, type, q, sort, sortDir]);
 
   const favCount = rows.filter((r) => r.is_favorite).length;
