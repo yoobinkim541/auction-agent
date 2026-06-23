@@ -30,6 +30,10 @@ const TAX_ASSUMPTION = { homeCountAfter: 1 } as const;
 
 const num = (v: string | number | null): number => (v == null ? 0 : typeof v === 'number' ? v : parseFloat(v));
 
+/** 시세 대비 현 최저가 안전마진(소수 5자리). 최저가 ≤0이면 null(호출부에서 기존값 유지). */
+const marginVsMinBid = (price: number, minBid: number): number | null =>
+  minBid > 0 ? Math.round(((price - minBid) / price) * 1e5) / 1e5 : null;
+
 /**
  * 매각물건명세서 "매각효력" 노트에서 임차인 정보 추출.
  * 임차권등기 유형의 임차인은 구조화 테이블(임차인현황) 대신 매각효력 자연어 문장에
@@ -181,7 +185,7 @@ async function main() {
   }
 
   // 마지막 정상 시세 캐시 — MOLIT 쿼터/차단으로 이번 분석이 시세를 못 낼 때 회귀 방지 + 임대 fallback 가동.
-  const { query } = await import('../shared/db.ts');
+  // (query는 상단에서 정적 import — 이전의 중복 동적 import 제거)
   const prevMarket = new Map<number, { price: number; conf: string | null; basis: string | null }>();
   for (const row of await query<{ listing_id: number; market_price: number | null; market_confidence: string | null; comp_basis: string | null }>(
     'select listing_id, market_price, market_confidence, comp_basis from gm_location_analysis where market_price is not null',
@@ -238,7 +242,7 @@ async function main() {
         }
         loc.marketPrice = siteMarket.price;
         loc.marketConfidence = 'high';
-        loc.safetyMargin = listing.minBidPrice > 0 ? Math.round(((siteMarket.price - listing.minBidPrice) / siteMarket.price) * 1e5) / 1e5 : loc.safetyMargin;
+        loc.safetyMargin = marginVsMinBid(siteMarket.price, listing.minBidPrice) ?? loc.safetyMargin;
       }
 
       // 시세 산출 실패(MOLIT 쿼터/차단 + 사이트 comps 없음) → 마지막 정상 시세 재사용(회귀 방지 + 임대 fallback 가동)
@@ -248,7 +252,7 @@ async function main() {
           loc.marketPrice = prev.price;
           loc.marketConfidence = (prev.conf as typeof loc.marketConfidence) ?? loc.marketConfidence;
           loc.compBasis = prev.basis ? `${prev.basis} (이전 분석값 유지 — 이번 회차 실거래 미조회)` : loc.compBasis;
-          loc.safetyMargin = listing.minBidPrice > 0 ? Math.round(((prev.price - listing.minBidPrice) / prev.price) * 1e5) / 1e5 : loc.safetyMargin;
+          loc.safetyMargin = marginVsMinBid(prev.price, listing.minBidPrice) ?? loc.safetyMargin;
         }
       }
 
