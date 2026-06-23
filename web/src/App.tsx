@@ -1,21 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapView } from './MapView.tsx';
-import { EvictionBlock, IncomeBlock, FieldVisitChecklist, ReportBlock } from './detail-blocks.tsx';
 import { CompareView } from './CompareView.tsx';
 import { ConfigPanel } from './ConfigPanel.tsx';
-import { CostCalculator } from './CostCalculator.tsx';
 import { FLAG_LABEL, TYPE_LABEL, RISK, RECO } from './labels.ts';
-import { SkeletonList, Notice, Section, ThSort, DDay, FieldProgress } from './ui.tsx';
+import { SkeletonList, Notice, ThSort, DDay, FieldProgress } from './ui.tsx';
 import {
   fetchDetail, triggerJob, fetchJobStatus, setFavorite,
-  apiBase, won, eok, pct,
-  type ListingItem, type RightsObj, type LocationObj,
+  apiBase, eok, pct,
+  type ListingItem,
 } from './api.ts';
 import { scoreClient, DEFAULT_CONFIG, type ScoreConfig, type ClientScore } from './scoring.ts';
 import { applyListingFilters, sortRows, type SortKey } from './filters.ts';
 import { resolveRound, saleDaysDiff } from './listing-utils.ts';
 import { useListings } from './useListings.ts';
-// acquisitionTaxRate(cost.ts)는 CostCalculator.tsx에서 사용
+import { Detail } from './Detail.tsx';
 
 const TODAY = new Date().toISOString().slice(0, 10);
 
@@ -28,7 +26,7 @@ const TODAY = new Date().toISOString().slice(0, 10);
 
 // FLAG_LABEL·TYPE_LABEL·RISK는 labels.ts에서 import
 // pct는 api.ts로 이동(won·eok와 포매터 통합)
-const CONF: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' };
+// CONF(시세 신뢰도 라벨)·Detail 컴포넌트는 Detail.tsx로 이동
 
 // SortKey는 filters.ts에서 import
 const CFG_KEY = 'gm_score_config';
@@ -660,264 +658,3 @@ function exportCSV(rows: Array<{ item: ListingItem; sc: ClientScore }>) {
 /** 목록 로딩 스켈레톤 — 빈 화면 대신 shimmer 행으로 체감 지연 완화. */
 // SkeletonList·Notice는 ui.tsx로 분리
 
-function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
-  row: ListingItem; onClose: () => void; onFav: () => void;
-  loading?: boolean; onPrev?: () => void; onNext?: () => void; position?: string;
-}) {
-  const rights: RightsObj | null = row.rights;
-  const loc: LocationObj | null = row.location;
-  const risk = RISK[rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
-
-  const [copied, setCopied] = useState(false);
-  const [fieldMode, setFieldMode] = useState(false);
-  const fieldwork = loc?.report?.fieldwork;
-  useEffect(() => { setFieldMode(false); }, [row.case_no]); // 매물 바뀌면 현장모드 해제
-  const copyCase = () => {
-    navigator.clipboard.writeText(row.case_no).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    }).catch(() => {});
-  };
-
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-      if (e.key === 'ArrowLeft' && onPrev) { e.preventDefault(); onPrev(); }
-      if (e.key === 'ArrowRight' && onNext) { e.preventDefault(); onNext(); }
-      if (e.key === 'o' && row.source_url && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as Element)?.tagName)) {
-        e.preventDefault();
-        window.open(row.source_url, '_blank', 'noopener,noreferrer');
-      }
-      if (e.key === 'c' && !e.metaKey && !e.ctrlKey && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as Element)?.tagName)) {
-        e.preventDefault();
-        copyCase();
-      }
-      if (e.key === 'f' && !e.metaKey && !e.ctrlKey && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as Element)?.tagName)) {
-        e.preventDefault();
-        onFav();
-      }
-    };
-    document.addEventListener('keydown', h);
-    return () => document.removeEventListener('keydown', h);
-  }, [onClose, onPrev, onNext, row.source_url, row.case_no, onFav]);
-
-  const detailRounds = loc?.sale_rounds ?? [];
-  const detailResolvedRound = resolveRound(detailRounds, row.sale_date, row.fail_count);
-  const currentRound = detailResolvedRound?.n ?? null;
-
-  return (
-    <div className="drawer-bg" onClick={onClose}>
-      <aside className={`drawer${fieldMode ? ' drawer-fieldmode' : ''}`} onClick={(e) => e.stopPropagation()}>
-        <div className="drawer-topbar">
-          <div className="drawer-nav">
-            <button className="nav-btn" disabled={!onPrev} onClick={onPrev} title="이전 (←)">‹</button>
-            {position && <span className="nav-pos">{position}</span>}
-            <button className="nav-btn" disabled={!onNext} onClick={onNext} title="다음 (→)">›</button>
-          </div>
-          {fieldwork && (
-            <button className={`fieldmode-btn${fieldMode ? ' on' : ''}`} onClick={() => setFieldMode((v) => !v)} title="현장에서 체크리스트만 크게 보기">
-              🚶 {fieldMode ? '분석 보기' : '현장모드'}
-            </button>
-          )}
-          <button className="close" onClick={onClose}>✕</button>
-        </div>
-
-        {fieldMode && fieldwork && (
-          <div className="fieldmode">
-            <h2><span className="star" onClick={onFav}>{row.is_favorite ? '★' : '☆'}</span> {row.case_no}</h2>
-            <p className="addr">{row.address} · {TYPE_LABEL[row.property_type]}</p>
-            {row.source_url && <p className="srclink"><a href={row.source_url} target="_blank" rel="noopener noreferrer">🔗 원본 상세페이지 ↗</a></p>}
-            <FieldVisitChecklist listingId={row.id} items={fieldwork.fieldChecklist} big />
-          </div>
-        )}
-        {loading && <p className="detail-loading">상세 분석 불러오는 중…</p>}
-        <h2>
-          <span className="star" onClick={onFav} title="관심 (단축키: f)">{row.is_favorite ? '★' : '☆'}</span>{' '}
-          {row.case_no}{' '}
-          <button className="copy-btn" onClick={copyCase} title="사건번호 복사 (단축키: c)">{copied ? '✓' : '⧉'}</button>{' '}
-          <span className={`badge ${risk.cls}`}>{risk.label}</span>
-        </h2>
-        <p className="addr">{row.address} · {TYPE_LABEL[row.property_type]} · {row.court}</p>
-        {row.source_url && (
-          <p className="srclink"><a href={row.source_url} target="_blank" rel="noopener noreferrer">🔗 원본 상세페이지에서 더블체크 ↗</a> <span className="key-hint" title="단축키">o</span></p>
-        )}
-        {row.source === 'courtauction' && (
-          <div className="court-notice" role="alert">
-            ⚠️ <strong>법원경매 원천</strong> — 등기부·임차인 데이터가 제공되지 않습니다. 권리분석은 참고 불가하며, 입찰 전 반드시 <a href="https://www.courtauction.go.kr" target="_blank" rel="noopener noreferrer">법원경매정보</a>에서 직접 확인하세요.
-          </div>
-        )}
-        {loc?.photos && loc.photos.length > 0 && (
-          <div className="gallery">
-            {loc.photos.map((src, i) => (
-              <a key={i} href={src} target="_blank" rel="noopener noreferrer" className="gphoto">
-                <img src={src} loading="lazy" alt={`매물 사진 ${i + 1}`} />
-              </a>
-            ))}
-          </div>
-        )}
-
-        <div className="kv">
-          <div><span>감정가</span><b>{eok(row.appraisal_value)}</b></div>
-          <div><span>최저매각가</span><b>{eok(row.min_bid_price)}</b></div>
-          {row.area_m2 != null && <div><span>전용면적</span><b>{row.area_m2.toFixed(2)}㎡{` (${(row.area_m2 / 3.3058).toFixed(1)}평)`}</b></div>}
-          <div><span>매각기일</span><b>{row.sale_date ?? '-'}</b></div>
-          {currentRound != null && (
-            <div><span>현재 차수</span><b className={currentRound > 1 ? 'danger' : ''} title={detailResolvedRound?.est ? '분석 후 재매각기일 갱신 — 차수 추정값' : ''}>{currentRound}차{detailResolvedRound?.est ? '+' : ''}{currentRound > 1 ? ` · 유찰 ${currentRound - 1}회${detailResolvedRound?.est ? '~' : ''}` : ''}</b></div>
-          )}
-          <div><span>추정시세</span><b>{loc?.market_price == null ? <span className="muted">미확보 — 안전마진 산정 불가</span> : <>{eok(loc.market_price)}{loc.market_confidence ? ` · 신뢰도 ${CONF[loc.market_confidence]}` : ''}</>}</b></div>
-          <div><span>예상낙찰가</span><b>{eok(loc?.expected_bid_price)}</b></div>
-          <div><span>안전마진(최저가)</span><b>{pct(loc?.safety_margin)}</b></div>
-          <div><span title="시세 − 총취득비용(취득세·명도비·채권·인수 포함)">진짜 안전마진</span><b className={(loc?.acquisition_cost?.trueSafetyMargin ?? 0) < 0 ? 'danger' : ''}>{pct(loc?.acquisition_cost?.trueSafetyMargin)}</b></div>
-          <div><span>총 인수금액</span><b className={rights?.assumed_amount ? 'danger' : ''}>{won(rights?.assumed_amount ?? 0)}</b></div>
-          <div><span>최대안전입찰가</span><b>{won(rights?.max_safe_bid)}</b></div>
-        </div>
-
-        {/* 목록(slim) report에는 checklist/fieldwork가 없음 → 풀 상세 로드 후에만 렌더(빈 드로어 크래시 방지) */}
-        {loc?.report && Array.isArray(loc.report.checklist) && <ReportBlock report={loc.report} listingId={row.id} />}
-
-        <Section title="권리분석">
-          <p className="muted">말소기준권리: {rights?.malso_basis?.note ?? '-'}</p>
-          {rights?.assumed_breakdown && rights.assumed_breakdown.length > 0 && (
-            <ul className="list">
-              {rights.assumed_breakdown.map((b, i) => (
-                <li key={i}><b className="danger">{won(b.amount)}</b> — {b.label}: {b.reason}</li>
-              ))}
-            </ul>
-          )}
-          {rights?.classified && (
-            <table className="mini">
-              <thead><tr><th>권리</th><th>접수일</th><th>처리</th><th>근거</th></tr></thead>
-              <tbody>
-                {rights.classified.map((c, i) => (
-                  <tr key={i}>
-                    <td>{c.entry.kind}</td><td className="mono">{c.entry.receiptDate}</td>
-                    <td>{c.disposition === 'assumed' ? <span className="danger">인수</span> : '소멸'}</td>
-                    <td className="muted">{c.reason}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-          {rights?.tenants && rights.tenants.length > 0 && (
-            <div className="tenants">
-              <h4>임차인</h4>
-              {rights.tenants.map((t, i) => (
-                <div key={i} className="tenant">
-                  {t.tenant.name ?? '임차인'} · 보증금 {won(t.tenant.deposit)} ·
-                  {t.hasOpposition ? <span className="danger"> 대항력 있음</span> : ' 대항력 없음'}
-                  {t.isSmallTenant ? ' · 소액임차인' : ''}
-                </div>
-              ))}
-            </div>
-          )}
-          {rights?.red_flags && rights.red_flags.length > 0 && (
-            <div className="flags">
-              {rights.red_flags.map((f, i) => <span key={i} className={`flag flag-${f.severity}`}>{f.message}</span>)}
-            </div>
-          )}
-          {rights?.warnings && rights.warnings.length > 0 && (
-            <ul className="warns">{rights.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
-          )}
-        </Section>
-
-        {loc?.acquisition_cost?.bidPrice && <CostCalculator row={row} loc={loc} />}
-        {loc?.income && <IncomeBlock income={loc.income} />}
-        {loc?.eviction && <EvictionBlock ev={loc.eviction} />}
-
-        {loc?.land_use_flags && loc.land_use_flags.length > 0 && (
-          <Section title="토지이용 규제 · 이슈">
-            <div className="flags">
-              {loc.land_use_flags.map((f, i) => (
-                <span key={i} className={`flag flag-luf-${f.kind}`} title={f.impact}>
-                  {f.kind === 'opportunity' ? '🟢' : f.kind === 'risk' ? '🔴' : 'ℹ️'} {f.label}
-                </span>
-              ))}
-            </div>
-            <ul className="warns">
-              {loc.land_use_flags.filter((f) => f.kind !== 'info' && f.impact).map((f, i) => (
-                <li key={i}><b>{f.label}</b>: {f.impact}</li>
-              ))}
-            </ul>
-          </Section>
-        )}
-
-        <Section title="입지분석">
-          {loc?.comp_basis && <p className="muted">시세 비교군: {loc.comp_basis}</p>}
-          <div className="kv">
-            <div><span>최근접역</span><b>{loc?.transit?.nearestStation ?? '-'}{loc?.transit?.walkMinutes ? ` (도보 ${loc.transit.walkMinutes}분)` : ''}</b></div>
-            <div><span>학교/학원</span><b>{loc?.schools?.schoolCount ?? '-'} / {loc?.schools?.academyCount ?? '-'}</b></div>
-          </div>
-          {loc?.transit?.stations && loc.transit.stations.length > 0 && (
-            <div className="amen">{loc.transit.stations.map((s, i) => <span key={i}>{s.line} {s.station} {s.distanceM}m</span>)}</div>
-          )}
-          {loc?.building && (
-            <p className="muted">
-              건물: {loc.building.mainUse ?? ''} {loc.building.households ? `${loc.building.households}세대` : ''}
-              {loc.building.approvalDate ? ` · 사용승인 ${loc.building.approvalDate}` : ''}
-              {loc.building.floorsAbove ? ` · 지상${loc.building.floorsAbove}/지하${loc.building.floorsBelow ?? 0}층` : ''}
-              {loc.building.far ? ` · 용적률 ${loc.building.far}%` : ''}
-            </p>
-          )}
-          {loc?.site_comps && loc.site_comps.length > 0 && (
-            <>
-              <h4>동일건물 실거래 (사이트)</h4>
-              <table className="mini">
-                <thead><tr><th>계약월</th><th>전용</th><th>층</th><th className="num">거래가</th></tr></thead>
-                <tbody>
-                  {loc.site_comps.slice(0, 8).map((c, i) => (
-                    <tr key={i}><td className="mono">{c.dealYm}</td><td>{c.areaM2}㎡{c.pyeong ? `(${c.pyeong}평)` : ''}</td><td>{c.floor ?? '-'}</td><td className="num">{(c.dealManwon / 10000).toFixed(2)}억</td></tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-          {loc?.sale_rounds && loc.sale_rounds.length > 0 && (
-            <>
-              <h4>매각기일 차수</h4>
-              <div className="amen">{loc.sale_rounds.map((s, i) => <span key={i} className={i === 0 ? 'flag-high' : ''}>{s.round}차 {s.date} {eok(s.minPrice)}{s.ratioPct ? ` (${s.ratioPct}%↓)` : ''}</span>)}</div>
-            </>
-          )}
-          {loc?.expected_bid_basis && <p className="muted">예상낙찰가 근거: {loc.expected_bid_basis}</p>}
-          {loc?.amenities && (
-            <div className="amen">{Object.entries(loc.amenities).map(([k, v]) => <span key={k}>{k}: {v}</span>)}</div>
-          )}
-          {loc?.dev_signals && loc.dev_signals.length > 0 && (
-            <div className="amen">{loc.dev_signals.map((s, i) => <span key={i}>{s}</span>)}</div>
-          )}
-          {loc?.admin_offices && Object.keys(loc.admin_offices).length > 0 && (
-            <p className="muted">관할: {Object.entries(loc.admin_offices).map(([k, v]) => `${k} ${v}`).join(' · ')}</p>
-          )}
-        </Section>
-        <div className="drawer-shortcuts">
-          <span title="이전 매물">← 이전</span>
-          <span title="다음 매물">→ 다음</span>
-          <span title="관심 토글">f 관심</span>
-          <span title="원본 페이지 열기">o 원본</span>
-          <span title="사건번호 복사">c 복사</span>
-          <span title="닫기">Esc 닫기</span>
-        </div>
-      </aside>
-    </div>
-  );
-}
-
-// ThSort·Section은 ui.tsx로 분리
-
-// EvictionBlock(+DIFF)은 detail-blocks.tsx로 분리
-
-// IncomeBlock은 detail-blocks.tsx로 분리
-
-// RECO→labels.ts, CAT_LABEL·SEV_ICON·LRISK→detail-blocks.tsx로 이동
-
-/** 매물별 종합 보고서 + 입찰 전 필수 확인사항 */
-/**
- * 현장 임장 체크리스트 — 매물 맞춤 확인 항목별로 체크 + 메모.
- * 입력은 gm_fieldwork_notes(매물ID, 항목라벨)에 저장돼 매일 재분석에도 보존된다.
- * 체크 토글은 즉시 저장, 메모는 입력 후 포커스 해제(blur) 시 저장.
- */
-// FieldVisitChecklist는 detail-blocks.tsx로 이동
-
-// ReportBlock은 detail-blocks.tsx로 이동
-
-/** 희망 낙찰가 입력 → 취득세·총취득비용·진짜 안전마진 실시간 계산기 (더낙찰옥션 추가비용표 + 순마진). */
-// CostCalculator는 ./CostCalculator.tsx로 분리
