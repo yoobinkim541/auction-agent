@@ -43,4 +43,18 @@ describe('web scoreClient', () => {
     const r = scoreClient(mk(loc({ report: { dangerCount: 0, headline: '[데이터 불완전] 등기 미수집' } })), DEFAULT_CONFIG);
     expect(r.passed).toBe(false);
   });
+
+  it('진짜마진 부족 → 사유에 "진짜마진" 표기(서버 label과 일치)', () => {
+    // trueSafetyMargin(0.05) < minSafetyMargin(0.1) — raw margin은 0.3으로 충분
+    const r = scoreClient(mk(loc({ safety_margin: 0.3, acquisition_cost: { trueSafetyMargin: 0.05 } })), DEFAULT_CONFIG);
+    expect(r.passed).toBe(false);
+    expect(r.reasons.some((x) => x.startsWith('진짜마진'))).toBe(true);
+    expect(r.reasons.every((x) => !x.startsWith('안전마진'))).toBe(true);
+  });
+
+  it('진짜마진 없을 때 raw 안전마진 부족 → 사유에 "안전마진" 표기', () => {
+    const r = scoreClient(mk(loc({ safety_margin: 0.05, acquisition_cost: null })), DEFAULT_CONFIG);
+    expect(r.passed).toBe(false);
+    expect(r.reasons.some((x) => x.startsWith('안전마진'))).toBe(true);
+  });
 });

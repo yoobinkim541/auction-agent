@@ -81,7 +81,11 @@ export function scoreClient(item: ListingItem, cfg: ScoreConfig): ClientScore {
   if (cfg.apprMaxEok > 0 && appr > cfg.apprMaxEok * 1e8) { passed = false; reasons.push(`감정가>${cfg.apprMaxEok}억`); }
   if (cfg.requireCleanRights && assumed > 0) { passed = false; reasons.push(`인수금액 ${(assumed / 1e8).toFixed(1)}억`); }
   if (grade === 'review_required' && !cfg.includeReviewRequired) { passed = false; reasons.push('검토필요(특수권리)'); }
-  if (margin != null && margin < cfg.minSafetyMargin) { passed = false; reasons.push(`안전마진 ${(margin * 100).toFixed(0)}%<${(cfg.minSafetyMargin * 100).toFixed(0)}%`); }
+  if (margin != null && margin < cfg.minSafetyMargin) {
+    passed = false;
+    const marginLabel = item.location?.acquisition_cost?.trueSafetyMargin != null ? '진짜마진' : '안전마진';
+    reasons.push(`${marginLabel} ${(margin * 100).toFixed(0)}%<${(cfg.minSafetyMargin * 100).toFixed(0)}%`);
+  }
   if (margin == null) {
     if (cfg.requireMarketPrice) { passed = false; reasons.push('시세 미확보'); }
     else reasons.push('시세 미확보(참고)');

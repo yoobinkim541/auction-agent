@@ -74,8 +74,6 @@ interface MolitItem {
   floor?: number | string; buildYear?: number | string; umdNm?: string;
   aptNm?: string; mhouseNm?: string; offiNm?: string;
 }
-interface MolitResponse { response?: { body?: { items?: { item?: MolitItem | MolitItem[] } } } }
-
 function parseMolitJson(item: MolitItem | MolitItem[] | undefined): Comparable[] {
   const items = Array.isArray(item) ? item : item ? [item] : [];
   const comps: Comparable[] = [];
