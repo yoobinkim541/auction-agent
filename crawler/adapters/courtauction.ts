@@ -42,7 +42,7 @@ const METRO_COURTS: { code: string; name: string }[] = [
 ];
 
 /** 필터 regions 키워드로 대상 법원 추린다 ('서울' → 서울 5개 법원 포함) */
-function filterCourts(regions: string[]): { code: string; name: string }[] {
+export function filterCourts(regions: string[]): { code: string; name: string }[] {
   if (!regions.length) return [...METRO_COURTS];
   return METRO_COURTS.filter((c) => regions.some((r) => c.name.includes(r) || c.code === r));
 }
@@ -131,7 +131,7 @@ async function initSession(cookies: CookieJar): Promise<void> {
 
 // ── 데이터 정규화 ─────────────────────────────────────────────────────
 /** 용도코드 → PropertyType (법원경매 고유 코드 체계) */
-function mapUsgCd(cd: string | undefined, bigo: string | undefined): Listing['propertyType'] {
+export function mapUsgCd(cd: string | undefined, bigo: string | undefined): Listing['propertyType'] {
   const s = `${cd ?? ''} ${bigo ?? ''}`;
   if (/아파트|APT/.test(s)) return 'apartment';
   if (/오피스텔/.test(s)) return 'officetel';
@@ -143,15 +143,18 @@ function mapUsgCd(cd: string | undefined, bigo: string | undefined): Listing['pr
 }
 
 /** 법원경매 날짜 문자열 (YYYYMMDD or YYYY.MM.DD) → ISO YYYY-MM-DD */
-function parseCourtDate(s: string | undefined): string | undefined {
+export function parseCourtDate(s: string | undefined): string | undefined {
   if (!s) return undefined;
   const clean = s.replace(/\./g, '');
-  if (/^\d{8}$/.test(clean)) return `${clean.slice(0, 4)}-${clean.slice(4, 6)}-${clean.slice(6, 8)}`;
+  if (/^\d{8}$/.test(clean)) {
+    // YYYYMMDD → YYYY.MM.DD을 parseKoreanDate로 위임하여 불가능한 날짜 거부
+    return parseKoreanDate(`${clean.slice(0, 4)}.${clean.slice(4, 6)}.${clean.slice(6, 8)}`);
+  }
   return parseKoreanDate(s);
 }
 
 /** 금액 문자열("1,234,567,000") → 숫자 */
-function parseMoney(s: string | undefined): number {
+export function parseMoney(s: string | undefined): number {
   if (!s) return 0;
   const n = parseInt(s.replace(/,/g, '').trim(), 10);
   return isNaN(n) ? 0 : n;
