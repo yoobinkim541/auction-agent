@@ -29,8 +29,14 @@ export function marginColor(r: ListingItem): string {
   return '#f04545';
 }
 
-/** sale_date까지 남은 일수(음수=지남). today 기본=오늘(로컬 ISO 날짜). */
-export function saleDaysDiff(dateStr: string | null | undefined, today: string = new Date().toISOString().slice(0, 10)): number | null {
+/** 로컬 날짜 YYYY-MM-DD — UTC 기준 toISOString()은 KST 00:00~09:00 구간에서 하루 어긋남. */
+function localDateISO(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** sale_date까지 남은 일수(음수=지남). today 기본=로컬 오늘(KST). */
+export function saleDaysDiff(dateStr: string | null | undefined, today: string = localDateISO()): number | null {
   if (!dateStr) return null;
   return Math.round((new Date(dateStr).getTime() - new Date(today).getTime()) / 86_400_000);
 }
