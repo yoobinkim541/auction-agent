@@ -45,14 +45,23 @@ describe('mapPropertyType', () => {
 
 describe('mapRightKind', () => {
   it('근저당', () => expect(mapRightKind('근저당권설정')).toBe('geunjeodang'));
+  it('저당(근저당 아님)', () => expect(mapRightKind('저당권설정')).toBe('jeodang'));
   it('가압류', () => expect(mapRightKind('가압류')).toBe('gaapryu'));
   it('압류(가압류 아님)', () => expect(mapRightKind('압류')).toBe('apryu'));
+  it('담보가등기 → dambo_gadeungi(보전가등기와 구별)', () => expect(mapRightKind('담보가등기')).toBe('dambo_gadeungi'));
   it('경매개시', () => expect(mapRightKind('임의경매개시결정')).toBe('gyeongmae_gaesi'));
+  it('전세권', () => expect(mapRightKind('전세권설정')).toBe('jeonse'));
   it('철거가처분', () => expect(mapRightKind('건물철거 및 토지인도 가처분')).toBe('cheolgeo_gacheobun'));
-  it('가등기', () => expect(mapRightKind('소유권이전청구권가등기')).toBe('bowjeon_gadeungi'));
+  it('가등기(보전) → bowjeon_gadeungi', () => expect(mapRightKind('소유권이전청구권가등기')).toBe('bowjeon_gadeungi'));
+  it('임차권등기', () => expect(mapRightKind('임차권등기명령')).toBe('imchagwon'));
+  it('빈값 → other', () => expect(mapRightKind('')).toBe('other'));
 });
 
 describe('parseAreaToM2', () => {
   it('㎡', () => expect(parseAreaToM2('84.95㎡')).toBe(84.95));
+  it('m2 ASCII', () => expect(parseAreaToM2('84.95m2')).toBe(84.95));
+  it('m² 유니코드', () => expect(parseAreaToM2('59.94m²')).toBe(59.94));
   it('평 환산', () => expect(parseAreaToM2('25평')).toBeCloseTo(82.64, 1));
+  it('빈값 → undefined', () => expect(parseAreaToM2('')).toBeUndefined());
+  it('null → undefined', () => expect(parseAreaToM2(null)).toBeUndefined());
 });

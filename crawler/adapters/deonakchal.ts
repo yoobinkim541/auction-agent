@@ -185,8 +185,8 @@ async function scrapeOne(page: Page, c: ParsedRow): Promise<ScrapedListing> {
   const docs: ListingDoc[] = [];
   let listing = c.listing;
   if (c.productId) {
-    try {
-      const d = await parseDetail(page, c.productId);
+    // 상세 데이터를 docs·listing에 적용하는 헬퍼 — 세션만료 재시도 시 중복 방지
+    const applyDetail = (d: DetailData) => {
       const allNotes = [...c.notes, ...d.notes];
       listing = { ...listing, sourceUrl: `${BASE}/auction/view.html?product_id=${c.productId}` };
       docs.push({
@@ -196,9 +196,25 @@ async function scrapeOne(page: Page, c: ParsedRow): Promise<ScrapedListing> {
       docs.push({ caseNo: listing.caseNo, docType: 'sale_statement', parsedJson: { tenants: d.tenants, notes: allNotes } });
       if (d.appraisal) docs.push({ caseNo: listing.caseNo, docType: 'appraisal_report', parsedJson: d.appraisal });
       if (d.siteMetrics && Object.keys(d.siteMetrics).length) docs.push({ caseNo: listing.caseNo, docType: 'site_metrics', parsedJson: d.siteMetrics });
+    };
+    try {
+      applyDetail(await parseDetail(page, c.productId));
     } catch (e) {
       if (e instanceof SiteBlockedError) throw e; // 차단은 상위로 전파해 전체 중단
-      console.warn(`[deonakchal] 상세 파싱 실패 ${c.listing.caseNo}: ${e}`);
+      if (e instanceof SessionExpiredError) {
+        // 세션 만료: 재로그인 후 1회 재시도(동일 컨텍스트라 재로그인하면 모든 워커에 반영됨)
+        console.warn(`[deonakchal] 세션 만료 감지 — 재로그인 후 재시도 ${c.listing.caseNo}`);
+        try {
+          await ensureLogin(page); // SiteBlockedError는 그대로 상위 전파
+          applyDetail(await parseDetail(page, c.productId));
+          return { listing, docs: docs.length ? docs : undefined };
+        } catch (retryErr) {
+          if (retryErr instanceof SiteBlockedError) throw retryErr;
+          console.warn(`[deonakchal] 재로그인 후 재시도 실패 ${c.listing.caseNo}: ${retryErr}`);
+        }
+      } else {
+        console.warn(`[deonakchal] 상세 파싱 실패 ${c.listing.caseNo}: ${e}`);
+      }
       if (c.notes.length) docs.push({ caseNo: listing.caseNo, docType: 'rights_summary', parsedJson: { notes: c.notes } });
     }
   } else if (c.notes.length) {
@@ -438,6 +454,10 @@ export function extractSiteMetrics(body: string, raw: string, subjectName?: stri
 export class SiteBlockedError extends Error {
   constructor() { super('SITE_BLOCKED: 더낙찰옥션 비정상접속 차단'); this.name = 'SiteBlockedError'; }
 }
+/** 세션 만료(로그인 폼 리다이렉트) — scrapeOne 에서 ensureLogin 후 1회 재시도 */
+export class SessionExpiredError extends Error {
+  constructor() { super('SESSION_EXPIRED: 세션 만료 — 재로그인 필요'); this.name = 'SessionExpiredError'; }
+}
 
 export async function parseDetail(page: Page, productId: string): Promise<DetailData> {
   // 사람처럼: 페이지를 열고 → 잠시 보고 → 천천히 스크롤(읽기). 빈 페이지면 1회 새로고침 재시도.
@@ -446,14 +466,23 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
     await rateGate(); // 전역 속도 상한(설정 무관 백스톱)
     await page.goto(`${BASE}/auction/view.html?product_id=${productId}`, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
     await wait(rnd(900, 1900)); // 페이지 훑어보는 텀
-    const probe = await page.evaluate(() => ({ html: document.documentElement.innerHTML.slice(0, 600), tables: document.querySelectorAll('table').length })).catch(() => ({ html: '', tables: 0 }));
-    if (BLOCK_RE.test(probe.html)) throw new SiteBlockedError();
+    const probe = await page.evaluate((blkSrc) => {
+      const html = document.documentElement.innerHTML;
+      return { blocked: new RegExp(blkSrc, 'i').test(html), tables: document.querySelectorAll('table').length, logged: html.includes('로그아웃') };
+    }, BLOCK_RE.source).catch(() => ({ blocked: false, tables: 0, logged: true }));
+    if (probe.blocked) throw new SiteBlockedError();
+    // 로그아웃 마커 없음 = 세션 만료(로그인 폼 리다이렉트) — 더 기다려도 의미 없음
+    if (!probe.logged) throw new SessionExpiredError();
     if (probe.tables > 0) { loaded = true; break; }
     // 표 미로딩: 사람처럼 잠깐 더 기다렸다 확인(최대 ~6초)
     for (let i = 0; i < 12 && !loaded; i++) {
       await wait(500);
-      const r2 = await page.evaluate((src) => ({ blk: new RegExp(src, 'i').test(document.documentElement.innerHTML), n: document.querySelectorAll('table').length }), BLOCK_RE.source).catch(() => ({ blk: false, n: 0 }));
+      const r2 = await page.evaluate((src) => {
+        const html = document.documentElement.innerHTML;
+        return { blk: new RegExp(src, 'i').test(html), n: document.querySelectorAll('table').length, logged: html.includes('로그아웃') };
+      }, BLOCK_RE.source).catch(() => ({ blk: false, n: 0, logged: true }));
       if (r2.blk) throw new SiteBlockedError();
+      if (r2.n > 0 && !r2.logged) throw new SessionExpiredError();
       if (r2.n > 0) loaded = true;
     }
     if (!loaded && attempt === 1) await wait(rnd(4000, 8000)); // 새로고침 전 사람처럼 텀
