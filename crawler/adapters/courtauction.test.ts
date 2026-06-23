@@ -15,9 +15,17 @@ describe('filterCourts', () => {
     expect(res).toHaveLength(1);
     expect(res[0]!.code).toBe('B000240');
   });
-  it('경기 → 수원+성남+의정부 3개', () => {
-    const res = filterCourts(['경기', '수원', '성남', '의정부']);
-    expect(res.length).toBeGreaterThanOrEqual(3);
+  it('경기 → 수원+성남+의정부 3개 (광역 키워드 확장)', () => {
+    const res = filterCourts(['경기']);
+    expect(res.map((c) => c.name)).toEqual(
+      expect.arrayContaining(['수원지방법원', '성남지원', '의정부지방법원']),
+    );
+    expect(res).toHaveLength(3);
+  });
+  it('DEFAULT_FILTER 서울+경기+인천 → 수도권 9개 전부', () => {
+    // 이 조합이 수도권 모든 법원을 커버해야 함 — 회귀 방지
+    const res = filterCourts(['서울', '경기', '인천']);
+    expect(res).toHaveLength(9);
   });
   it('법원코드 직접 입력', () => {
     const res = filterCourts(['B000210']);

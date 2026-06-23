@@ -41,10 +41,19 @@ const METRO_COURTS: { code: string; name: string }[] = [
   { code: 'B000251', name: '성남지원' },
 ];
 
-/** 필터 regions 키워드로 대상 법원 추린다 ('서울' → 서울 5개 법원 포함) */
+// '경기' → '의정부'+'수원'+'성남' 처럼 광역 지역명 → 세부 매칭 키워드 확장
+const REGION_EXPAND: Record<string, string[]> = {
+  경기: ['의정부', '수원', '성남'],
+  수도권: ['서울', '의정부', '인천', '수원', '성남'],
+};
+
+/** 필터 regions 키워드로 대상 법원 추린다.
+ *  '서울' → 서울 5개, '경기' → 의정부·수원·성남, '인천' → 인천.
+ *  DEFAULT_FILTER의 ['서울','경기','인천'] → 수도권 9개 전부 포함. */
 export function filterCourts(regions: string[]): { code: string; name: string }[] {
   if (!regions.length) return [...METRO_COURTS];
-  return METRO_COURTS.filter((c) => regions.some((r) => c.name.includes(r) || c.code === r));
+  const expanded = regions.flatMap((r) => [r, ...(REGION_EXPAND[r] ?? [])]);
+  return METRO_COURTS.filter((c) => expanded.some((r) => c.name.includes(r) || c.code === r));
 }
 
 // ── 휴먼 페이싱 ─────────────────────────────────────────────────────────

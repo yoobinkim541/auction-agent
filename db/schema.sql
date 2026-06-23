@@ -162,11 +162,12 @@ create table if not exists gm_crawl_runs (
   region     text,
   n_found    int default 0,
   n_new      int default 0,
-  status     text not null default 'running' check (status in ('running','ok','error')),
+  status     text not null default 'running' check (status in ('running','ok','error','blocked')),
   error      text,
   started_at timestamptz not null default now(),
   finished_at timestamptz
 );
+create index if not exists gm_crawl_runs_started_idx on gm_crawl_runs (source, started_at desc);
 
 -- 국토부(MOLIT) 실거래 원자료 영구 캐시 — 법정동·월 단위. 개발계정 일일쿼터 소진 방지.
 -- 과거 월의 신고는 사실상 불변 → 한 번 받으면 재호출 없이 income/시세 분석 재실행 가능.
