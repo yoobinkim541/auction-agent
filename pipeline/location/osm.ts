@@ -43,31 +43,42 @@ function haversine(la1: number, lo1: number, la2: number, lo2: number): number {
   return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 }
 
-// 카테고리: [라벨, overpass selector, 반경m]
-const CATS: [string, string, number][] = [
-  ['지하철·기차역', 'node["railway"="station"]', 1200],
-  ['마트', 'node["shop"="supermarket"]', 1000],
-  ['편의점', 'node["shop"="convenience"]', 500],
-  ['병원', 'nwr["amenity"="hospital"]', 1500],
-  ['약국', 'node["amenity"="pharmacy"]', 800],
-  ['학교', 'nwr["amenity"="school"]', 1000],
-  ['어린이집·유치원', 'nwr["amenity"="kindergarten"]', 800],
-  ['공원', 'nwr["leisure"="park"]', 1000],
-  ['카페', 'node["amenity"="cafe"]', 500],
+// 카테고리 정의: {라벨, overpass 요소(node/nwr/way), 태그 key, 값(정확 문자열 또는 정규식), 반경m}.
+// tally가 이 정의로 직접 태그를 매칭하고 overpass selector도 여기서 생성 — selector 문자열 역파싱 제거.
+export interface PoiCat { label: string; osm: 'node' | 'nwr' | 'way'; k: string; v: string | RegExp; radius: number }
+
+// 생활인프라(반경 내 개수)
+const CATS: PoiCat[] = [
+  { label: '지하철·기차역', osm: 'node', k: 'railway', v: 'station', radius: 1200 },
+  { label: '마트', osm: 'node', k: 'shop', v: 'supermarket', radius: 1000 },
+  { label: '편의점', osm: 'node', k: 'shop', v: 'convenience', radius: 500 },
+  { label: '병원', osm: 'nwr', k: 'amenity', v: 'hospital', radius: 1500 },
+  { label: '약국', osm: 'node', k: 'amenity', v: 'pharmacy', radius: 800 },
+  { label: '학교', osm: 'nwr', k: 'amenity', v: 'school', radius: 1000 },
+  { label: '어린이집·유치원', osm: 'nwr', k: 'amenity', v: 'kindergarten', radius: 800 },
+  { label: '공원', osm: 'nwr', k: 'leisure', v: 'park', radius: 1000 },
+  { label: '카페', osm: 'node', k: 'amenity', v: 'cafe', radius: 500 },
 ];
 // 소음·혐오(근접 시 플래그)
-const NUISANCE: [string, string, number][] = [
-  ['고압 송전탑 인접', 'node["power"="tower"]', 300],
-  ['대로변(소음)', 'way["highway"~"^(motorway|trunk|primary)$"]', 80],
-  ['철도 인접(소음)', 'way["railway"="rail"]', 150],
-  ['공장 인접', 'nwr["landuse"="industrial"]', 400],
+const NUISANCE: PoiCat[] = [
+  { label: '고압 송전탑 인접', osm: 'node', k: 'power', v: 'tower', radius: 300 },
+  { label: '대로변(소음)', osm: 'way', k: 'highway', v: /^(motorway|trunk|primary)$/, radius: 80 },
+  { label: '철도 인접(소음)', osm: 'way', k: 'railway', v: 'rail', radius: 150 },
+  { label: '공장 인접', osm: 'nwr', k: 'landuse', v: 'industrial', radius: 400 },
 ];
 
+/** OSM 태그가 카테고리 정의와 일치하는지(정확값 또는 정규식). */
+export const tagMatches = (cat: PoiCat, tags: Record<string, string>): boolean => {
+  const val = tags[cat.k];
+  if (val == null) return false;
+  return cat.v instanceof RegExp ? cat.v.test(val) : val === cat.v;
+};
+/** PoiCat → overpass selector(around 포함). */
+export const overpassSelector = (cat: PoiCat, lat: number, lng: number): string =>
+  `${cat.osm}["${cat.k}"${cat.v instanceof RegExp ? `~"${cat.v.source}"` : `="${cat.v}"`}](around:${cat.radius},${lat},${lng});`;
+
 export async function fetchPoiCounts(lat: number, lng: number): Promise<PoiResult | null> {
-  const parts = [
-    ...CATS.map(([, sel, r]) => `${sel}(around:${r},${lat},${lng});`),
-    ...NUISANCE.map(([, sel, r]) => `${sel}(around:${r},${lat},${lng});`),
-  ].join('');
+  const parts = [...CATS, ...NUISANCE].map((c) => overpassSelector(c, lat, lng)).join('');
   const query = `[out:json][timeout:25];(${parts});out tags center;`;
   for (const ep of OVERPASS_MIRRORS) {
     try {
@@ -93,27 +104,22 @@ function tally(els: OsmEl[], lat: number, lng: number): PoiResult {
   const nearest: Record<string, number> = {};
   const noise = new Set<string>();
   const schools = { elementary: 0, middle: 0, high: 0 };
-  for (const [label] of CATS) amenities[label] = 0;
+  for (const c of CATS) amenities[c.label] = 0;
   for (const e of els) {
     const t = e.tags ?? {};
     const ll = e.lat != null ? { lat: e.lat, lon: e.lon! } : e.center;
     const dist = ll ? haversine(lat, lng, ll.lat, ll.lon) : null;
-    for (const [label, sel] of CATS) {
-      const m = sel.match(/\["(\w+)"="([^"]+)"\]/);
-      if (m && t[m[1]!] === m[2]) {
-        amenities[label] = (amenities[label] ?? 0) + 1;
-        if (dist != null && (nearest[label] == null || dist < nearest[label]!)) nearest[label] = dist;
-        if (label === '학교') {
-          const nm = t['name'] ?? '';
-          if (/초등/.test(nm)) schools.elementary++; else if (/중학교|중학/.test(nm)) schools.middle++; else if (/고등|고교/.test(nm)) schools.high++;
-        }
-        break;
+    for (const c of CATS) {
+      if (!tagMatches(c, t)) continue;
+      amenities[c.label] = (amenities[c.label] ?? 0) + 1;
+      if (dist != null && (nearest[c.label] == null || dist < nearest[c.label]!)) nearest[c.label] = dist;
+      if (c.label === '학교') {
+        const nm = t['name'] ?? '';
+        if (/초등/.test(nm)) schools.elementary++; else if (/중학교|중학/.test(nm)) schools.middle++; else if (/고등|고교/.test(nm)) schools.high++;
       }
+      break;
     }
-    if (t.power === 'tower') noise.add('고압 송전탑 인접');
-    if (t.highway && /^(motorway|trunk|primary)$/.test(t.highway)) noise.add('대로변(소음)');
-    if (t.railway === 'rail') noise.add('철도 인접(소음)');
-    if (t.landuse === 'industrial') noise.add('공장 인접');
+    for (const c of NUISANCE) if (tagMatches(c, t)) noise.add(c.label);
   }
   for (const k of Object.keys(amenities)) if (amenities[k] === 0) delete amenities[k];
   const stM = nearest['지하철·기차역'];
