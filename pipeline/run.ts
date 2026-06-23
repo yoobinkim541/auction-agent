@@ -15,7 +15,7 @@ import type { Listing, RightsInput, RegistryEntry, Tenant, SiteMetrics } from '.
 import { analyzeRights } from './rights/engine.ts';
 import { analyzeLocation } from './location/index.ts';
 import { scoreListing, maxSafeBid, DEFAULT_SCORE_CONFIG } from './select/score.ts';
-import { computeAcquisitionCost, expectedBid, marketFromSiteComps, classifyLandUseFlags } from './cost/acquisition.ts';
+import { computeAcquisitionCost, expectedBid, marketFromSiteComps, classifyLandUseFlags, decideBidForCost } from './cost/acquisition.ts';
 import { buildReport } from './report/build.ts';
 import { attachGlossary } from './report/glossary.ts';
 import { assessLegalRisk } from './legal/risk.ts';
@@ -271,22 +271,7 @@ async function main() {
       // 예상낙찰가가 현 최저가 이상이면 그 가격 사용.
       // 예상낙찰가가 없고(sale ratio 미확보) 최저가가 시세의 5% 미만이면 시세×80%로 보수 추정.
       // (극단적으로 낮은 min_bid를 그대로 사용하면 trueSafetyMargin이 허위로 95%+가 됨)
-      let bidForCost: number;
-      let bidBasis: string;
-      if (eb.price && eb.price >= listing.minBidPrice) {
-        bidForCost = eb.price;
-        bidBasis = `예상낙찰가(${eb.basis})`;
-      } else if (
-        !eb.price &&
-        loc.marketPrice &&
-        listing.minBidPrice < loc.marketPrice * 0.05
-      ) {
-        bidForCost = Math.round(loc.marketPrice * 0.8);
-        bidBasis = '시세×80% 보수 추정(최저가<시세 5% — 극단적 유찰, ratio 미확보)';
-      } else {
-        bidForCost = listing.minBidPrice;
-        bidBasis = '현 회차 최저매각가';
-      }
+      const { bidForCost, bidBasis } = decideBidForCost(eb.price, eb.basis, listing.minBidPrice, loc.marketPrice);
       loc.acquisitionCost = computeAcquisitionCost({
         propertyType: listing.propertyType,
         address: listing.address,

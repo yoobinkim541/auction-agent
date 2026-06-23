@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   acquisitionTaxRate, estimateHousingBondCost, estimateMoveOutCost,
   marketFromSiteComps, expectedBid, classifyLandUseFlags, computeAcquisitionCost, bondRegionFromAddress,
+  decideBidForCost,
 } from './acquisition.ts';
 
 describe('취득세', () => {
@@ -168,5 +169,23 @@ describe('총취득비용', () => {
     expect(r.acqTax).toBe(2_541_000); // 231M×1.1%
     expect(r.totalCost).toBeGreaterThan(231_000_000 + 225_000_000); // 인수금액 포함
     expect(r.trueSafetyMargin).toBeLessThan(0); // 인수 큰 물건 → 음수
+  });
+});
+
+describe('decideBidForCost (가정 낙찰가 결정)', () => {
+  it('예상낙찰가 ≥ 최저가 → 예상낙찰가 사용', () => {
+    const r = decideBidForCost(214_830_000, '인근 낙찰가율 93%', 200_000_000, 250_000_000);
+    expect(r.bidForCost).toBe(214_830_000);
+    expect(r.bidBasis).toContain('예상낙찰가');
+  });
+  it('예상낙찰가 없고 최저가<시세 5% → 시세×80% 보수추정', () => {
+    const r = decideBidForCost(null, '', 9_000_000, 300_000_000); // 9M < 15M(5%)
+    expect(r.bidForCost).toBe(240_000_000); // 300M×0.8
+    expect(r.bidBasis).toContain('시세×80%');
+  });
+  it('그 외 → 현 회차 최저매각가', () => {
+    expect(decideBidForCost(null, '', 180_000_000, 250_000_000)).toEqual({ bidForCost: 180_000_000, bidBasis: '현 회차 최저매각가' });
+    // 예상낙찰가가 최저가보다 낮으면(과거 저율) 최저가 사용
+    expect(decideBidForCost(150_000_000, 'x', 180_000_000, 250_000_000).bidForCost).toBe(180_000_000);
   });
 });

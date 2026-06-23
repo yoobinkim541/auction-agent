@@ -153,6 +153,25 @@ export function expectedBid(appraisalValue: number, sameBuilding?: number[], nea
   return { price: ratioPrice, ratioPct: Math.round(r), basis: `${which} 중앙값 ${Math.round(r)}%` };
 }
 
+/**
+ * 총취득비용 산정에 쓸 '가정 낙찰가' 결정(순수):
+ *  - 예상낙찰가가 현 최저가 이상이면 그 값
+ *  - 예상낙찰가 없고 최저가가 시세의 5% 미만(극단적 유찰)이면 시세×80% 보수추정
+ *    (극단적으로 낮은 최저가를 그대로 쓰면 trueSafetyMargin이 허위로 95%+가 되는 것 방지)
+ *  - 그 외 현 회차 최저매각가
+ */
+export function decideBidForCost(
+  expectedBidPrice: number | null, expectedBidBasis: string, minBidPrice: number, marketPrice: number | null,
+): { bidForCost: number; bidBasis: string } {
+  if (expectedBidPrice && expectedBidPrice >= minBidPrice) {
+    return { bidForCost: expectedBidPrice, bidBasis: `예상낙찰가(${expectedBidBasis})` };
+  }
+  if (!expectedBidPrice && marketPrice && minBidPrice < marketPrice * 0.05) {
+    return { bidForCost: Math.round(marketPrice * 0.8), bidBasis: '시세×80% 보수 추정(최저가<시세 5% — 극단적 유찰, ratio 미확보)' };
+  }
+  return { bidForCost: minBidPrice, bidBasis: '현 회차 최저매각가' };
+}
+
 // ───────────────────── 토지이용 규제 flags ─────────────────────
 
 interface FlagDef { re: RegExp; label: string; kind: LandUseFlag['kind']; severity: LandUseFlag['severity']; impact: string }
