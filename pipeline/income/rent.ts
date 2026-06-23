@@ -3,7 +3,7 @@
  * 임대수익률 엔진의 데이터층. (매매와 동일 MOLIT_SERVICE_KEY 재사용, 추가 키 불필요)
  */
 import type { PropertyType } from '../../shared/types.ts';
-import { fetchMolitRaw, molitQuotaHit } from '../../shared/molit-cache.ts';
+import { fetchMolitRaw } from '../../shared/molit-cache.ts';
 import { median, recentYearMonths } from '../../shared/stats.ts';
 
 const RENT_ENDPOINT: Partial<Record<PropertyType, string>> = {
@@ -66,7 +66,7 @@ export async function fetchRentDeals(propertyType: PropertyType, lawdCd: string,
   const out: RentDeal[] = [];
   for (const ym of recentYearMonths(months)) {
     const items = await fetchMolitRaw(ep, lawdCd, ym);
-    if (items === null) { if (molitQuotaHit()) break; else continue; } // 쿼터/장애 → 중단
+    if (items === null) continue; // 캐시 없는 월 건너뜀 — 쿼터 시에도 다른 월 캐시는 활용
     for (const it of items as RentItem[]) {
       const deposit = num(it.deposit) * 10_000; // 만원→원
       const monthlyRent = num(it.monthlyRent) * 10_000;
