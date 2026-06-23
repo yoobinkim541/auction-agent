@@ -4,7 +4,7 @@ import { FLAG_LABEL, TYPE_LABEL, RISK } from './labels.ts';
 import { SkeletonList, Notice, Section, ThSort, DDay, FieldProgress } from './ui.tsx';
 import {
   fetchDetail, triggerJob, fetchJobStatus, setFavorite,
-  fetchFieldworkNotes, saveFieldworkNote, apiBase, won, eok,
+  fetchFieldworkNotes, saveFieldworkNote, apiBase, won, eok, pct,
   type ListingItem, type RightsObj, type LocationObj,
 } from './api.ts';
 import { scoreClient, DEFAULT_CONFIG, type ScoreConfig, type ClientScore } from './scoring.ts';
@@ -23,7 +23,7 @@ const TODAY = new Date().toISOString().slice(0, 10);
 // resolveRound는 listing-utils.ts로 이동
 
 // FLAG_LABEL·TYPE_LABEL·RISK는 labels.ts에서 import
-const pct = (n: number | null | undefined) => (n == null ? '-' : (n * 100).toFixed(1) + '%');
+// pct는 api.ts로 이동(won·eok와 포매터 통합)
 const CONF: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' };
 
 // SortKey는 filters.ts에서 import

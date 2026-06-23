@@ -219,3 +219,5 @@ export const won = (n: number | null | undefined): string =>
   n == null ? '-' : n.toLocaleString('ko-KR') + '원';
 export const eok = (n: number | null | undefined): string =>
   n == null ? '-' : (n / 1e8).toFixed(2) + '억';
+export const pct = (n: number | null | undefined): string =>
+  n == null ? '-' : (n * 100).toFixed(1) + '%';
