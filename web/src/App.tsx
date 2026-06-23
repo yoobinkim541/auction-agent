@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapView } from './MapView.tsx';
 import { FLAG_LABEL, TYPE_LABEL, RISK } from './labels.ts';
+import { SkeletonList, Notice, Section, ThSort } from './ui.tsx';
 import {
   fetchDetail, triggerJob, fetchJobStatus, setFavorite,
   fetchFieldworkNotes, saveFieldworkNote, apiBase, won, eok,
@@ -861,23 +862,7 @@ function exportCSV(rows: Array<{ item: ListingItem; sc: ClientScore }>) {
 }
 
 /** 목록 로딩 스켈레톤 — 빈 화면 대신 shimmer 행으로 체감 지연 완화. */
-function SkeletonList() {
-  return (
-    <div className="skeleton" aria-busy="true" aria-label="불러오는 중">
-      {Array.from({ length: 9 }).map((_, i) => (
-        <div key={i} className="sk-row">
-          <span className="sk-cell sk-w1" /><span className="sk-cell sk-w2" />
-          <span className="sk-cell sk-w3" /><span className="sk-cell sk-w1" />
-          <span className="sk-cell sk-w1" /><span className="sk-cell sk-w2" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Notice({ children }: { children: React.ReactNode }) {
-  return <div className="notice">{children}</div>;
-}
+// SkeletonList·Notice는 ui.tsx로 분리
 
 function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
   row: ListingItem; onClose: () => void; onFav: () => void;
@@ -1120,20 +1105,7 @@ function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
   );
 }
 
-function ThSort({ col, cur, dir, onSort, children }: {
-  col: SortKey; cur: SortKey; dir: 'asc' | 'desc'; onSort: (c: SortKey) => void; children: React.ReactNode;
-}) {
-  const active = col === cur;
-  return (
-    <th className={`sortable${active ? ' sorted' : ''}`} onClick={() => onSort(col)}>
-      {children}{active ? <span className="sort-ind">{dir === 'asc' ? ' ↑' : ' ↓'}</span> : null}
-    </th>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="sect"><h3>{title}</h3>{children}</section>;
-}
+// ThSort·Section은 ui.tsx로 분리
 
 const DIFF: Record<string, { label: string; cls: string }> = {
   easy: { label: '쉬움', cls: 'reco-consider' }, medium: { label: '보통', cls: 'reco-caution' }, hard: { label: '어려움', cls: 'reco-avoid' },
