@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { eok, won, pct, type ListingItem, type RightsObj, type LocationObj } from './api.ts';
-import { RISK, TYPE_LABEL } from './labels.ts';
+import { RISK, TYPE_LABEL, KIND_LABEL } from './labels.ts';
 import { resolveRound } from './listing-utils.ts';
 import { Section } from './ui.tsx';
 import { EvictionBlock, IncomeBlock, ReportBlock, FieldVisitChecklist } from './detail-blocks.tsx';
@@ -139,7 +139,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position 
               <tbody>
                 {rights.classified.map((c, i) => (
                   <tr key={i}>
-                    <td>{c.entry.kind}</td><td className="mono">{c.entry.receiptDate}</td>
+                    <td>{KIND_LABEL[c.entry.kind] ?? c.entry.kind}</td><td className="mono">{c.entry.receiptDate}</td>
                     <td>{c.disposition === 'assumed' ? <span className="danger">인수</span> : '소멸'}</td>
                     <td className="muted">{c.reason}</td>
                   </tr>
