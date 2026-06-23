@@ -117,8 +117,9 @@ const OVERCROWDED_CITIES = [
   '의정부', '구리', '남양주', '하남', '고양', '수원', '성남', '안양', '부천',
   '광명', '과천', '의왕', '군포', '시흥', '김포', '용인', '화성', '세종',
 ];
-/** metro tier에 포함되는 광역시 + 일부 시 */
-const METRO_KEYWORDS = ['부산', '대구', '대전', '울산', '광주광역시', '안산', '파주', '이천', '평택'];
+/** metro tier에 포함되는 광역시 + 일부 시.
+ *  '광주시'(경기도)와 '광주광역시'는 별도 키워드 — '광주광역시'에는 '광주시' 부분문자열이 없음. */
+const METRO_KEYWORDS = ['부산', '대구', '대전', '울산', '광주광역시', '광주시', '안산', '파주', '이천', '평택'];
 
 /** 주소 문자열 → 지역 tier 분류 (근사). 불확실하면 가장 가까운 보수적 tier. */
 export function classifyRegionTier(address: string): { tier: RegionTier; certain: boolean } {
@@ -127,10 +128,6 @@ export function classifyRegionTier(address: string): { tier: RegionTier; certain
   if (a.startsWith('인천') || a.includes('인천광역시')) return { tier: 'overcrowded', certain: false };
   if (OVERCROWDED_CITIES.some((c) => a.includes(c))) return { tier: 'overcrowded', certain: false };
   if (METRO_KEYWORDS.some((c) => a.includes(c))) return { tier: 'metro', certain: false };
-  // 광주광역시 vs 경기 광주시 구분 주의
-  if ((a.includes('부산') || a.includes('대구') || a.includes('대전') || a.includes('울산'))) {
-    return { tier: 'metro', certain: false };
-  }
   return { tier: 'other', certain: false };
 }
 

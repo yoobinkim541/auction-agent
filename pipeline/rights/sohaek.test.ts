@@ -9,6 +9,8 @@ describe('classifyRegionTier (chart3 과밀억제권역 기준)', () => {
   it('수원 → 과밀', () => expect(classifyRegionTier('경기도 수원시 영통구').tier).toBe('overcrowded'));
   it('부산 → 광역시', () => expect(classifyRegionTier('부산광역시 해운대구').tier).toBe('metro'));
   it('청주 → 기타', () => expect(classifyRegionTier('충청북도 청주시').tier).toBe('other'));
+  it('경기 광주시 → 광역(주임법 2018+ 명시)', () => expect(classifyRegionTier('경기도 광주시 오포읍').tier).toBe('metro'));
+  it('광주광역시 → 광역(경기 광주시와 구별)', () => expect(classifyRegionTier('광주광역시 북구').tier).toBe('metro'));
 });
 
 describe('pickSohaekVersion (담보물권 설정일 기준)', () => {
