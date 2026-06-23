@@ -9,11 +9,12 @@ import {
   apiBase, eok, pct,
   type ListingItem,
 } from './api.ts';
-import { scoreClient, DEFAULT_CONFIG, type ScoreConfig, type ClientScore } from './scoring.ts';
+import { scoreClient, DEFAULT_CONFIG, type ScoreConfig } from './scoring.ts';
 import { applyListingFilters, sortRows, type SortKey } from './filters.ts';
 import { resolveRound, saleDaysDiff, localDateISO } from './listing-utils.ts';
 import { useListings } from './useListings.ts';
 import { Detail } from './Detail.tsx';
+import { exportCSV } from './export-csv.ts';
 
 const TODAY = localDateISO(); // KST 기준 로컬 날짜(UTC slice는 00:00~09:00 KST 구간에서 어제 날짜)
 
