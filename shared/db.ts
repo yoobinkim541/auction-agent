@@ -164,7 +164,7 @@ export async function startCrawlRun(source: string, region: string): Promise<num
 }
 
 export async function finishCrawlRun(
-  id: number, patch: { nFound?: number; nNew?: number; status: 'ok' | 'error'; error?: string },
+  id: number, patch: { nFound?: number; nNew?: number; status: 'ok' | 'error' | 'blocked'; error?: string },
 ): Promise<void> {
   await query(
     `update gm_crawl_runs set n_found=$2, n_new=$3, status=$4, error=$5, finished_at=now() where id=$1`,

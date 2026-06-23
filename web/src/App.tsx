@@ -4,7 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import {
   fetchListings, fetchDetail, fetchLastCrawl, triggerJob, fetchJobStatus, setFavorite,
   fetchFieldworkNotes, saveFieldworkNote, apiBase, won, eok,
-  type ListingItem, type RightsObj, type LocationObj,
+  type ListingItem, type RightsObj, type LocationObj, type CrawlStatus,
 } from './api.ts';
 import { scoreClient, DEFAULT_CONFIG, type ScoreConfig, type ClientScore } from './scoring.ts';
 import { acquisitionTaxRate } from './cost.ts';
@@ -291,12 +291,12 @@ export default function App() {
   const [jobStatus, setJobStatus] = useState<{ msg: string; ok: boolean } | null>(null);
   const jobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [lastCrawl, setLastCrawl] = useState<string | null>(null);
+  const [lastCrawl, setLastCrawl] = useState<CrawlStatus | null>(null);
 
   const load = () => {
     setLoading(true); setErr(null);
     fetchListings().then(setRows).catch((e) => setErr(String(e))).finally(() => setLoading(false));
-    fetchLastCrawl().then((r) => { if (r) setLastCrawl(r.date); });
+    fetchLastCrawl().then((r) => { if (r) setLastCrawl(r); });
   };
   useEffect(load, []);
   useEffect(() => { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }, [cfg]);
@@ -479,7 +479,18 @@ export default function App() {
   return (
     <div className="app">
       <header>
-        <h1>경매 매물 분석 <span className="sub">권리분석 · 입지분석</span>{lastCrawl && <span className="crawl-date">데이터 기준 {lastCrawl}</span>}</h1>
+        <h1>경매 매물 분석 <span className="sub">권리분석 · 입지분석</span>{lastCrawl && <span className="crawl-date">데이터 기준 {lastCrawl.date}</span>}</h1>
+        {lastCrawl?.blocked && (
+          <div className="stale-banner blocked" role="alert">
+            ⛔ <strong>크롤 차단 중</strong> — 더낙찰옥션 수집이 막혀 있습니다. 데이터가 {lastCrawl.daysAgo}일 전 기준입니다.
+            프록시 IP 변경 후 재시도 필요.
+          </div>
+        )}
+        {!lastCrawl?.blocked && lastCrawl?.stale && (
+          <div className="stale-banner" role="alert">
+            ⚠️ <strong>데이터 오래됨</strong> — 마지막 수집 {lastCrawl.daysAgo}일 전. 새 매각기일 물건이 누락됐을 수 있습니다.
+          </div>
+        )}
         <p className="disclaimer">
           ⚠️ 본 분석은 <b>참고용 정보</b>이며 법률자문이 아닙니다. 정확성을 보장하지 않으며 최종 판단·책임은 이용자에게 있습니다.
           입찰 전 반드시 등기부등본·매각물건명세서·현장 확인 및 변호사/법무사 상담을 권장합니다.

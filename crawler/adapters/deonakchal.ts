@@ -112,7 +112,12 @@ async function ensureLogin(page: Page): Promise<void> {
   await page.waitForLoadState('networkidle').catch(() => {});
   await page.waitForTimeout(1500);
   if (!(await page.locator(SEL.loggedInMarker).count())) {
-    throw new Error('로그인 실패 — 계정/셀렉터 확인 필요 (CRAWL_HEADLESS=false로 점검)');
+    // 로그인 폼이 다시 보이면 계정 오류, 아예 사라지면 IP 차단으로 리다이렉트된 것
+    const blockedAfter = await detectBlocked(page);
+    if (blockedAfter) throw new SiteBlockedError();
+    const formStillThere = await page.locator(SEL.loginId).first().isVisible().catch(() => false);
+    if (!formStillThere) throw new SiteBlockedError(); // 로그인 폼도 없고 마커도 없음 = 차단 리다이렉트
+    throw new Error('로그인 실패 — 계정(ID/PW) 또는 셀렉터 확인 필요 (CRAWL_HEADLESS=false로 점검)');
   }
 }
 
@@ -135,7 +140,11 @@ export async function inspectAndDump(): Promise<string> {
 }
 
 async function launch(): Promise<Browser> {
-  return chromium.launch({ headless: process.env.CRAWL_HEADLESS !== 'false' });
+  const proxy = process.env.CRAWL_PROXY; // e.g. socks5://192.168.0.2:1080
+  return chromium.launch({
+    headless: process.env.CRAWL_HEADLESS !== 'false',
+    proxy: proxy ? { server: proxy } : undefined,
+  });
 }
 async function newPage(browser: Browser): Promise<Page> {
   const ctx = await browser.newContext({

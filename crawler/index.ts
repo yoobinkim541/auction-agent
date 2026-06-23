@@ -1,15 +1,23 @@
 /**
  * 크롤러 CLI 엔트리.
- *   npm run crawl                 # 기본 필터(수도권, 아파트/다세대·연립·오피스텔)로 수집
- *   npm run crawl -- --inspect    # 최초 셀렉터 작성용: 검색 페이지 HTML 덤프
- *   npm run crawl -- --max=30     # 최대 건수 제한
- *   CRAWL_HEADLESS=false npm run crawl -- --inspect   # 브라우저 띄워 로그인 점검
+ *   npm run crawl                              # 기본 (더낙찰옥션, 수도권)
+ *   npm run crawl -- --source=courtauction     # 법원경매 어댑터
+ *   npm run crawl -- --max=30                  # 건수 제한
+ *   npm run crawl -- --inspect                 # 셀렉터 점검용 HTML 덤프
+ *   CRAWL_HEADLESS=false npm run crawl         # 브라우저 띄워 디버깅
+ *
+ * ─ 멀티프록시 폴백 ───────────────────────────────────────────────────
+ *   CRAWL_PROXIES=socks5://home:1080,socks5://rpi:1081  (쉼표 구분)
+ *   차단 감지 시 다음 프록시로 자동 전환. 모두 소진되면 courtauction 폴백.
+ *
+ *   단일 프록시: CRAWL_PROXY=socks5://home:1080
+ *   (CRAWL_PROXIES가 우선. CRAWL_PROXY는 CRAWL_PROXIES가 없을 때만 적용)
  */
 import 'dotenv/config';
 import type { PropertyType } from '../shared/types.ts';
 import type { Adapter, CrawlFilter } from './adapters/types.ts';
-import { DeonakchalAdapter, inspectAndDump } from './adapters/deonakchal.ts';
-import { CourtAuctionAdapter } from './adapters/courtauction.ts';
+import { DeonakchalAdapter, SiteBlockedError, inspectAndDump } from './adapters/deonakchal.ts';
+import { CourtAuctionAdapter, CourtAuctionBlockedError } from './adapters/courtauction.ts';
 import { upsertListing, upsertListingDoc, deleteListingDocs, startCrawlRun, finishCrawlRun } from '../shared/db.ts';
 
 const DEFAULT_FILTER: CrawlFilter = {
@@ -17,6 +25,29 @@ const DEFAULT_FILTER: CrawlFilter = {
   propertyTypes: ['apartment', 'villa', 'officetel'] as PropertyType[],
   maxItems: 1000,
 };
+
+/** CRAWL_PROXIES 파싱 → 우선순위 목록 (없으면 CRAWL_PROXY 단일, 그것도 없으면 직접) */
+function resolveProxies(): (string | undefined)[] {
+  const multi = process.env.CRAWL_PROXIES;
+  if (multi) return multi.split(',').map((p) => p.trim()).filter(Boolean);
+  const single = process.env.CRAWL_PROXY;
+  if (single) return [single];
+  return [undefined]; // 프록시 없이 직접 연결
+}
+
+async function runAdapter(adapter: Adapter, filter: CrawlFilter) {
+  const scraped = await adapter.crawl(filter);
+  let nNew = 0;
+  for (const s of scraped) {
+    const id = await upsertListing(s.listing);
+    nNew++;
+    if (s.docs?.length) {
+      await deleteListingDocs(id);
+      for (const doc of s.docs) await upsertListingDoc(id, doc);
+    }
+  }
+  return { nFound: scraped.length, nNew };
+}
 
 async function main() {
   const args = process.argv.slice(2);
@@ -32,35 +63,91 @@ async function main() {
     maxItems: maxArg ? parseInt(maxArg.split('=')[1]!, 10) : DEFAULT_FILTER.maxItems,
   };
 
-  const source = args.find((a) => a.startsWith('--source='))?.split('=')[1] ?? 'deonakchal';
-  const adapter: Adapter = source === 'courtauction' ? new CourtAuctionAdapter() : new DeonakchalAdapter();
-  const runId = await startCrawlRun(adapter.name, filter.regions.join(','));
-  try {
-    const scraped = await adapter.crawl(filter);
-    let nNew = 0;
-    for (const s of scraped) {
-      const id = await upsertListing(s.listing);
-      nNew++;
-      if (s.docs?.length) {
-        await deleteListingDocs(id); // 재크롤 시 문서 중복 방지
-        for (const doc of s.docs) await upsertListingDoc(id, doc);
-      }
+  const forcedSource = args.find((a) => a.startsWith('--source='))?.split('=')[1];
+
+  // ── 법원경매 어댑터 직접 지정 ───────────────────────────────────────
+  if (forcedSource === 'courtauction') {
+    const runId = await startCrawlRun('courtauction', filter.regions.join(','));
+    try {
+      const { nFound, nNew } = await runAdapter(new CourtAuctionAdapter(), filter);
+      await finishCrawlRun(runId, { nFound, nNew, status: 'ok' });
+      console.log(`[courtauction] 수집 완료: ${nFound}건 (저장 ${nNew})`);
+    } catch (e) {
+      await finishCrawlRun(runId, { status: 'error', error: String(e) });
+      throw e;
     }
-    await finishCrawlRun(runId, { nFound: scraped.length, nNew, status: 'ok' });
-    console.log(`수집 완료: ${scraped.length}건 (저장 ${nNew})`);
+    return;
+  }
+
+  // ── 더낙찰옥션 + 멀티프록시 폴백 ────────────────────────────────────
+  const proxies = resolveProxies();
+  let lastBlockError: Error | null = null;
+
+  for (let pi = 0; pi < proxies.length; pi++) {
+    const proxy = proxies[pi];
+    if (proxy) {
+      process.env.CRAWL_PROXY = proxy;
+      console.log(`[crawl] 프록시 사용: ${proxy} (${pi + 1}/${proxies.length})`);
+    } else {
+      delete process.env.CRAWL_PROXY;
+      console.log(`[crawl] 직접 연결 시도`);
+    }
+
+    const runId = await startCrawlRun('deonakchal', filter.regions.join(','));
+    try {
+      const { nFound, nNew } = await runAdapter(new DeonakchalAdapter(), filter);
+      await finishCrawlRun(runId, { nFound, nNew, status: 'ok' });
+      console.log(`수집 완료: ${nFound}건 (저장 ${nNew})`);
+      return; // 성공 → 종료
+    } catch (e) {
+      if (e instanceof SiteBlockedError) {
+        lastBlockError = e;
+        await finishCrawlRun(runId, { status: 'blocked', error: `차단 (프록시: ${proxy ?? '직접'})` });
+        console.error(`[crawl] ⛔ 차단 감지 (프록시: ${proxy ?? '직접'})`);
+        if (pi < proxies.length - 1) {
+          console.log(`[crawl] → 다음 프록시로 전환 (${pi + 2}/${proxies.length})`);
+          await new Promise((r) => setTimeout(r, 3000)); // 잠깐 대기 후 전환
+          continue;
+        }
+        // 모든 프록시 소진 → 법원경매 폴백
+        console.error('[crawl] 모든 프록시 차단 — 법원경매 폴백 크롤 시도');
+        await runCourtAuctionFallback(filter);
+        return;
+      }
+      await finishCrawlRun(runId, { status: 'error', error: String(e) });
+      throw e;
+    }
+  }
+
+  // 여기까지 오면 proxies.length === 0 (이론상 불가)
+  throw lastBlockError ?? new Error('알 수 없는 오류');
+}
+
+/** 더낙찰옥션 전체 차단 시 법원경매로 기본 메타데이터만 수집 */
+async function runCourtAuctionFallback(filter: CrawlFilter) {
+  console.log('[crawl] 법원경매 폴백: 기본 메타만 수집 (등기/임차인 없음)');
+  const runId = await startCrawlRun('courtauction', filter.regions.join(','));
+  try {
+    const { nFound, nNew } = await runAdapter(new CourtAuctionAdapter(), { ...filter, maxItems: 200 });
+    await finishCrawlRun(runId, { nFound, nNew, status: 'ok' });
+    console.log(`[법원경매 폴백] ${nFound}건 (저장 ${nNew}) — 더낙찰옥션 차단 해제 후 재크롤 권장`);
   } catch (e) {
-    await finishCrawlRun(runId, { status: 'error', error: String(e) });
-    throw e;
+    if (e instanceof CourtAuctionBlockedError) {
+      await finishCrawlRun(runId, { status: 'blocked', error: '법원경매도 차단' });
+      console.error('[법원경매 폴백] IP 차단 — 두 소스 모두 차단. 프록시 IP 변경 필요.');
+    } else {
+      await finishCrawlRun(runId, { status: 'error', error: String(e) });
+    }
   }
 }
 
 main().catch((e) => {
-  if (e && (e.name === 'SiteBlockedError' || /SITE_BLOCKED|비정상접속/.test(String(e)))) {
-    console.error('⛔ 더낙찰옥션 접속 차단 상태 — 크롤 건너뜀. 차단 해제 후 재시도(또는 1577-9352 문의).');
+  if (e instanceof SiteBlockedError || /SITE_BLOCKED|비정상접속/.test(String(e))) {
+    console.error('⛔ 더낙찰옥션 차단 — 프록시 IP를 변경하거나 내일 재시도.');
     process.exitCode = 0;
     return;
   }
-  if (e && (e.name === 'CourtAuctionBlockedError' || /COURT_BLOCKED/.test(String(e)))) {
+  if (e instanceof CourtAuctionBlockedError || /COURT_BLOCKED/.test(String(e))) {
     console.error('⛔ 법원경매 IP 차단 — 로컬 PC 또는 Raspberry Pi에서 실행 필요.');
     process.exitCode = 0;
     return;

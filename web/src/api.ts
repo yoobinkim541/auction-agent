@@ -180,14 +180,32 @@ export async function saveFieldworkNote(id: number, itemKey: string, checked: bo
   if (!res.ok) throw new Error(`저장 실패 (${res.status})`);
 }
 
-export async function fetchLastCrawl(): Promise<{ date: string; status: string } | null> {
+export interface CrawlStatus {
+  date: string;        // YYYY-MM-DD
+  daysAgo: number;     // 오늘 기준 경과일
+  stale: boolean;      // 3일 초과 = 오래됨
+  source: string;      // 'deonakchal' | 'courtauction'
+  blocked: boolean;    // 최근 실행이 차단으로 끝났는지
+}
+export async function fetchLastCrawl(): Promise<CrawlStatus | null> {
   try {
     const res = await fetch(`${BASE}/api/crawl-runs`);
     if (!res.ok) return null;
-    const runs = (await res.json()) as { started_at: string; status: string }[];
-    const last = runs.find((r) => r.status === 'ok');
-    if (!last) return null;
-    return { date: last.started_at.slice(0, 10), status: last.status };
+    const runs = (await res.json()) as { started_at: string; status: string; source: string }[];
+    const lastOk = runs.find((r) => r.status === 'ok' && r.source === 'deonakchal');
+    if (!lastOk) {
+      // 최근 실행이 전부 차단/오류인지 확인
+      const anyBlocked = runs.some((r) => r.source === 'deonakchal' && r.status === 'blocked');
+      return anyBlocked
+        ? { date: '없음', daysAgo: 999, stale: true, source: 'deonakchal', blocked: true }
+        : null;
+    }
+    const date = lastOk.started_at.slice(0, 10);
+    const daysAgo = Math.floor((Date.now() - new Date(date).getTime()) / 86_400_000);
+    // 가장 최근 실행이 차단이었는지 (성공 이후에 차단이 왔는지)
+    const latestRun = runs.find((r) => r.source === 'deonakchal');
+    const blocked = latestRun?.status === 'blocked';
+    return { date, daysAgo, stale: daysAgo > 3, source: 'deonakchal', blocked };
   } catch { return null; }
 }
 
