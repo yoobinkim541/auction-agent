@@ -9,12 +9,13 @@ import {
   apiBase, eok, pct,
   type ListingItem,
 } from './api.ts';
-import { scoreClient, DEFAULT_CONFIG, type ScoreConfig } from './scoring.ts';
+import { scoreClient, type ScoreConfig } from './scoring.ts';
 import { applyListingFilters, sortRows, type SortKey } from './filters.ts';
 import { resolveRound, saleDaysDiff, localDateISO } from './listing-utils.ts';
 import { useListings } from './useListings.ts';
 import { Detail } from './Detail.tsx';
 import { exportCSV } from './export-csv.ts';
+import { loadConfig, saveConfig, loadUIState, saveUIState } from './persistence.ts';
 
 const TODAY = localDateISO(); // KST 기준 로컬 날짜(UTC slice는 00:00~09:00 KST 구간에서 어제 날짜)
 
@@ -30,8 +31,7 @@ const TODAY = localDateISO(); // KST 기준 로컬 날짜(UTC slice는 00:00~09:
 // CONF(시세 신뢰도 라벨)·Detail 컴포넌트는 Detail.tsx로 이동
 
 // SortKey는 filters.ts에서 import
-const CFG_KEY = 'gm_score_config';
-const UI_KEY = 'gm_ui_state';
+// CFG_KEY/UI_KEY·config/UI 영속화(load/save)는 persistence.ts로 이동
 
 const SORT_DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
   score: 'desc', safety: 'desc', trueSafety: 'desc', sale: 'asc',
@@ -52,22 +52,7 @@ const SORT_DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
 /** 관심 매물 나란히 비교 — slim 데이터만으로 핵심 지표를 표로. 항목별 최우수 셀을 초록 강조. */
 // CompareView는 ./CompareView.tsx로 분리
 
-function loadConfig(): ScoreConfig {
-  try {
-    const raw = localStorage.getItem(CFG_KEY);
-    if (raw) return { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
-  } catch { /* ignore */ }
-  return DEFAULT_CONFIG;
-}
-
-type UIState = { sort?: SortKey; sortDir?: 'asc' | 'desc'; type?: string; hideExpired?: boolean; onlyPassed?: boolean; onlyMultiRound?: boolean; hideIncomplete?: boolean };
-function loadUIState(): UIState {
-  try {
-    const raw = localStorage.getItem(UI_KEY);
-    if (raw) return JSON.parse(raw) as UIState;
-  } catch { /* ignore */ }
-  return {};
-}
+// loadConfig/loadUIState(+UIState 타입)는 persistence.ts로 이동
 
 export default function App() {
   const { rows, setRows, loading, err, lastCrawl, load } = useListings();
@@ -99,8 +84,8 @@ export default function App() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 데이터 로드(rows·lastCrawl·load)는 useListings()로 이동(위 destructure)
-  useEffect(() => { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }, [cfg]);
-  useEffect(() => { localStorage.setItem(UI_KEY, JSON.stringify({ sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete })); }, [sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete]);
+  useEffect(() => { saveConfig(cfg); }, [cfg]);
+  useEffect(() => { saveUIState({ sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete }); }, [sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete]);
 
   const toggleFav = (item: ListingItem) => {
     const nv = !item.is_favorite;
