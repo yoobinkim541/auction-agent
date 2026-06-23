@@ -4,7 +4,7 @@
  */
 import type { Listing, LocationAnalysis, Comparable, PropertyType } from '../../shared/types.ts';
 import { addressToLawdCd } from './lawd-codes.ts';
-import { fetchMolitRaw, molitQuotaHit } from '../../shared/molit-cache.ts';
+import { fetchMolitRaw } from '../../shared/molit-cache.ts';
 import { geocodeNaver } from './osm.ts';
 import {
   parseMolitDealAmount, extractDong, extractBuildingName, estimateMarketPrice,
@@ -62,7 +62,7 @@ async function molitTrades(propertyType: PropertyType, lawdCd: string, months: n
   const out: Comparable[] = [];
   for (const ym of recentYearMonths(months)) {
     const items = await fetchMolitRaw(ep, lawdCd, ym);
-    if (items === null) { if (molitQuotaHit()) break; else continue; } // 쿼터/장애 → 중단
+    if (items === null) continue; // 캐시 없는 월 건너뜀 — 쿼터 시에도 다른 월 캐시는 활용
     out.push(...parseMolitJson(items as MolitItem[]));
   }
   return out;
