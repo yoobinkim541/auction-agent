@@ -8,6 +8,7 @@ import {
 } from './api.ts';
 import { scoreClient, DEFAULT_CONFIG, type ScoreConfig, type ClientScore } from './scoring.ts';
 import { applyListingFilters, sortRows, type SortKey } from './filters.ts';
+import { resolveRound, marginColor } from './listing-utils.ts';
 import { acquisitionTaxRate } from './cost.ts';
 
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -27,18 +28,7 @@ function DDay({ dateStr }: { dateStr?: string | null }) {
 }
 
 // sale_rounds 에서 현재 차수를 결정. 날짜 불일치(분석 이후 재매각기일 갱신) 시 추정.
-function resolveRound(rounds: { date: string; round: number }[], saleDate?: string | null, failCount?: number | null): { n: number; est: boolean } | null {
-  if (!rounds.length) return null;
-  const match = saleDate ? rounds.find((s) => s.date === saleDate) : null;
-  if (match) return { n: match.round, est: false };
-  const last = rounds[rounds.length - 1]!;
-  if (saleDate && last.date < saleDate) {
-    // sale_rounds 가 구형(분석 후 sale_date 재갱신) → 최소 last.round+1 차수로 추정
-    const n = (failCount != null && failCount > 0) ? failCount + 1 : last.round + 1;
-    return { n, est: true };
-  }
-  return { n: last.round, est: false };
-}
+// resolveRound는 listing-utils.ts로 이동
 
 const FLAG_LABEL: Record<string, string> = {
   yuchigwon: '유치권', beopjeong_jisangwon: '법정지상권', bunmyo_gijigwon: '분묘기지권',
@@ -88,14 +78,7 @@ function FieldProgress({ r }: { r: ListingItem }) {
 }
 
 /** 마진(진짜마진 우선) → 핀 색. 시세 없으면 회색. */
-function marginColor(r: ListingItem): string {
-  const tm = r.location?.acquisition_cost?.trueSafetyMargin ?? r.location?.safety_margin ?? null;
-  if (tm == null) return '#7a8699';
-  if (tm >= 0.3) return '#1ec758';
-  if (tm >= 0.1) return '#a3d977';
-  if (tm >= 0) return '#f5a623';
-  return '#f04545';
-}
+// marginColor는 listing-utils.ts로 이동
 
 /** 지도 뷰 — 위경도 있는 매물을 마진색 원형 핀으로. 핀 팝업 → 상세. Leaflet 명령형 제어. */
 function MapView({ items, onSelect }: { items: ListingItem[]; onSelect: (r: ListingItem) => void }) {
