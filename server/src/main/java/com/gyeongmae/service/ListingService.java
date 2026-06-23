@@ -83,21 +83,6 @@ public class ListingService {
       left join gm_scores            s   on s.listing_id   = l.id
       """;
 
-  /** 매물 목록(JSON 배열 문자열) — 전체 필드 */
-  public String listJson(boolean passedOnly, String type, String q) {
-    String sql = "select coalesce(json_agg(t order by t.total_score desc nulls last), '[]'::json)::text from (\n"
-        + SELECT_BODY
-        + " where (:passedOnly = false or s.passed_filter = true)\n"
-        + "   and (:type = 'all' or l.property_type = :type)\n"
-        + "   and (:q = '' or l.address ilike '%'||:q||'%' or l.case_no ilike '%'||:q||'%')\n"
-        + ") t";
-    var params = new MapSqlParameterSource()
-        .addValue("passedOnly", passedOnly)
-        .addValue("type", type == null ? "all" : type)
-        .addValue("q", q == null ? "" : q);
-    return jdbc.queryForObject(sql, params, String.class);
-  }
-
   /** 매물 목록(JSON 배열 문자열) — 경량(목록 뷰용) */
   public String listSlimJson(boolean passedOnly, String type, String q) {
     String sql = "select coalesce(json_agg(t order by t.total_score desc nulls last), '[]'::json)::text from (\n"

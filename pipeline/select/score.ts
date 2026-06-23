@@ -66,7 +66,10 @@ export function scoreListing(
   const sClean = cleanScore(rights);
   // 무피 보너스: 실거래 기반(non-estimated) zeroPiCandidate에만 +5점
   const zeroPiBonus = (loc.income?.zeroPiCandidate && !loc.income?.estimated) ? 5 : 0;
-  const total = Math.min(100, Math.round(cfg.wSafety * sSafety + cfg.wClean * sClean) + zeroPiBonus);
+  // 위험항목 감점(-8점/건, 최대 -30) — web/src/scoring.ts 클라이언트 로직과 동일하게 유지
+  const dangerCnt = loc.report?.dangerCount ?? 0;
+  const dangerPenalty = Math.min(30, dangerCnt * 8);
+  const total = Math.max(0, Math.min(100, Math.round(cfg.wSafety * sSafety + cfg.wClean * sClean) + zeroPiBonus - dangerPenalty));
 
   const reasons: string[] = [];
   let passed = true;
