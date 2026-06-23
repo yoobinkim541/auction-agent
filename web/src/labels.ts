@@ -15,3 +15,9 @@ export const RISK: Record<string, { label: string; cls: string }> = {
   risky: { label: '위험', cls: 'risk-risky' },
   review_required: { label: '검토필요', cls: 'risk-review' },
 };
+/** 종합 권고(consider/caution/avoid) 표시 라벨. */
+export const RECO: Record<string, { label: string; cls: string }> = {
+  consider: { label: '검토 권장', cls: 'reco-consider' },
+  caution: { label: '주의 검토', cls: 'reco-caution' },
+  avoid: { label: '신중·회피', cls: 'reco-avoid' },
+};
