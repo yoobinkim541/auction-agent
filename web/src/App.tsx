@@ -11,11 +11,11 @@ import {
 } from './api.ts';
 import { scoreClient, DEFAULT_CONFIG, type ScoreConfig, type ClientScore } from './scoring.ts';
 import { applyListingFilters, sortRows, type SortKey } from './filters.ts';
-import { resolveRound, saleDaysDiff } from './listing-utils.ts';
+import { resolveRound, saleDaysDiff, localDateISO } from './listing-utils.ts';
 import { useListings } from './useListings.ts';
 import { Detail } from './Detail.tsx';
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = localDateISO(); // KST 기준 로컬 날짜(UTC slice는 00:00~09:00 KST 구간에서 어제 날짜)
 
 // saleDaysDiff는 listing-utils.ts로 이동
 
@@ -606,55 +606,5 @@ export default function App() {
 
 // ConfigPanel은 ./ConfigPanel.tsx로 분리
 
-function exportCSV(rows: Array<{ item: ListingItem; sc: ClientScore }>) {
-  const BOM = '﻿'; // Excel Korean UTF-8 BOM
-  const headers = [
-    '사건번호', '종류', '면적(㎡)', '주소', '법원', '감정가(만원)', '최저가(만원)',
-    '안전마진%', '인수금액(만원)', '권리등급', '점수', '통과', '미통과사유', '매각기일',
-    '추정시세(만원)', '진짜마진%', '전세시세(만원)', '갭(만원)', '수익률%',
-    '현재차수', '예상낙찰가(만원)', 'AI권고', '위험항목수', '주의항목수', '등기미수집', '관심',
-  ];
-  const toMw = (v: number | null | undefined) => (v != null ? Math.round(v / 10000) : '');
-  const pctStr = (v: number | null | undefined) => (v != null ? (v * 100).toFixed(1) : '');
-  const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-
-  const lines = rows.map(({ item: r, sc }) => {
-    const rounds = r.location?.sale_rounds ?? [];
-    const currentRound = resolveRound(rounds, r.sale_date, r.fail_count)?.n ?? null;
-    return [
-      r.case_no, TYPE_LABEL[r.property_type] ?? r.property_type, r.area_m2 != null ? r.area_m2.toFixed(2) : '', r.address, r.court ?? '',
-      toMw(r.appraisal_value), toMw(r.min_bid_price),
-      pctStr(r.location?.safety_margin),
-      toMw(r.rights?.assumed_amount ?? 0),
-      RISK[r.rights?.risk_grade ?? '']?.label ?? '-',
-      sc.totalScore, sc.passed ? '○' : '✕', sc.reasons.join(' · '), r.sale_date ?? '',
-      toMw(r.location?.market_price),
-      pctStr(r.location?.acquisition_cost?.trueSafetyMargin),
-      toMw(r.location?.income?.jeonseDeposit),
-      toMw(r.location?.income?.gapInvestment),
-      r.location?.income?.grossYieldPct != null ? r.location.income.grossYieldPct.toFixed(1) : '',
-      currentRound ?? '',
-      toMw(r.location?.expected_bid_price),
-      r.location?.report?.recommendation ?? '',
-      r.location?.report?.dangerCount ?? '',
-      r.location?.report?.warnCount ?? '',
-      r.location?.report?.headline?.startsWith('[데이터 불완전]') ? '○' : '',
-      r.is_favorite ? '★' : '',
-    ].map(esc).join(',');
-  });
-
-  const csv = BOM + [headers.map(esc).join(','), ...lines].join('\r\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `경매분석_${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-/** 목록 로딩 스켈레톤 — 빈 화면 대신 shimmer 행으로 체감 지연 완화. */
-// SkeletonList·Notice는 ui.tsx로 분리
+// exportCSV/buildCsv는 ./export-csv.ts로 분리
 

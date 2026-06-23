@@ -30,7 +30,7 @@ export function marginColor(r: ListingItem): string {
 }
 
 /** 로컬 날짜 YYYY-MM-DD — UTC 기준 toISOString()은 KST 00:00~09:00 구간에서 하루 어긋남. */
-function localDateISO(): string {
+export function localDateISO(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }

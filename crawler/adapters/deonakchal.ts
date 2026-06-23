@@ -482,7 +482,7 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
         return { blk: new RegExp(src, 'i').test(html), n: document.querySelectorAll('table').length, logged: html.includes('로그아웃') };
       }, BLOCK_RE.source).catch(() => ({ blk: false, n: 0, logged: true }));
       if (r2.blk) throw new SiteBlockedError();
-      if (r2.n > 0 && !r2.logged) throw new SessionExpiredError();
+      if (!r2.logged) throw new SessionExpiredError(); // 초기 probe와 일치: 테이블 유무 무관
       if (r2.n > 0) loaded = true;
     }
     if (!loaded && attempt === 1) await wait(rnd(4000, 8000)); // 새로고침 전 사람처럼 텀
