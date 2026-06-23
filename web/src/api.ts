@@ -159,7 +159,8 @@ export async function fetchJobStatus(): Promise<Record<string, JobStatus>> {
 }
 
 export async function setFavorite(id: number, value: boolean): Promise<void> {
-  await fetch(`${BASE}/api/listings/${id}/favorite?value=${value}`, { method: 'POST' });
+  const res = await fetch(`${BASE}/api/listings/${id}/favorite?value=${value}`, { method: 'POST' });
+  if (!res.ok) throw new Error(`즐겨찾기 저장 실패 (${res.status})`);
 }
 
 // 현장 임장 체크리스트 메모 (매물별, 재분석에도 보존되는 사용자 입력)
