@@ -9,6 +9,22 @@ import { buildPreBidChecklist } from './checklist.ts';
 import { buildFieldwork } from './fieldwork.ts';
 import { won, eok, pct } from '../../shared/format.ts';
 
+/** 종합 권고 등급 판정(순수) — 데이터 불완전→caution / 인수·danger·review_required·음수마진→avoid /
+ *  warn·저마진(<10%)·risky·caution등급→caution / 그 외→consider. */
+export function decideRecommendation(input: {
+  dataComplete: boolean;
+  assumedAmount: number;
+  dangerCount: number;
+  warnCount: number;
+  riskGrade: RightsAnalysisResult['riskGrade'];
+  trueMargin: number | null;
+}): ListingReport['recommendation'] {
+  if (!input.dataComplete) return 'caution';
+  if (input.assumedAmount > 0 || input.dangerCount > 0 || input.riskGrade === 'review_required' || (input.trueMargin != null && input.trueMargin < 0)) return 'avoid';
+  if (input.warnCount > 0 || (input.trueMargin != null && input.trueMargin < 0.1) || input.riskGrade === 'risky' || input.riskGrade === 'caution') return 'caution';
+  return 'consider';
+}
+
 export function buildReport(args: {
   rights: RightsAnalysisResult;
   loc: LocationAnalysis;
@@ -25,16 +41,10 @@ export function buildReport(args: {
   const trueMargin = loc.acquisitionCost?.trueSafetyMargin ?? null;
 
   // 종합 권고: 인수금액/위험등급/danger 항목/진짜마진 기준 (데이터 불완전은 보류=caution)
-  let recommendation: ListingReport['recommendation'];
-  if (!dataComplete) {
-    recommendation = 'caution';
-  } else if (rights.assumedAmount > 0 || dangerCount > 0 || rights.riskGrade === 'review_required' || (trueMargin != null && trueMargin < 0)) {
-    recommendation = 'avoid';
-  } else if (warnCount > 0 || (trueMargin != null && trueMargin < 0.1) || rights.riskGrade === 'risky' || rights.riskGrade === 'caution') {
-    recommendation = 'caution';
-  } else {
-    recommendation = 'consider';
-  }
+  const recommendation = decideRecommendation({
+    dataComplete, assumedAmount: rights.assumedAmount, dangerCount, warnCount,
+    riskGrade: rights.riskGrade, trueMargin,
+  });
 
   if (!dataComplete) {
     return {
