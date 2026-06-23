@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
-  fetchListings, fetchDetail, fetchLastCrawl, triggerJob, fetchJobStatus, setFavorite,
+  fetchDetail, triggerJob, fetchJobStatus, setFavorite,
   fetchFieldworkNotes, saveFieldworkNote, apiBase, won, eok,
-  type ListingItem, type RightsObj, type LocationObj, type CrawlStatus,
+  type ListingItem, type RightsObj, type LocationObj,
 } from './api.ts';
 import { scoreClient, DEFAULT_CONFIG, type ScoreConfig, type ClientScore } from './scoring.ts';
 import { applyListingFilters, sortRows, type SortKey } from './filters.ts';
 import { resolveRound, marginColor } from './listing-utils.ts';
+import { useListings } from './useListings.ts';
 import { acquisitionTaxRate } from './cost.ts';
 
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -238,9 +239,7 @@ function loadUIState(): UIState {
 }
 
 export default function App() {
-  const [rows, setRows] = useState<ListingItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+  const { rows, setRows, loading, err, lastCrawl, load } = useListings();
   const [onlyPassed, setOnlyPassed] = useState<boolean>(() => loadUIState().onlyPassed ?? true);
   const [onlyFavorite, setOnlyFavorite] = useState(false);
   const [onlyMultiRound, setOnlyMultiRound] = useState<boolean>(() => loadUIState().onlyMultiRound ?? false);
@@ -267,14 +266,8 @@ export default function App() {
   const [jobStatus, setJobStatus] = useState<{ msg: string; ok: boolean } | null>(null);
   const jobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [lastCrawl, setLastCrawl] = useState<CrawlStatus | null>(null);
 
-  const load = () => {
-    setLoading(true); setErr(null);
-    fetchListings().then(setRows).catch((e) => setErr(String(e))).finally(() => setLoading(false));
-    fetchLastCrawl().then((r) => { if (r) setLastCrawl(r); });
-  };
-  useEffect(load, []);
+  // 데이터 로드(rows·lastCrawl·load)는 useListings()로 이동(위 destructure)
   useEffect(() => { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }, [cfg]);
   useEffect(() => { localStorage.setItem(UI_KEY, JSON.stringify({ sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete })); }, [sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete]);
 
