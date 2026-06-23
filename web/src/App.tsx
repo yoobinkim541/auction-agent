@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import { MapView } from './MapView.tsx';
+import { FLAG_LABEL, TYPE_LABEL, RISK } from './labels.ts';
 import {
   fetchDetail, triggerJob, fetchJobStatus, setFavorite,
   fetchFieldworkNotes, saveFieldworkNote, apiBase, won, eok,
@@ -8,7 +8,7 @@ import {
 } from './api.ts';
 import { scoreClient, DEFAULT_CONFIG, type ScoreConfig, type ClientScore } from './scoring.ts';
 import { applyListingFilters, sortRows, type SortKey } from './filters.ts';
-import { resolveRound, marginColor } from './listing-utils.ts';
+import { resolveRound } from './listing-utils.ts';
 import { useListings } from './useListings.ts';
 import { acquisitionTaxRate } from './cost.ts';
 
@@ -31,23 +31,7 @@ function DDay({ dateStr }: { dateStr?: string | null }) {
 // sale_rounds 에서 현재 차수를 결정. 날짜 불일치(분석 이후 재매각기일 갱신) 시 추정.
 // resolveRound는 listing-utils.ts로 이동
 
-const FLAG_LABEL: Record<string, string> = {
-  yuchigwon: '유치권', beopjeong_jisangwon: '법정지상권', bunmyo_gijigwon: '분묘기지권',
-  daejigwon_mideungi: '대지권미등기', toji_byeoldo_deungi: '토지별도등기',
-  jesioe_building: '제시외건물', nongchi: '농취증', senior_tenant: '대항력임차인',
-  senior_gadeungi: '선순위가등기', cheolgeo_gacheobun: '건물철거가처분',
-};
-
-const TYPE_LABEL: Record<string, string> = {
-  apartment: '아파트', villa: '다세대·연립', officetel: '오피스텔',
-  house: '단독·다가구', land: '토지', commercial: '상가', other: '기타',
-};
-const RISK: Record<string, { label: string; cls: string }> = {
-  clean: { label: '깨끗', cls: 'risk-clean' },
-  caution: { label: '주의', cls: 'risk-caution' },
-  risky: { label: '위험', cls: 'risk-risky' },
-  review_required: { label: '검토필요', cls: 'risk-review' },
-};
+// FLAG_LABEL·TYPE_LABEL·RISK는 labels.ts에서 import
 const pct = (n: number | null | undefined) => (n == null ? '-' : (n * 100).toFixed(1) + '%');
 const CONF: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' };
 
@@ -82,62 +66,7 @@ function FieldProgress({ r }: { r: ListingItem }) {
 // marginColor는 listing-utils.ts로 이동
 
 /** 지도 뷰 — 위경도 있는 매물을 마진색 원형 핀으로. 핀 팝업 → 상세. Leaflet 명령형 제어. */
-function MapView({ items, onSelect }: { items: ListingItem[]; onSelect: (r: ListingItem) => void }) {
-  const elRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<L.Map | null>(null);
-  const onSelectRef = useRef(onSelect);
-  useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
-  const pts = useMemo(() => items.filter((r) => r.lat != null && r.lng != null), [items]);
-
-  useEffect(() => {
-    if (!elRef.current || mapRef.current) return;
-    const map = L.map(elRef.current, { scrollWheelZoom: true, attributionControl: true }).setView([37.55, 126.98], 11);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 19 }).addTo(map);
-    mapRef.current = map;
-    return () => { map.remove(); mapRef.current = null; };
-  }, []);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const layer = L.layerGroup().addTo(map);
-    const bounds: [number, number][] = [];
-    for (const r of pts) {
-      const lat = r.lat!, lng = r.lng!;
-      bounds.push([lat, lng]);
-      const tm = r.location?.acquisition_cost?.trueSafetyMargin ?? r.location?.safety_margin ?? null;
-      const m = L.circleMarker([lat, lng], { radius: 8, color: '#0b0e14', weight: 1, fillColor: marginColor(r), fillOpacity: 0.92 });
-      m.bindPopup(
-        `<div class="map-pop"><b>${r.address}</b><br/><span class="map-pop-sub">${TYPE_LABEL[r.property_type] ?? r.property_type} · ${r.case_no}</span><br/>` +
-        `최저가 ${eok(r.min_bid_price)} · 마진 ${tm != null ? (tm * 100).toFixed(1) + '%' : '-'}<br/>` +
-        `<button class="map-open" type="button">상세 보기 ›</button></div>`,
-      );
-      m.on('popupopen', (e) => {
-        const root = (e as unknown as { popup: L.Popup }).popup.getElement();
-        root?.querySelector<HTMLButtonElement>('.map-open')?.addEventListener('click', () => onSelectRef.current(r));
-      });
-      m.addTo(layer);
-    }
-    if (bounds.length) map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
-    // 철거된 맵에서 invalidateSize 호출 방지 — 타이머 핸들 정리 + 살아있는지 확인
-    const sizeTimer = setTimeout(() => { if (mapRef.current) mapRef.current.invalidateSize(); }, 60);
-    return () => { clearTimeout(sizeTimer); layer.remove(); };
-  }, [pts]);
-
-  return (
-    <div className="map-wrap">
-      <div ref={elRef} className="map-canvas" />
-      <div className="map-legend">
-        <span><i style={{ background: '#1ec758' }} />마진 30%↑</span>
-        <span><i style={{ background: '#a3d977' }} />10–30%</span>
-        <span><i style={{ background: '#f5a623' }} />0–10%</span>
-        <span><i style={{ background: '#f04545' }} />음수</span>
-        <span><i style={{ background: '#7a8699' }} />시세없음</span>
-      </div>
-      <p className="map-count muted">{pts.length}건 표시 · 좌표 없는 {items.length - pts.length}건 제외</p>
-    </div>
-  );
-}
+// MapView는 ./MapView.tsx로 분리
 
 /** 관심 매물 나란히 비교 — slim 데이터만으로 핵심 지표를 표로. 항목별 최우수 셀을 초록 강조. */
 function CompareView({ items, cfg, onClose, onSelect }: {
