@@ -28,15 +28,15 @@ export interface FilterState {
   today: string; // YYYY-MM-DD
 }
 
-/** 발품 진행도 정렬 순위(완료는 맨 뒤, 진행중 우선). */
+/** 발품 진행도 정렬 순위(완료는 맨 뒤, 진행중 우선). desc 정렬 기준: 높을수록 앞에. */
 export function fieldworkRank(r: ListingItem): number {
   const total = r.field_total ?? 0;
   const done = r.field_done ?? 0;
   const notes = r.field_notes ?? 0;
-  if (total > 0 && done >= total) return 1; // 완료 → 맨 뒤
+  if (total > 0 && done >= total) return 0; // 완료 → 맨 뒤(0=최저순위)
   if (done > 0) return 1000 + done; // 진행중
   if (notes > 0) return 500 + notes; // 메모만
-  return 0; // 미시작
+  return 1; // 미시작 → 완료보다 앞(desc 기준 rank 0 < 1)
 }
 
 /** 조건필터(지역·가격대) + 토글필터 적용. 순수(입력 배열 비변경). */

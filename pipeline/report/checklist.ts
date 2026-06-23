@@ -12,6 +12,7 @@ import type {
   PreBidItem, RightsAnalysisResult, LocationAnalysis, Listing, RedFlagKind,
 } from '../../shared/types.ts';
 import { won } from '../../shared/format.ts';
+import { kindLabel } from '../rights/engine.ts';
 
 // rule engine redFlag → 체크리스트 메타(카테고리/더블체크)
 const REDFLAG_META: Record<RedFlagKind, { category: PreBidItem['category']; verify: string }> = {
@@ -88,7 +89,7 @@ export function buildPreBidChecklist(args: {
   // 3) 인수되는 등기 권리(분류 결과)
   for (const c of rights.classified) {
     if (c.disposition !== 'assumed') continue;
-    push({ id: `assumed-${c.entry.kind}-${c.entry.receiptDate}`, label: `인수 등기권리: ${c.entry.kind}`, category: '등기인수', severity: 'danger', detail: `${c.entry.receiptDate} ${c.entry.kind} — 말소기준권리보다 선순위로 매수인 인수. ${c.reason}`, source: '등기현황', verify: '등기부 을구/갑구 해당 권리, 명세서 인수 기재' });
+    push({ id: `assumed-${c.entry.kind}-${c.entry.receiptDate}`, label: `인수 등기권리: ${kindLabel(c.entry.kind)}`, category: '등기인수', severity: 'danger', detail: `${c.entry.receiptDate} ${kindLabel(c.entry.kind)} — ${c.reason}`, source: '등기현황', verify: '등기부 을구/갑구 해당 권리, 명세서 인수 기재' });
   }
 
   // 4) 임차인 대항력/배당

@@ -74,10 +74,10 @@ describe('sortRows', () => {
 });
 
 describe('fieldworkRank', () => {
-  it('완료=1(맨뒤), 진행중>메모>미시작', () => {
-    expect(fieldworkRank({ field_total: 5, field_done: 5 } as unknown as ListingItem)).toBe(1);
+  it('완료=0(맨뒤), 진행중>메모>미시작>완료', () => {
+    expect(fieldworkRank({ field_total: 5, field_done: 5 } as unknown as ListingItem)).toBe(0); // 완료 → 맨뒤(최저)
     expect(fieldworkRank({ field_done: 3 } as unknown as ListingItem)).toBe(1003);
     expect(fieldworkRank({ field_notes: 2 } as unknown as ListingItem)).toBe(502);
-    expect(fieldworkRank({} as unknown as ListingItem)).toBe(0);
+    expect(fieldworkRank({} as unknown as ListingItem)).toBe(1); // 미시작 → 완료보다 앞
   });
 });
