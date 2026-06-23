@@ -9,6 +9,7 @@ import 'dotenv/config';
 import type { PropertyType } from '../shared/types.ts';
 import type { Adapter, CrawlFilter } from './adapters/types.ts';
 import { DeonakchalAdapter, inspectAndDump } from './adapters/deonakchal.ts';
+import { CourtAuctionAdapter } from './adapters/courtauction.ts';
 import { upsertListing, upsertListingDoc, deleteListingDocs, startCrawlRun, finishCrawlRun } from '../shared/db.ts';
 
 const DEFAULT_FILTER: CrawlFilter = {
@@ -31,7 +32,8 @@ async function main() {
     maxItems: maxArg ? parseInt(maxArg.split('=')[1]!, 10) : DEFAULT_FILTER.maxItems,
   };
 
-  const adapter: Adapter = new DeonakchalAdapter();
+  const source = args.find((a) => a.startsWith('--source='))?.split('=')[1] ?? 'deonakchal';
+  const adapter: Adapter = source === 'courtauction' ? new CourtAuctionAdapter() : new DeonakchalAdapter();
   const runId = await startCrawlRun(adapter.name, filter.regions.join(','));
   try {
     const scraped = await adapter.crawl(filter);
@@ -55,7 +57,12 @@ async function main() {
 main().catch((e) => {
   if (e && (e.name === 'SiteBlockedError' || /SITE_BLOCKED|비정상접속/.test(String(e)))) {
     console.error('⛔ 더낙찰옥션 접속 차단 상태 — 크롤 건너뜀. 차단 해제 후 재시도(또는 1577-9352 문의).');
-    process.exitCode = 0; // 차단은 '실패'가 아니라 '대기' → 타이머 정상 종료
+    process.exitCode = 0;
+    return;
+  }
+  if (e && (e.name === 'CourtAuctionBlockedError' || /COURT_BLOCKED/.test(String(e)))) {
+    console.error('⛔ 법원경매 IP 차단 — 로컬 PC 또는 Raspberry Pi에서 실행 필요.');
+    process.exitCode = 0;
     return;
   }
   console.error(e);

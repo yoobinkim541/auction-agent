@@ -84,7 +84,7 @@ function parseMolitJson(item: MolitItem | MolitItem[] | undefined): Comparable[]
     if (!dealAmount || !areaM2) continue;
     const name = it.aptNm || it.mhouseNm || it.offiNm;
     comps.push({
-      apartmentName: name?.trim() || undefined,
+      apartmentName: name != null ? String(name).trim() || undefined : undefined,
       dong: it.umdNm?.trim() || undefined,
       areaM2,
       dealAmount,

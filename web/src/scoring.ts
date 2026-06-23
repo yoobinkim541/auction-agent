@@ -53,7 +53,8 @@ export interface ClientScore {
 }
 
 export function scoreClient(item: ListingItem, cfg: ScoreConfig): ClientScore {
-  const margin = item.location?.safety_margin ?? null;
+  // 진짜 안전마진(총취득비용 반영)이 있으면 우선 사용, 없으면 raw 안전마진 폴백
+  const margin = item.location?.acquisition_cost?.trueSafetyMargin ?? item.location?.safety_margin ?? null;
   const safetyScore = margin == null ? 0 : Math.round(clamp(margin / cfg.safetyMaxAt, 0, 1) * 100);
 
   const grade = item.rights?.risk_grade ?? '';
