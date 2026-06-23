@@ -112,12 +112,14 @@ async function ensureLogin(page: Page): Promise<void> {
   await page.waitForLoadState('networkidle').catch(() => {});
   await page.waitForTimeout(1500);
   if (!(await page.locator(SEL.loggedInMarker).count())) {
-    // 로그인 폼이 다시 보이면 계정 오류, 아예 사라지면 IP 차단으로 리다이렉트된 것
     const blockedAfter = await detectBlocked(page);
     if (blockedAfter) throw new SiteBlockedError();
     const formStillThere = await page.locator(SEL.loginId).first().isVisible().catch(() => false);
     if (!formStillThere) throw new SiteBlockedError(); // 로그인 폼도 없고 마커도 없음 = 차단 리다이렉트
-    throw new Error('로그인 실패 — 계정(ID/PW) 또는 셀렉터 확인 필요 (CRAWL_HEADLESS=false로 점검)');
+    // 로그인 폼이 다시 표시 = 계정 오류 또는 IP 차단 후 로그인 폼 재표시(이 사이트는 IP 차단 시 별도 차단 안내 없이 로그인 폼으로 되돌림).
+    // → BLOCKED 에러로 처리해 상위에서 프록시 폴백·courtauction 폴백을 가동시킴.
+    // 진짜 계정 오류(PW 변경 등)는 CRAWL_HEADLESS=false 후 scripts/blockcheck.ts로 구분.
+    throw new SiteBlockedError();
   }
 }
 
