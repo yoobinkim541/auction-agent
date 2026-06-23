@@ -4,7 +4,7 @@
  */
 import type { Listing, LocationAnalysis, Comparable, PropertyType } from '../../shared/types.ts';
 import { addressToLawdCd } from './lawd-codes.ts';
-import { fetchMolitRaw } from '../../shared/molit-cache.ts';
+import { fetchMolitRaw, molitQuotaHit } from '../../shared/molit-cache.ts';
 import { geocodeNaver } from './osm.ts';
 import {
   parseMolitDealAmount, extractDong, extractBuildingName, estimateMarketPrice,
@@ -148,8 +148,8 @@ export async function analyzeLocation(listing: Listing, opts: LocationOptions = 
     compBasis = est.basis;
   }
 
-  // 실거래 비교군 부족 → 감정가×90% 저신뢰 fallback(감정평가일이 경매 개시보다 수개월 앞서 괴리 존재)
-  if (marketPrice === null && listing.appraisalValue && listing.appraisalValue > 0) {
+  // 실거래 비교군 부족 → 감정가×90% 저신뢰 fallback(쿼터 차단 중엔 적용 안 함 — prevMarket 보존 우선)
+  if (marketPrice === null && !molitQuotaHit() && listing.appraisalValue && listing.appraisalValue > 0) {
     marketPrice = Math.round(listing.appraisalValue * 0.90);
     marketConfidence = 'low';
     compBasis = `감정가(${(listing.appraisalValue / 100_000_000).toFixed(2)}억)×90% 추정 — 실거래 비교군 부족, 저신뢰`;
