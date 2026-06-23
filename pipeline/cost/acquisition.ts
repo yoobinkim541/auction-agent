@@ -102,9 +102,10 @@ export function estimateHousingBondCost(gongPrice: number, region: BondRegion, d
   return { faceAmount, ownCost: Math.round(faceAmount * discountRate) };
 }
 
-/** 주소 → 채권 매입률 지역구분(서울·광역시 동일률, 경기 등은 기타) */
+/** 주소 → 채권 매입률 지역구분(서울·광역시 동일률, 경기 등은 기타).
+ *  ^ 앵커 필수 — '경기도 광주시'처럼 주소 중간에 광역시명 부분문자열이 있어도 오분류되지 않도록. */
 export function bondRegionFromAddress(address: string): BondRegion {
-  return /서울|인천|부산|대구|광주|대전|울산/.test(address) ? '서울/광역시' : '기타';
+  return /^(?:서울|인천|부산|대구|광주|대전|울산)/.test(address.trim()) ? '서울/광역시' : '기타';
 }
 
 // ───────────────────────── 명도비 ─────────────────────────

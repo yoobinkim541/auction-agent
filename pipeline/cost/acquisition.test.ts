@@ -43,6 +43,10 @@ describe('국민주택채권', () => {
     expect(bondRegionFromAddress('경기도 성남시')).toBe('기타');
     expect(bondRegionFromAddress('인천광역시 부평구')).toBe('서울/광역시');
   });
+  it('경기도 광주시 → 기타(중간 광주 오탐 방지 — ^ 앵커)', () => {
+    expect(bondRegionFromAddress('경기도 광주시 오포읍')).toBe('기타');
+    expect(bondRegionFromAddress('광주광역시 북구')).toBe('서울/광역시');
+  });
 });
 
 describe('명도비', () => {
