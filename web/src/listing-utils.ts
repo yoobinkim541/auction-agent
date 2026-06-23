@@ -28,3 +28,9 @@ export function marginColor(r: ListingItem): string {
   if (tm >= 0) return '#f5a623';
   return '#f04545';
 }
+
+/** sale_date까지 남은 일수(음수=지남). today 기본=오늘(로컬 ISO 날짜). */
+export function saleDaysDiff(dateStr: string | null | undefined, today: string = new Date().toISOString().slice(0, 10)): number | null {
+  if (!dateStr) return null;
+  return Math.round((new Date(dateStr).getTime() - new Date(today).getTime()) / 86_400_000);
+}

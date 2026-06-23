@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveRound, marginColor } from './listing-utils.ts';
+import { resolveRound, marginColor, saleDaysDiff } from './listing-utils.ts';
 import type { ListingItem } from './api.ts';
 
 const rounds = [{ date: '2026-06-16', round: 1 }, { date: '2026-07-21', round: 2 }];
@@ -37,5 +37,14 @@ describe('marginColor', () => {
   it('진짜마진 없으면 raw 안전마진 폴백, 둘 다 없으면 회색', () => {
     expect(marginColor(mk(null, 0.3))).toBe('#1ec758');
     expect(marginColor(mk(null, null))).toBe('#7a8699');
+  });
+});
+
+describe('saleDaysDiff', () => {
+  it('미래/당일/과거 일수(today 고정) + null', () => {
+    expect(saleDaysDiff('2026-06-25', '2026-06-22')).toBe(3);
+    expect(saleDaysDiff('2026-06-22', '2026-06-22')).toBe(0);
+    expect(saleDaysDiff('2026-06-20', '2026-06-22')).toBe(-2);
+    expect(saleDaysDiff(null, '2026-06-22')).toBeNull();
   });
 });

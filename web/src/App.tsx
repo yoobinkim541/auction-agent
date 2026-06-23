@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapView } from './MapView.tsx';
 import { FLAG_LABEL, TYPE_LABEL, RISK } from './labels.ts';
-import { SkeletonList, Notice, Section, ThSort } from './ui.tsx';
+import { SkeletonList, Notice, Section, ThSort, DDay, FieldProgress } from './ui.tsx';
 import {
   fetchDetail, triggerJob, fetchJobStatus, setFavorite,
   fetchFieldworkNotes, saveFieldworkNote, apiBase, won, eok,
@@ -9,25 +9,15 @@ import {
 } from './api.ts';
 import { scoreClient, DEFAULT_CONFIG, type ScoreConfig, type ClientScore } from './scoring.ts';
 import { applyListingFilters, sortRows, type SortKey } from './filters.ts';
-import { resolveRound } from './listing-utils.ts';
+import { resolveRound, saleDaysDiff } from './listing-utils.ts';
 import { useListings } from './useListings.ts';
 import { acquisitionTaxRate } from './cost.ts';
 
 const TODAY = new Date().toISOString().slice(0, 10);
 
-function saleDaysDiff(dateStr: string | null | undefined): number | null {
-  if (!dateStr) return null;
-  const ms = new Date(dateStr).getTime() - new Date(TODAY).getTime();
-  return Math.round(ms / 86_400_000);
-}
+// saleDaysDiff는 listing-utils.ts로 이동
 
-function DDay({ dateStr }: { dateStr?: string | null }) {
-  const d = saleDaysDiff(dateStr);
-  if (d === null) return null;
-  const label = d === 0 ? 'D-Day' : d < 0 ? `D+${-d}` : `D-${d}`;
-  const cls = d <= 0 ? 'dday-urgent' : d <= 3 ? 'dday-warn' : d <= 7 ? 'dday-soon' : 'dday-ok';
-  return <span className={`dday ${cls}`} title={dateStr ?? ''}>{label}</span>;
-}
+// DDay는 ui.tsx로 이동
 
 // sale_rounds 에서 현재 차수를 결정. 날짜 불일치(분석 이후 재매각기일 갱신) 시 추정.
 // resolveRound는 listing-utils.ts로 이동
@@ -48,20 +38,7 @@ const SORT_DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
 /** 임장 진행 가중치: 진행중(체크 일부) > 메모만 > 미시작 > 완료(끝난 건 뒤로). 진행도순 정렬·배지 공용. */
 // fieldworkRank는 filters.ts로 이동
 
-/** 임장 진행 배지 — 현장 체크를 시작한 매물에만 표시(미시작은 숨겨 목록을 깔끔히). */
-function FieldProgress({ r }: { r: ListingItem }) {
-  const total = r.field_total ?? 0;
-  const done = r.field_done ?? 0;
-  const notes = r.field_notes ?? 0;
-  if (total === 0 || (done === 0 && notes === 0)) return null;
-  const complete = done >= total;
-  return (
-    <span className={`fv-chip${complete ? ' fv-chip-done' : ''}`}
-      title={`현장 확인 ${done}/${total}${notes ? ` · 메모 ${notes}건` : ''}${complete ? ' · 임장 완료' : ''}`}>
-      🚶{done}/{total}{notes > 0 ? ' 📝' : ''}
-    </span>
-  );
-}
+// FieldProgress는 ui.tsx로 이동
 
 /** 마진(진짜마진 우선) → 핀 색. 시세 없으면 회색. */
 // marginColor는 listing-utils.ts로 이동
