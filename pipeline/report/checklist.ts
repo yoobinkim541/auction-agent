@@ -29,7 +29,7 @@ const REDFLAG_META: Record<RedFlagKind, { category: PreBidItem['category']; veri
 
 // 자연어(명세서/현황조사서/감정요항/토지이용) 키워드 스캔 규칙 — engine redFlag 미탐지 항목 보강
 interface NoteRule { id: string; re: RegExp; label: string; category: PreBidItem['category']; severity: PreBidItem['severity']; detail: string; source: string; verify: string }
-const NOTE_RULES: NoteRule[] = [
+export const NOTE_RULES: NoteRule[] = [
   { id: 'non-extinguished-noted', re: /소멸되지\s*않는|매수인이?\s*인수|말소되지\s*않는|인수할\s*수\s*있는/, label: '명세서: 매각으로 소멸하지 않는 권리 기재', category: '등기인수', severity: 'danger', detail: '법원이 매각물건명세서에 "매수인이 인수"하는 권리를 명시함 — 인수 부담 직접 확인 필요.', source: '매각물건명세서', verify: '매각물건명세서 비고란 원문 전체 확인' },
   { id: 'ownership-dispute', re: /예고등기|소유권.*말소|원인무효|소유권에\s*관한\s*(소송|가처분)/, label: '소유권 분쟁(말소·예고등기·소송)', category: '등기인수', severity: 'danger', detail: '소유권 자체에 다툼이 있어 낙찰 후 소유권을 잃을 위험.', source: '매각물건명세서/등기현황', verify: '등기부 갑구, 관련 소송 진행 여부' },
   { id: 'cash-settlement', re: /권리산정기준일|현금청산|입주권\s*(없|불가)|조합원\s*자격/, label: '재개발 현금청산/권리산정기준일', category: '공법규제', severity: 'danger', detail: '정비구역 내 물건이라도 권리산정기준일 이후 취득 등으로 입주권 없이 현금청산 대상이 될 수 있음.', source: '매각물건명세서/토지이용', verify: '관할 구청 정비사업과, 조합원 지위 승계 여부' },

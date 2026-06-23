@@ -26,7 +26,7 @@ const KIND_TO_LEGAL: Partial<Record<RightKind, string>> = {
 };
 
 /** 체크리스트 항목 → LEGAL_MAP 엔트리 매칭(id 정확 → 인수권리 종류 → note/luf 퍼지) */
-function lookup(item: PreBidItem): LegalMapEntry | undefined {
+export function lookup(item: PreBidItem): LegalMapEntry | undefined {
   if (LEGAL_MAP[item.id]) return LEGAL_MAP[item.id];
   const am = item.id.match(/^assumed-([a-z_]+)-/);
   if (am) {
