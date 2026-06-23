@@ -205,6 +205,12 @@ async function main() {
       // 1) 권리분석 (결정형 엔진) + 사이트 예상 낙찰자인수(권위값) 반영
       const { input, siteAssumed, appraisalHighlights, siteMetrics, gongPrice, scanNotes, appraisalText } = await buildRightsInput(r.id, listing);
       const rights = analyzeRights(input);
+      // courtauction 원천: 등기부·임차인 데이터 없음 → 거짓 "클린" 방지
+      if (r.source === 'courtauction' && input.registry.length === 0) {
+        rights.riskGrade = 'review_required';
+        rights.isClean = false;
+        rights.warnings.push('[법원경매] 등기부·임차인 데이터 없음 — 입찰 전 법원경매정보시스템에서 직접 확인 필요');
+      }
       if (siteAssumed != null) {
         if (siteAssumed !== rights.assumedAmount) {
           rights.warnings.push(`인수금액: 엔진추정 ${rights.assumedAmount.toLocaleString('ko-KR')}원 / 사이트 ${siteAssumed.toLocaleString('ko-KR')}원(예상배당 기준 적용)`);
