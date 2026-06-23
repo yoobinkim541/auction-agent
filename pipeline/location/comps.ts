@@ -3,6 +3,7 @@
  * index.ts(국토부 호출·지오코딩)에서 이 함수들을 가져다 쓴다.
  */
 import type { Comparable } from '../../shared/types.ts';
+import { median } from '../../shared/stats.ts';
 
 /**
  * 국토부 dealAmount(만원, 콤마/공백 포함 문자열) → 원.
@@ -43,12 +44,7 @@ export function extractBuildingName(addr: string): string | undefined {
   return m ? m[1]!.trim() : undefined;
 }
 
-export function median(nums: number[]): number | null {
-  if (!nums.length) return null;
-  const s = [...nums].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid]! : Math.round((s[mid - 1]! + s[mid]!) / 2);
-}
+export { median };
 
 export interface Estimate {
   marketPrice: number | null;

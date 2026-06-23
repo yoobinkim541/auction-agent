@@ -9,8 +9,8 @@
  */
 import type { RentEstimate } from './rent.ts';
 import type { IncomeAnalysis, SaleScenario } from '../../shared/types.ts';
+import { won, eok, EOK } from '../../shared/format.ts';
 
-const EOK = 100_000_000;
 const round = (n: number) => Math.round(n);
 
 // ───────────────────────── 양도소득세 (2026.6) ─────────────────────────
@@ -143,5 +143,4 @@ export function analyzeIncome(inp: IncomeInput): IncomeAnalysis {
   };
 }
 
-const won = (n: number) => n.toLocaleString('ko-KR') + '원';
-const eok = (n: number) => (n / EOK).toFixed(2) + '억';
+// 포매터·EOK는 shared/format.ts에서 import

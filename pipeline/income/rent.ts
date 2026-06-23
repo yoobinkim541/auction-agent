@@ -4,6 +4,7 @@
  */
 import type { PropertyType } from '../../shared/types.ts';
 import { fetchMolitRaw, molitQuotaHit } from '../../shared/molit-cache.ts';
+import { median } from '../../shared/stats.ts';
 
 const RENT_ENDPOINT: Partial<Record<PropertyType, string>> = {
   apartment: 'RTMSDataSvcAptRent', // 아파트 전월세
@@ -64,12 +65,6 @@ function recentYearMonths(months: number): string[] {
   return out;
 }
 const num = (v: unknown) => parseInt(String(v ?? '').replace(/[^0-9]/g, ''), 10) || 0;
-const median = (xs: number[]): number | null => {
-  if (!xs.length) return null;
-  const s = [...xs].sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m]! : Math.round((s[m - 1]! + s[m]!) / 2);
-};
 
 interface RentItem { deposit?: unknown; monthlyRent?: unknown; excluUseAr?: unknown; dealYear?: unknown; dealMonth?: unknown }
 

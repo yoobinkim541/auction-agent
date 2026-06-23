@@ -7,10 +7,7 @@ import type {
 } from '../../shared/types.ts';
 import { buildPreBidChecklist } from './checklist.ts';
 import { buildFieldwork } from './fieldwork.ts';
-
-const eok = (n: number | null | undefined) => (n == null ? '-' : (n / 1e8).toFixed(2) + '억');
-const pct = (n: number | null | undefined) => (n == null ? '-' : (n * 100).toFixed(1) + '%');
-const won = (n: number) => n.toLocaleString('ko-KR') + '원';
+import { won, eok, pct } from '../../shared/format.ts';
 
 export function buildReport(args: {
   rights: RightsAnalysisResult;

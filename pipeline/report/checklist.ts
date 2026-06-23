@@ -11,8 +11,7 @@
 import type {
   PreBidItem, RightsAnalysisResult, LocationAnalysis, Listing, RedFlagKind,
 } from '../../shared/types.ts';
-
-const won = (n: number) => n.toLocaleString('ko-KR') + '원';
+import { won } from '../../shared/format.ts';
 
 // rule engine redFlag → 체크리스트 메타(카테고리/더블체크)
 const REDFLAG_META: Record<RedFlagKind, { category: PreBidItem['category']; verify: string }> = {

@@ -2,6 +2,7 @@
  * 크롤 원문(한국어) → 도메인 타입 정규화 유틸. 모두 순수함수(테스트 용이).
  */
 import type { PropertyType, RightKind } from '../shared/types.ts';
+import { pyeongToM2 } from '../shared/units.ts';
 
 /** "5억3,000만" / "530,000,000" / "53,000만원" → 원(number). 실패 시 null */
 export function parseKoreanMoney(input: string | null | undefined): number | null {
@@ -130,7 +131,7 @@ export function normalizeCaseNo(s: string | null | undefined): string {
 export function parseAreaToM2(input: string | null | undefined): number | undefined {
   if (!input) return undefined;
   const pyeong = input.match(/([0-9.]+)\s*평/);
-  if (pyeong) return Math.round(parseFloat(pyeong[1]!) * 3.305785 * 100) / 100;
+  if (pyeong) return Math.round(pyeongToM2(parseFloat(pyeong[1]!)) * 100) / 100;
   const m2 = input.match(/([0-9.]+)\s*(?:㎡|m2|m²)/i);
   if (m2) return parseFloat(m2[1]!);
   const num = input.match(/([0-9.]+)/);

@@ -6,6 +6,7 @@
  *    불확실 시 보수적(어려운 쪽)으로 분류. 법률자문 아님. (도메인 리서치+적대적 검증, 2026.6)
  */
 import type { RightsAnalysisResult, EvictionAnalysis } from '../../shared/types.ts';
+import { m2ToPyeong } from '../../shared/units.ts';
 
 type OccupantType = 'OWNER_DEBTOR' | 'TENANT_NO_OPP' | 'TENANT_OPP_PAID' | 'TENANT_OPP_ASSUMED' | 'LIEN' | 'VACANT' | 'UNKNOWN';
 
@@ -40,7 +41,7 @@ const PROFILES: Record<OccupantType, Profile> = {
 
 /** 면적·점유유형 → 명도 비용 레인지(원). base 실비 = 평형 노무비+운반보관+집행관, 점유유형 배율. */
 function evictionCost(areaM2: number, mult: number): { low: number; base: number; high: number } {
-  const py = (areaM2 || 33) / 3.3058;
+  const py = m2ToPyeong(areaM2 || 33);
   // 강제집행 실비 base(2026 보수적): 운반·보관 110만 + 집행관/실비 ~80만 + 노무비(인부수×15만)
   let labor: number;
   if (py < 10) labor = 3; else if (py < 20) labor = 5; else if (py < 30) labor = 8; else if (py < 40) labor = 11; else labor = 11 + Math.ceil((py - 40) / 10) * 3;

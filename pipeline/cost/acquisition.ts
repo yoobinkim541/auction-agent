@@ -12,8 +12,10 @@
 import type {
   PropertyType, SiteComparable, LandUseFlag, AcquisitionCost,
 } from '../../shared/types.ts';
+import { won, EOK } from '../../shared/format.ts';
+import { m2ToPyeong } from '../../shared/units.ts';
+import { median } from '../../shared/stats.ts';
 
-const EOK = 100_000_000;
 const round5 = (x: number) => Math.round(x * 1e5) / 1e5;
 const KO_85SQM = 85; // 국민주택규모(수도권·도시지역 전용면적 기준)
 
@@ -119,11 +121,7 @@ export function estimateMoveOutCost(areaPyeong: number): number {
 
 // ─────────────── 시세(동일건물 실거래) / 예상낙찰가 ───────────────
 
-const median = (xs: number[]): number => {
-  if (!xs.length) return NaN;
-  const s = [...xs].sort((a, b) => a - b); const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
-};
+// median은 shared/stats.ts에서 import(빈입력 null 계약)
 
 /** 사이트 동일건물 실거래에서 전용면적이 비슷한(±15%) 거래의 중앙값 → 시세(원). */
 export function marketFromSiteComps(comps: SiteComparable[] | undefined, subjectAreaM2: number | undefined): { price: number | null; n: number; basis: string } {
@@ -132,7 +130,7 @@ export function marketFromSiteComps(comps: SiteComparable[] | undefined, subject
   const use = near.length >= 2 ? near : comps;
   const prices = use.map((c) => c.dealManwon * 10_000).filter((p) => p > 0);
   if (!prices.length) return { price: null, n: 0, basis: '' };
-  const p = median(prices);
+  const p = median(prices)!;
   return { price: Math.round(p), n: prices.length, basis: `동일건물 실거래 ${prices.length}건(${near.length >= 2 ? `전용 ${subjectAreaM2}㎡±15%` : '전체평형'}) 중앙값` };
 }
 
@@ -144,7 +142,7 @@ export function marketFromSiteComps(comps: SiteComparable[] | undefined, subject
 export function expectedBid(appraisalValue: number, sameBuilding?: number[], nearby?: number[], minBidPrice?: number): { price: number | null; ratioPct: number | null; basis: string } {
   const ratios = (sameBuilding && sameBuilding.length) ? sameBuilding : (nearby && nearby.length ? nearby : []);
   if (!appraisalValue || !ratios.length) return { price: null, ratioPct: null, basis: '' };
-  const r = median(ratios);
+  const r = median(ratios)!;
   const ratioPrice = Math.round(appraisalValue * r / 100);
   const which = (sameBuilding && sameBuilding.length) ? `동일건물 낙찰가율 ${ratios.length}건` : `인근 낙찰가율 ${ratios.length}건`;
   // 최저가가 이미 낮아 비율 기반 예상가가 현실을 벗어난 경우(최저가 × 1.5 이하로 cap)
@@ -229,12 +227,12 @@ export function computeAcquisitionCost(inp: ComputeAcqInput): AcquisitionCost {
   const tax = acquisitionTaxRate(inp.propertyType, inp.bidPrice, inp.areaM2 ?? 0, inp.taxOptions);
   notes.push(`취득세 ${tax.totalRatePct}%: ${tax.note}`);
 
-  const pyeong = inp.areaM2 ? inp.areaM2 / 3.305785 : 0;
+  const pyeong = inp.areaM2 ? m2ToPyeong(inp.areaM2) : 0;
   const moveOutCost = inp.moveOutCost ?? estimateMoveOutCost(pyeong);
   if (inp.moveOutCost == null) notes.push(`명도비 면적식 추정(${pyeong.toFixed(1)}평) — 사이트 표기값 없음`);
 
   const bond = estimateHousingBondCost(inp.gongPrice ?? 0, bondRegionFromAddress(inp.address));
-  if (bond.faceAmount > 0) notes.push(`국민주택채권 매입 ${bond.faceAmount.toLocaleString('ko-KR')}원 → 즉시매도 본인부담 ~${bond.ownCost.toLocaleString('ko-KR')}원(할인율 14% 가정, 등기시점 재확인)`);
+  if (bond.faceAmount > 0) notes.push(`국민주택채권 매입 ${won(bond.faceAmount)} → 즉시매도 본인부담 ~${won(bond.ownCost)}(할인율 14% 가정, 등기시점 재확인)`);
   else if (!inp.gongPrice) notes.push('채권: 공시가격 미확보로 0 처리');
 
   const etcCost = inp.etcCost ?? 0;
