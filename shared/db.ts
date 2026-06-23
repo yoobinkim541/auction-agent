@@ -123,22 +123,25 @@ export async function saveLocationAnalysis(listingId: number, loc: LocationAnaly
      loc.expectedBidPrice ?? null, loc.expectedBidBasis ?? null, j(loc.acquisitionCost), j(loc.siteComps),
      j(loc.saleRounds), j(loc.building), j(loc.landUseFlags), j(loc.adminOffices), j(loc.report), j(loc.photos), j(loc.income), j(loc.eviction)],
   );
-  // sale_rounds가 있으면 sale_date 일치 차수에서 fail_count 역산(N차 → N-1회 유찰)
-  // 일치하는 날짜 없으면(≒ 재분석 전 sale_date 갱신) 최근 차수를 하한으로 사용
-  if (loc.saleRounds && loc.saleRounds.length > 0) {
-    await query(
-      `UPDATE gm_listings SET fail_count = COALESCE(
-         (SELECT (r->>'round')::int - 1
-          FROM jsonb_array_elements($2::jsonb) AS r
-          WHERE r->>'date' = sale_date::text
-          LIMIT 1),
-         (SELECT MAX((r->>'round')::int)
-          FROM jsonb_array_elements($2::jsonb) AS r
-          WHERE (r->>'date')::date < sale_date)
-       ) WHERE id = $1`,
-      [listingId, j(loc.saleRounds)],
-    );
-  }
+}
+
+/** sale_rounds 차수에서 fail_count 역산해 gm_listings 갱신 — 이전엔 saveLocationAnalysis의 숨은
+ *  부수효과였던 것을 분리(호출부에서 명시 호출). N차 매각기일 = N-1회 유찰;
+ *  sale_date 일치 차수 우선, 없으면 과거 최대 차수를 하한으로 사용. */
+export async function backfillFailCountFromSaleRounds(listingId: number, saleRounds: LocationAnalysis['saleRounds']): Promise<void> {
+  if (!saleRounds || saleRounds.length === 0) return;
+  await query(
+    `UPDATE gm_listings SET fail_count = COALESCE(
+       (SELECT (r->>'round')::int - 1
+        FROM jsonb_array_elements($2::jsonb) AS r
+        WHERE r->>'date' = sale_date::text
+        LIMIT 1),
+       (SELECT MAX((r->>'round')::int)
+        FROM jsonb_array_elements($2::jsonb) AS r
+        WHERE (r->>'date')::date < sale_date)
+     ) WHERE id = $1`,
+    [listingId, j(saleRounds)],
+  );
 }
 
 export async function saveScore(listingId: number, s: Score): Promise<void> {
