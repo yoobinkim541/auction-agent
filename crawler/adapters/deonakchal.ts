@@ -387,7 +387,7 @@ export function extractSiteMetrics(body: string, raw: string, subjectName?: stri
 
   // 5) 건축물 표제부
   const building: BuildingInfo = {};
-  building.mainUse = body.match(/주용도\s*([가-힣,·]+)/)?.[1];
+  const mainUse = body.match(/주용도\s*([가-힣,·]+)/)?.[1]; if (mainUse) building.mainUse = mainUse;
   const hh = body.match(/세대\/가구\/호\s*(\d+)\/(\d+)\/(\d+)/);
   if (hh) building.households = parseInt(hh[1]!, 10);
   const appr = body.match(/사용승인일?\s*(\d{8})/);
