@@ -9,6 +9,7 @@ import { geocodeNaver } from './osm.ts';
 import {
   parseMolitDealAmount, extractDong, extractBuildingName, estimateMarketPrice,
 } from './comps.ts';
+import { recentYearMonths } from '../../shared/stats.ts';
 
 const KAKAO = 'https://dapi.kakao.com/v2/local';
 // 국토부 실거래가 — 물건종류별 base 엔드포인트(DB 캐시는 shared/molit-cache 가 담당)
@@ -96,15 +97,6 @@ function parseMolitJson(item: MolitItem | MolitItem[] | undefined): Comparable[]
   return comps;
 }
 
-function recentYearMonths(months: number): string[] {
-  const out: string[] = [];
-  const now = new Date();
-  for (let i = 0; i < months; i++) {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
-    out.push(`${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
-  }
-  return out;
-}
 
 async function kakaoCategoryCount(code: string, lat: number, lng: number, radius: number): Promise<number> {
   const j = await kakaoGet<{ meta?: { total_count?: number } }>(

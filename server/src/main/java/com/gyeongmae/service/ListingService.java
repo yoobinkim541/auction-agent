@@ -61,6 +61,7 @@ public class ListingService {
                     'sale_rounds', loc.sale_rounds,
                     'report', case when loc.report is not null
                                    then jsonb_build_object(
+                                     'headline', loc.report->>'headline',
                                      'recommendation', loc.report->>'recommendation',
                                      'dangerCount', (loc.report->>'dangerCount')::int,
                                      'warnCount',   (loc.report->>'warnCount')::int

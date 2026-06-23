@@ -4,7 +4,7 @@
  */
 import type { PropertyType } from '../../shared/types.ts';
 import { fetchMolitRaw, molitQuotaHit } from '../../shared/molit-cache.ts';
-import { median } from '../../shared/stats.ts';
+import { median, recentYearMonths } from '../../shared/stats.ts';
 
 const RENT_ENDPOINT: Partial<Record<PropertyType, string>> = {
   apartment: 'RTMSDataSvcAptRent', // 아파트 전월세
@@ -55,15 +55,6 @@ export function estimateRentFromSalePrice(propertyType: PropertyType, marketPric
   };
 }
 
-function recentYearMonths(months: number): string[] {
-  const out: string[] = [];
-  const now = new Date();
-  for (let i = 0; i < months; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    out.push(`${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`);
-  }
-  return out;
-}
 const num = (v: unknown) => parseInt(String(v ?? '').replace(/[^0-9]/g, ''), 10) || 0;
 
 interface RentItem { deposit?: unknown; monthlyRent?: unknown; excluUseAr?: unknown; dealYear?: unknown; dealMonth?: unknown }
