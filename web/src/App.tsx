@@ -1098,6 +1098,11 @@ function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
         {row.source_url && (
           <p className="srclink"><a href={row.source_url} target="_blank" rel="noopener noreferrer">🔗 원본 상세페이지에서 더블체크 ↗</a> <span className="key-hint" title="단축키">o</span></p>
         )}
+        {row.source === 'courtauction' && (
+          <div className="court-notice" role="alert">
+            ⚠️ <strong>법원경매 원천</strong> — 등기부·임차인 데이터가 제공되지 않습니다. 권리분석은 참고 불가하며, 입찰 전 반드시 <a href="https://www.courtauction.go.kr" target="_blank" rel="noopener noreferrer">법원경매정보</a>에서 직접 확인하세요.
+          </div>
+        )}
         {loc?.photos && loc.photos.length > 0 && (
           <div className="gallery">
             {loc.photos.map((src, i) => (

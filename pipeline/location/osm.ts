@@ -92,7 +92,7 @@ export async function fetchPoiCounts(lat: number, lng: number): Promise<PoiResul
       const els = j.elements ?? [];
       if (!Array.isArray(els)) continue;
       return tally(els, lat, lng);
-    } catch { /* 다음 미러 */ }
+    } catch (e) { console.warn(`[osm] Overpass 미러 실패 ${ep}:`, (e as Error).message ?? e); }
   }
   return null;
 }
