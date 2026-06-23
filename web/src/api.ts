@@ -187,15 +187,22 @@ export interface CrawlStatus {
   source: string;      // 'deonakchal' | 'courtauction'
   blocked: boolean;    // 최근 실행이 차단으로 끝났는지
 }
+/** 로그인 실패 패턴 — IP 차단이 계정 오류처럼 보이는 경우 포함 */
+function isBlockRun(r: { status: string; error?: string | null }): boolean {
+  if (r.status === 'blocked') return true;
+  // 이전 버전 호환: error 상태이지만 로그인 실패 메시지 = 사실상 차단
+  return r.status === 'error' && typeof r.error === 'string' && /로그인 실패|SITE_BLOCKED/.test(r.error);
+}
+
 export async function fetchLastCrawl(): Promise<CrawlStatus | null> {
   try {
     const res = await fetch(`${BASE}/api/crawl-runs`);
     if (!res.ok) return null;
-    const runs = (await res.json()) as { started_at: string; status: string; source: string }[];
-    const lastOk = runs.find((r) => r.status === 'ok' && r.source === 'deonakchal');
+    const runs = (await res.json()) as { started_at: string; status: string; source: string; error?: string | null }[];
+    const deona = runs.filter((r) => r.source === 'deonakchal');
+    const lastOk = deona.find((r) => r.status === 'ok');
     if (!lastOk) {
-      // 최근 실행이 전부 차단/오류인지 확인
-      const anyBlocked = runs.some((r) => r.source === 'deonakchal' && r.status === 'blocked');
+      const anyBlocked = deona.some(isBlockRun);
       return anyBlocked
         ? { date: '없음', daysAgo: 999, stale: true, source: 'deonakchal', blocked: true }
         : null;
@@ -203,8 +210,7 @@ export async function fetchLastCrawl(): Promise<CrawlStatus | null> {
     const date = lastOk.started_at.slice(0, 10);
     const daysAgo = Math.floor((Date.now() - new Date(date).getTime()) / 86_400_000);
     // 가장 최근 실행이 차단이었는지 (성공 이후에 차단이 왔는지)
-    const latestRun = runs.find((r) => r.source === 'deonakchal');
-    const blocked = latestRun?.status === 'blocked';
+    const blocked = deona.length > 0 && isBlockRun(deona[0]!);
     return { date, daysAgo, stale: daysAgo > 3, source: 'deonakchal', blocked };
   } catch { return null; }
 }
