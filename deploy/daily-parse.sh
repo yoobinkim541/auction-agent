@@ -17,4 +17,14 @@ fi
 npm run analyze -- --all
 rc=$?
 echo "[$(date '+%F %T')] === parse done (analyze rc=$rc) ==="
+
+# 수집 헬스: status=ok·0건(굶음) 감지 → 비정상이면 텔레그램 알림. 분석 rc는 보존.
+HEALTH_OUT=$(npm run crawl:health 2>&1); HRC=$?
+echo "$HEALTH_OUT"
+if [ "$HRC" != "0" ]; then
+  SUMMARY=$(echo "$HEALTH_OUT" | grep -E "마지막 실수집|연속 0건|사유" | tr '\n' ' ' | cut -c1-350)
+  bash /home/ubuntu/.hermes/scripts/notify-telegram.sh "경매 크롤 헬스" "실패" \
+    "신규 수집 굶음 — 차단/계정플래그/프록시 점검. ${SUMMARY}" 2>/dev/null || true
+fi
+
 exit $rc
