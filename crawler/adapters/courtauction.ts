@@ -24,6 +24,7 @@
 import type { Adapter, CrawlFilter, ScrapedListing } from './types.ts';
 import type { Listing } from '../../shared/types.ts';
 import { parseKoreanDate } from '../normalize.ts';
+import { crawlFetch } from '../proxy.ts'; // CRAWL_PROXY(SSH SOCKS) egress — VM IP 차단 우회
 
 const BASE = 'https://www.courtauction.go.kr';
 const UA = 'gyeongmae-agent/0.1 (personal research; contact: owner)';
@@ -106,7 +107,7 @@ interface FetchOpts {
 
 async function post(path: string, { body, cookies, referer }: FetchOpts): Promise<unknown> {
   await rateGate();
-  const res = await fetch(BASE + path, {
+  const res = await crawlFetch(BASE + path, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json; charset=UTF-8',
@@ -127,7 +128,7 @@ async function post(path: string, { body, cookies, referer }: FetchOpts): Promis
 /** 세션 초기화 (JSESSIONID + WMONID 취득) */
 async function initSession(cookies: CookieJar): Promise<void> {
   await rateGate();
-  const res = await fetch(BASE + '/pgj/index.on', {
+  const res = await crawlFetch(BASE + '/pgj/index.on', {
     headers: {
       Accept: 'text/html,application/xhtml+xml,*/*;q=0.8',
       'Accept-Language': 'ko-KR,ko;q=0.9',
