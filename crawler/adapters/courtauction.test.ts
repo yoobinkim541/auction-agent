@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterCourts, parseCourtDate, parseMoney, mapUsgCd } from './courtauction.ts';
+import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped } from './courtauction.ts';
 
 describe('filterCourts', () => {
   it('빈 regions → 수도권 전체(9개) 반환', () => {
@@ -106,5 +106,38 @@ describe('mapUsgCd', () => {
   it('미분류 → other', () => {
     expect(mapUsgCd(undefined, undefined)).toBe('other');
     expect(mapUsgCd('99999', '기타')).toBe('other');
+  });
+});
+
+// 실제 searchControllerMain.on 응답 행(라이브 캡처) — WebSquare dlt_srchResult 매핑 회귀 고정.
+const sampleRow = {
+  boCd: 'B000210', saNo: '20080130025092', srnSaNo: '2008타경25092',
+  maemulSer: '1', mokmulSer: '3', mulJinYn: 'Y',
+  maemulUtilCd: '01',          // 숫자 코드(이걸로 분류하면 'other' = 과거 버그)
+  dspslUsgNm: '아파트',        // 용도명 텍스트(이걸로 분류해야 'apartment')
+  gamevalAmt: '194000000', minmaePrice: '194000000', yuchalCnt: '1',
+  maeGiil: '20260625', printSt: '서울특별시 성북구 정릉동 508-123 1층102호',
+};
+
+describe('rowToScraped', () => {
+  it('용도(dspslUsgNm)·사건번호(srnSaNo 타경포맷)·주소·금액 정확 매핑', () => {
+    const s = rowToScraped(sampleRow, 'B000210')!;
+    expect(s).not.toBeNull();
+    expect(s.listing.propertyType).toBe('apartment'); // dspslUsgNm 기반(숫자코드였으면 other)
+    expect(s.listing.caseNo).toBe('2008타경25092');    // srnSaNo(공백제거), 숫자 saNo 아님
+    expect(s.listing.itemNo).toBe('1');
+    expect(s.listing.address).toContain('정릉동');
+    expect(s.listing.appraisalValue).toBe(194_000_000);
+    expect(s.listing.minBidPrice).toBe(194_000_000);
+    expect(s.listing.failCount).toBe(1);
+    expect(s.listing.saleDate).toBe('2026-06-25');
+    expect(s.listing.court).toBe('서울중앙지방법원');
+    expect(s.listing.source).toBe('courtauction');
+  });
+
+  it('종결(mulJinYn=N)·금액0·주소없음 → 제외(null)', () => {
+    expect(rowToScraped({ ...sampleRow, mulJinYn: 'N' }, 'B000210')).toBeNull();
+    expect(rowToScraped({ ...sampleRow, gamevalAmt: '0', minmaePrice: '0', notifyMinmaePrice1: '0' }, 'B000210')).toBeNull();
+    expect(rowToScraped({ ...sampleRow, printSt: '' }, 'B000210')).toBeNull();
   });
 });

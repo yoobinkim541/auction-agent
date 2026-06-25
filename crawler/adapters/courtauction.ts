@@ -23,11 +23,18 @@
  */
 import type { Adapter, CrawlFilter, ScrapedListing } from './types.ts';
 import type { Listing } from '../../shared/types.ts';
-import { parseKoreanDate } from '../normalize.ts';
+import { parseKoreanDate, normalizeCaseNo } from '../normalize.ts';
 import { crawlFetch } from '../proxy.ts'; // CRAWL_PROXY(SSH SOCKS) egress — VM IP 차단 우회
 
 const BASE = 'https://www.courtauction.go.kr';
 const UA = 'gyeongmae-agent/0.1 (personal research; contact: owner)';
+// 검색 입찰기일 범위(오늘~+N일, KST) — 진행 매물 조회(사이트 기본 +14일). 페이지 크기.
+const COURT_BID_DAYS = Math.max(1, parseInt(process.env.COURT_BID_DAYS ?? '30', 10) || 30);
+const COURT_PAGE_SIZE = Math.max(1, parseInt(process.env.COURT_PAGE_SIZE ?? '40', 10) || 40);
+/** KST 기준 오늘+offset일 → YYYYMMDD */
+function ymdKST(offsetDays: number): string {
+  return new Date(Date.now() + 9 * 3_600_000 + offsetDays * 86_400_000).toISOString().slice(0, 10).replace(/-/g, '');
+}
 
 // ── 수도권 법원 코드 (selectCortOfcLst.on 응답 확인 완료) ──────────────
 const METRO_COURTS: { code: string; name: string }[] = [
@@ -103,9 +110,10 @@ interface FetchOpts {
   body?: unknown;
   cookies: CookieJar;
   referer?: string;
+  headers?: Record<string, string>; // WebSquare 필수 헤더(submissionid·sc-userid 등) 주입용
 }
 
-async function post(path: string, { body, cookies, referer }: FetchOpts): Promise<unknown> {
+async function post(path: string, { body, cookies, referer, headers: extra }: FetchOpts): Promise<unknown> {
   await rateGate();
   const res = await crawlFetch(BASE + path, {
     method: 'POST',
@@ -117,6 +125,7 @@ async function post(path: string, { body, cookies, referer }: FetchOpts): Promis
       Referer: referer ?? BASE + '/pgj/index.on',
       Origin: BASE,
       Cookie: cookies.header(),
+      ...extra,
     },
     body: JSON.stringify(body),
   });
@@ -177,9 +186,9 @@ function courtName(code: string): string {
 
 // ── 검색 결과 행 → ScrapedListing ───────────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function rowToScraped(row: any, courtCode: string): ScrapedListing | null {
-  // saNo = "2025타경1001" 형식 (법원경매 내부 포맷)
-  const rawCsNo: string = row.saNo ?? row.srnSaNo ?? '';
+export function rowToScraped(row: any, courtCode: string): ScrapedListing | null {
+  // srnSaNo = "2008타경25092"(표시 포맷, deonakchal과 일치) 우선, 없으면 saNo(숫자)
+  const rawCsNo: string = row.srnSaNo ?? row.saNo ?? '';
   if (!rawCsNo) return null;
 
   // 진행 중인 물건만 (mulJinYn="Y", 종결/취하 제외)
@@ -194,11 +203,11 @@ function rowToScraped(row: any, courtCode: string): ScrapedListing | null {
 
   const failCount = parseInt(row.yuchalCnt ?? '0', 10) || 0;
   const saleDate = parseCourtDate(row.maeGiil ?? row.maeHh1);
-  const propertyType = mapUsgCd(row.maemulUtilCd, row.mulBigo);
+  const propertyType = mapUsgCd(row.dspslUsgNm, row.mulBigo); // 용도명 텍스트("아파트"…). maemulUtilCd는 숫자코드라 안 됨
   const itemNo = row.maemulSer ?? row.mokmulSer ?? '1';
 
   const listing: Listing = {
-    caseNo: rawCsNo.trim(),
+    caseNo: normalizeCaseNo(rawCsNo),
     itemNo: String(itemNo),
     court: courtName(row.boCd ?? courtCode),
     address,
@@ -285,40 +294,34 @@ export class CourtAuctionAdapter implements Adapter {
       for (let page = 1; ; page++) {
         if (blocked || results.length >= maxItems) break;
 
-        const srchInfo = {
-          cortStDvs: '1',        // 법원/담당계 기준 검색
-          cortOfcCd: court.code,
-          jdbnCd: '',            // 전체 담당계
-          lclDspslGdsLstUsgCd: '', // 용도 전체 (클라이언트 필터)
-          mclDspslGdsLstUsgCd: '',
-          sclDspslGdsLstUsgCd: '',
-          aeeEvlAmtMin: '',
-          aeeEvlAmtMax: '',
-          rletLwsDspslPrcMin: '',
-          rletLwsDspslPrcMax: '',
-          objctArDtsMin: '',
-          objctArDtsMax: '',
-          flbdNcntMin: '',
-          flbdNcntMax: '',
-          lwsDspslPrcRateMin: '',
-          lwsDspslPrcRateMax: '',
-          bidBgngYmd: '',
-          bidEndYmd: '',
-          notifyLoc: 'off',
-          cortAuctnSrchCondCd: '0004601', // 부동산
-          mvprpRletDvsCd: '00031R',
-          pgmId: 'PGJ151F01',
-          menuNm: '물건상세검색',
-          sideDvsCd: '2',
-          srchRowIndex: '',
+        // 실제 사이트(WebSquare) 검색 포맷 — dma_ 맵 본문 + submissionid 헤더. 라이브 캡처로 확정한 스키마.
+        const body = {
+          dma_pageInfo: { pageNo: page, pageSize: COURT_PAGE_SIZE, bfPageNo: '', startRowNo: '', totalCnt: '', totalYn: page === 1 ? 'Y' : 'N', groupTotalCount: '' },
+          dma_srchGdsDtlSrchInfo: {
+            rletDspslSpcCondCd: '', bidDvsCd: '000331', mvprpRletDvsCd: '00031R', cortAuctnSrchCondCd: '0004601',
+            rprsAdongSdCd: '', rprsAdongSggCd: '', rprsAdongEmdCd: '', rdnmSdCd: '', rdnmSggCd: '', rdnmNo: '',
+            mvprpDspslPlcAdongSdCd: '', mvprpDspslPlcAdongSggCd: '', mvprpDspslPlcAdongEmdCd: '',
+            rdDspslPlcAdongSdCd: '', rdDspslPlcAdongSggCd: '', rdDspslPlcAdongEmdCd: '',
+            cortOfcCd: court.code, jdbnCd: '', execrOfcDvsCd: '',
+            lclDspslGdsLstUsgCd: '', mclDspslGdsLstUsgCd: '', sclDspslGdsLstUsgCd: '', cortAuctnMbrsId: '',
+            aeeEvlAmtMin: '', aeeEvlAmtMax: '', lwsDspslPrcRateMin: '', lwsDspslPrcRateMax: '',
+            flbdNcntMin: '', flbdNcntMax: '', objctArDtsMin: '', objctArDtsMax: '',
+            mvprpArtclKndCd: '', mvprpArtclNm: '', mvprpAtchmPlcTypCd: '', notifyLoc: 'off', lafjOrderBy: '',
+            pgmId: 'PGJ151F01', csNo: '', cortStDvs: '1', statNum: 1,
+            bidBgngYmd: ymdKST(0), bidEndYmd: ymdKST(COURT_BID_DAYS),
+            dspslDxdyYmd: '', fstDspslHm: '', scndDspslHm: '', thrdDspslHm: '', fothDspslHm: '',
+            dspslPlcNm: '', lwsDspslPrcMin: '', lwsDspslPrcMax: '', grbxTypCd: '', gdsVendNm: '',
+            fuelKndCd: '', carMdyrMax: '', carMdyrMin: '', carMdlNm: '', sideDvsCd: '',
+          },
         };
-        const pageInfo = { totalYn: page === 1 ? 'Y' : 'N', pageNo: page, pageSize: 20 };
 
         let resp: unknown;
         try {
           resp = await post('/pgj/pgjsearch/searchControllerMain.on', {
-            body: [pageInfo, srchInfo],
+            body,
             cookies,
+            referer: `${BASE}/pgj/index.on?w2xPath=/pgj/ui/pgj100/PGJ151F00.xml`,
+            headers: { submissionid: 'mf_wfm_mainFrame_sbm_selectGdsDtlSrch', 'sc-userid': 'SYSTEM' },
           });
         } catch (e) {
           console.error(`[courtauction] 검색 실패 ${court.name} p${page}:`, e);
