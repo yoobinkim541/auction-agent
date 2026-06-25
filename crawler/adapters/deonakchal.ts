@@ -29,6 +29,54 @@ const AUTH_DIR = '.auth';
 const STORAGE = path.join(AUTH_DIR, 'deonakchal.json');
 const UA = 'gyeongmae-agent/0.1 (personal research; contact: owner)';
 
+// ── 차단/계정 플래그 서킷브레이커 ──────────────────────────────────────────────
+// 진단: 이 사이트의 차단은 IP가 아니라 '로그인 계정' 단위로 걸리는 경우가 많다(집·서버 IP가
+//   둘 다 멀쩡한데 양쪽 다 막힘 = 공통분모인 계정이 플래그됨). 자동 cron이 플래그된 계정으로
+//   매번 재로그인하면 플래그가 갱신·연장돼 영구정지로 간다 → 차단 감지 후 일정시간 로그인 자체를 멈춘다.
+/** 환경변수 정수 파싱 — 미설정/비정수(NaN)면 기본값, 그 뒤 min으로 하한 클램프. 잘못된 env가 안전장치를 무력화하지 않게. */
+function intEnv(name: string, dflt: number, min: number): number {
+  const v = parseInt(process.env[name] ?? '', 10);
+  return Math.max(min, Number.isFinite(v) ? v : dflt);
+}
+const BLOCK_MARKER = path.join(AUTH_DIR, 'deonakchal-blocked.json');
+const BLOCK_COOLDOWN_MS = intEnv('CRAWL_BLOCK_COOLDOWN_MIN', 360, 0) * 60_000; // 기본 6h
+function recordBlock(reason: string): void {
+  try {
+    fs.mkdirSync(AUTH_DIR, { recursive: true });
+    const tmp = `${BLOCK_MARKER}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ at: new Date().toISOString(), reason }));
+    fs.renameSync(tmp, BLOCK_MARKER); // 원자적 교체 — 동시 read가 부분 JSON을 보지 않게(쿨다운 우회 방지)
+  } catch { /* best-effort */ }
+}
+function clearBlock(): void {
+  try { fs.rmSync(BLOCK_MARKER, { force: true }); } catch { /* ignore */ }
+}
+/** 활성 쿨다운 남은 ms(없으면 0). CRAWL_IGNORE_COOLDOWN=true 또는 쿨다운=0 이면 항상 0. */
+function blockCooldownRemainingMs(): number {
+  if (process.env.CRAWL_IGNORE_COOLDOWN === 'true' || BLOCK_COOLDOWN_MS === 0) return 0;
+  try {
+    const at = Date.parse((JSON.parse(fs.readFileSync(BLOCK_MARKER, 'utf8')) as { at?: string }).at ?? '');
+    return at ? Math.max(0, at + BLOCK_COOLDOWN_MS - Date.now()) : 0;
+  } catch { return 0; }
+}
+
+/** egress IP가 데이터센터/클라우드면 경고만 한다(개인 계정을 클라우드 IP로 로그인 = 계정 플래그 트리거).
+ *  막지는 않음. CRAWL_ALLOW_DATACENTER=true 로 침묵. 네트워크 실패는 무시(throw-safe). */
+let _egressChecked = false;
+async function warnIfDatacenterEgress(): Promise<void> {
+  if (_egressChecked || process.env.CRAWL_ALLOW_DATACENTER === 'true') return;
+  _egressChecked = true;
+  try {
+    const res = await fetch('https://ipinfo.io/json', { signal: AbortSignal.timeout(4000) });
+    if (!res.ok) return;
+    const j = (await res.json()) as { ip?: string; org?: string };
+    if (/oracle|amazon|aws|google|gcp|microsoft|azure|ovh|hetzner|digitalocean|linode|vultr|cloud|hosting|datacenter|data center/i.test(j.org ?? '')) {
+      console.warn(`[deonakchal] ⚠️ egress IP(${j.ip ?? '?'} · ${j.org})가 데이터센터/클라우드망입니다.`);
+      console.warn('[deonakchal] ⚠️ 개인 구독 계정을 클라우드 IP로 로그인하면 비정상 로그인으로 계정이 플래그될 수 있습니다 — 주거용 회선 권장. (무시: CRAWL_ALLOW_DATACENTER=true)');
+    }
+  } catch { /* 네트워크 실패 무시 */ }
+}
+
 /** 로그인 폼은 /members/login.html 의 #frmLogin (id/pw, action=javascript:tryLogin()) — 실제 확인됨.
  *  검색 결과 행/페이지 셀렉터는 로그인 후 search HTML 덤프로 확정 필요(TODO). */
 const SEL = {
@@ -58,12 +106,14 @@ const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.round(m
 const humanDwellMs = () => (Math.random() < 0.12 ? rnd(15000, 28000) : rnd(4000, 10000));
 // 전역 최소 요청 간격(하드코딩 백스톱) — CRAWL_CONCURRENCY를 높여도 사이트 부하가
 //   이 이하로 절대 못 내려가게 보장(분석 결과: 차단은 IP·세션당 요청 '속도/양' 기반).
-const MIN_REQ_INTERVAL_MS = 2500;
+const MIN_REQ_INTERVAL_MS = intEnv('CRAWL_MIN_REQ_MS', 2500, 1000);
+const REQ_JITTER_MS = intEnv('CRAWL_REQ_JITTER_MS', 1500, 0);
 let _nextReqAt = 0;
 async function rateGate(): Promise<void> {
   const now = Date.now();
+  const gap = MIN_REQ_INTERVAL_MS + Math.random() * REQ_JITTER_MS; // 고정 하한 + 지터(요청 간격 패턴 약화)
   const w = Math.max(0, _nextReqAt - now);
-  _nextReqAt = Math.max(now, _nextReqAt) + MIN_REQ_INTERVAL_MS;
+  _nextReqAt = Math.max(now, _nextReqAt) + gap;
   if (w > 0) await wait(w);
 }
 
@@ -89,6 +139,17 @@ async function detectBlocked(page: Page): Promise<boolean> {
 }
 
 async function ensureLogin(page: Page): Promise<void> {
+  try {
+    await loginInner(page);
+    // 주의: clearBlock()은 여기서 호출하지 않는다. 크롤 도중 세션만료 재로그인(scrapeOne)도 이 함수를
+    //   타므로, 여기서 지우면 같은 실행에서 막 기록한 쿨다운을 덮어쓸 수 있다. 쿨다운 해제는
+    //   '새 크롤/점검의 최초 로그인 성공' 한 지점에서만(아래 crawl()/inspectAndDump).
+  } catch (e) {
+    if (e instanceof SiteBlockedError) recordBlock(`login: ${e.message}`);
+    throw e;
+  }
+}
+async function loginInner(page: Page): Promise<void> {
   await page.goto(BASE, { waitUntil: 'domcontentloaded' }).catch(() => {});
   // 차단 상태면 로그인 시도 자체가 무의미 → 즉시 중단(타임아웃 대신 명확한 에러)
   const blocked = await detectBlocked(page);
@@ -129,6 +190,7 @@ export async function inspectAndDump(): Promise<string> {
   try {
     const page = await newPage(browser);
     await ensureLogin(page);
+    clearBlock(); // 수동 점검에서 로그인 성공 = 계정 정상 → 쿨다운 해제
     await page.context().storageState({ path: STORAGE });
     await page.goto(BASE + SEL.searchPath, { waitUntil: 'networkidle' }).catch(() => {});
     const html = await page.content();
@@ -228,7 +290,17 @@ export class DeonakchalAdapter implements Adapter {
 
   async crawl(filter: CrawlFilter): Promise<ScrapedListing[]> {
     const maxItems = filter.maxItems ?? 50;
-    const maxPagesPerTheme = parseInt(process.env.CRAWL_MAX_PAGES ?? '80', 10);
+    const maxPagesPerTheme = intEnv('CRAWL_MAX_PAGES', 80, 1);
+
+    // 차단 쿨다운 중이면 로그인 시도 자체를 건너뛴다(플래그된 계정 재두드림 → 영구정지 방지).
+    const cd = blockCooldownRemainingMs();
+    if (cd > 0) {
+      throw new SiteBlockedError(
+        `BLOCK_COOLDOWN: 차단/계정 플래그 감지 후 쿨다운 약 ${Math.ceil(cd / 60000)}분 남음 — 로그인 시도 생략. ` +
+        `계정이 풀렸다고 확신하면 CRAWL_IGNORE_COOLDOWN=true 로 재시도하거나 ${BLOCK_MARKER} 삭제.`,
+      );
+    }
+    await warnIfDatacenterEgress();
 
     const browser = await launch();
     const collected: ParsedRow[] = [];
@@ -236,6 +308,7 @@ export class DeonakchalAdapter implements Adapter {
     try {
       const page = await newPage(browser);
       await ensureLogin(page);
+      clearBlock(); // 새 크롤의 최초 로그인 성공 = 계정/세션 정상 → 쿨다운 해제(자동 회복)
       await page.context().storageState({ path: STORAGE }); // 세션 저장
 
       // Phase 1: 테마 페이지네이션 → 지역/종류 필터 → 목록 수집 (사람처럼 페이지마다 쉬며)
@@ -289,7 +362,9 @@ export class DeonakchalAdapter implements Adapter {
           } catch (e) {
             if (e instanceof SiteBlockedError) {
               blocked = true;
-              console.error(`[deonakchal] ⛔ 사이트 접속 차단 감지 — 크롤 중단(${done}/${collected.length} 수집). 사람처럼 더 천천히/내일 재시도 권장.`);
+              recordBlock(`crawl: ${e.message}`); // 쿨다운 시작 → 자동 cron의 재두드림 차단
+              console.error(`[deonakchal] ⛔ 접속 차단/계정 플래그 감지 — 크롤 중단(${done}/${collected.length} 수집).`);
+              console.error(`[deonakchal] ⏳ 향후 약 ${Math.round(BLOCK_COOLDOWN_MS / 60000)}분간 로그인 시도를 멈춥니다(계정 영구정지 방지). 수동 로그인으로 계정 상태 확인 권장.`);
               break;
             }
             throw e;
@@ -309,6 +384,7 @@ export class DeonakchalAdapter implements Adapter {
       await Promise.all(pages.map((wp) => runWorker(wp)));
       const out = results.filter(Boolean); // 차단으로 미수집된 뒤쪽 인덱스 제거
       for (let i = 1; i < pages.length; i++) await pages[i]!.close().catch(() => {});
+      if (!blocked) await ctx.storageState({ path: STORAGE }).catch(() => {}); // 갱신된 세션 쿠키 보존 → 다음 실행 재로그인 최소화
       return out;
     } finally {
       await browser.close();
@@ -452,7 +528,7 @@ export function extractSiteMetrics(body: string, raw: string, subjectName?: stri
 /** 상세 페이지(view.html?product_id=) → 등기·임차인·명세서·예상배당 추출. 헤더 키워드로 테이블 탐색. */
 /** 사이트 이상접속 차단 감지 시 던지는 에러 — 크롤 전체 중단 신호 */
 export class SiteBlockedError extends Error {
-  constructor() { super('SITE_BLOCKED: 더낙찰옥션 비정상접속 차단'); this.name = 'SiteBlockedError'; }
+  constructor(msg = 'SITE_BLOCKED: 더낙찰옥션 비정상접속 차단') { super(msg); this.name = 'SiteBlockedError'; }
 }
 /** 세션 만료(로그인 폼 리다이렉트) — scrapeOne 에서 ensureLogin 후 1회 재시도 */
 export class SessionExpiredError extends Error {
