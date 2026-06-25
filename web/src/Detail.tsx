@@ -91,9 +91,15 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position 
           <p className="srclink"><a href={row.source_url} target="_blank" rel="noopener noreferrer">🔗 원본 상세페이지에서 더블체크 ↗</a> <span className="key-hint" title="단축키">o</span></p>
         )}
         {row.source === 'courtauction' && (
-          <div className="court-notice" role="alert">
-            ⚠️ <strong>법원경매 원천</strong> — 등기부·임차인 데이터가 제공되지 않습니다. 권리분석은 참고 불가하며, 입찰 전 반드시 <a href="https://www.courtauction.go.kr" target="_blank" rel="noopener noreferrer">법원경매정보</a>에서 직접 확인하세요.
-          </div>
+          (rights?.malso_basis || (rights?.classified && rights.classified.length > 0)) ? (
+            <div className="court-notice court-notice-soft" role="note">
+              ℹ️ <strong>법원 매각물건명세서 기반</strong> — 최선순위설정·비고로 권리분석했습니다. 등기부 원본·임차인 상세는 입찰 전 <a href="https://www.courtauction.go.kr" target="_blank" rel="noopener noreferrer">법원경매정보</a>에서 직접 확인 권장.
+            </div>
+          ) : (
+            <div className="court-notice" role="alert">
+              ⚠️ <strong>법원경매 원천</strong> — 등기/명세서 미수집(상세 조회 실패). 권리분석 보류 — 입찰 전 반드시 <a href="https://www.courtauction.go.kr" target="_blank" rel="noopener noreferrer">법원경매정보</a>에서 직접 확인하세요.
+            </div>
+          )
         )}
         {loc?.photos && loc.photos.length > 0 && (
           <div className="gallery">

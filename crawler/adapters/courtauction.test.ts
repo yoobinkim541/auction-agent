@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped } from './courtauction.ts';
+import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped, parseCourtDetail } from './courtauction.ts';
 
 describe('filterCourts', () => {
   it('빈 regions → 수도권 전체(9개) 반환', () => {
@@ -139,5 +139,45 @@ describe('rowToScraped', () => {
     expect(rowToScraped({ ...sampleRow, mulJinYn: 'N' }, 'B000210')).toBeNull();
     expect(rowToScraped({ ...sampleRow, gamevalAmt: '0', minmaePrice: '0', notifyMinmaePrice1: '0' }, 'B000210')).toBeNull();
     expect(rowToScraped({ ...sampleRow, printSt: '' }, 'B000210')).toBeNull();
+  });
+});
+
+// 실제 selectAuctnCsSrchRslt.on → dma_result(라이브 캡처) — 매각물건명세서 기반 권리 파싱 회귀.
+const sampleDma = {
+  dspslGdsDxdyInfo: {
+    tprtyRnkHypthcStngDts: '508-123번지, 508-124번지 토지 : 2003.05.23. 근저당권\n집합건물 : 2008.07.09 근저당권',
+    gdsSpcfcRmk: '-개시결정 당시에는 대지권 미등기이나, 이후 대지권등기가 완료됨\n-2008.11.28. 이재선 유치권신고(879,596,895원)하였으나, 성립여부 불분명함\n-토지 별도등기 있음(가등기, 근저당권)',
+    ndstrcRghCtt: null,
+    sprfcExstcDts: null,
+  },
+  dstrtDemnInfo: [{ orddcsDvsCd: '021', dstrtDemnLstprdYmd: '20081128' }],
+  gdsDspslObjctLst: [{ rletDvsDts: '전유', pjbBuldList: '철근콘크리트조\r\n67.87㎡', aeeEvlAmt: 194000000 }],
+};
+
+describe('parseCourtDetail', () => {
+  it('최선순위설정 → registry(말소기준) + statementSeniorDate, 비고 → notes, 배당종기', () => {
+    const d = parseCourtDetail(sampleDma);
+    // 최선순위설정의 날짜 2건이 근저당 registry로
+    expect(d.registry.length).toBe(2);
+    expect(d.registry.every((r) => r.kind === 'geunjeodang')).toBe(true);
+    expect(d.registry.map((r) => r.receiptDate).sort()).toEqual(['2003-05-23', '2008-07-09']);
+    expect(d.statementSeniorDate).toBe('2003-05-23'); // 최선(가장 이른) 설정일
+    // 비고 redflag가 notes에
+    expect(d.notes.some((n) => n.includes('유치권'))).toBe(true);
+    expect(d.notes.some((n) => n.includes('토지 별도등기'))).toBe(true);
+    expect(d.notes.some((n) => n.startsWith('최선순위설정:'))).toBe(true);
+    // 배당요구종기·면적·집합건물
+    expect(d.demandDeadline).toBe('2008-11-28');
+    expect(d.areaM2).toBe(67.87);
+    expect(d.isCollective).toBe(true);
+    expect(d.tenants).toEqual([]); // baseline: 점유자 표는 e-doc, notes로만
+    expect(d.siteAssumedAmount).toBeNull(); // 유치권 등 자동 인수 처리 안 함(보수적)
+  });
+
+  it('빈/누락 dma_result → 빈 결과(throw 없음)', () => {
+    const d = parseCourtDetail({});
+    expect(d.registry).toEqual([]);
+    expect(d.statementSeniorDate).toBeUndefined();
+    expect(d.notes).toEqual([]);
   });
 });

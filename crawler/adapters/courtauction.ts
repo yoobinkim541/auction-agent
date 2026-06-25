@@ -22,8 +22,8 @@
  *  등기·임차인·매각효력·실거래 없음 (deonakchal만 제공)
  */
 import type { Adapter, CrawlFilter, ScrapedListing } from './types.ts';
-import type { Listing } from '../../shared/types.ts';
-import { parseKoreanDate, normalizeCaseNo } from '../normalize.ts';
+import type { Listing, RegistryEntry, Tenant, ListingDoc } from '../../shared/types.ts';
+import { parseKoreanDate, normalizeCaseNo, mapRightKind } from '../normalize.ts';
 import { crawlFetch } from '../proxy.ts'; // CRAWL_PROXY(SSH SOCKS) egress — VM IP 차단 우회
 
 const BASE = 'https://www.courtauction.go.kr';
@@ -226,42 +226,115 @@ export function rowToScraped(row: any, courtCode: string): ScrapedListing | null
   return { listing };
 }
 
-// ── 상세 API: 면적·기일표 보강 ────────────────────────────────────────
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function fetchDetail(csNo: string, cortOfcCd: string, dspslGdsSeq: string, cookies: CookieJar): Promise<any | null> {
-  const body = {
-    csNo,
-    cortOfcCd,
-    dspslGdsSeq,
-    pgmId: 'PGJ15BM01',
-    srchInfo: { menuNm: '물건상세검색', sideDvsCd: '2' },
+// ── 상세 검색 공용 srchInfo (WebSquare dma 맵) — 검색은 dma_srchGdsDtlSrchInfo로, 상세는 srchInfo로 감싼다 ──
+function buildSrchInfo(courtCode: string): Record<string, unknown> {
+  return {
+    rletDspslSpcCondCd: '', bidDvsCd: '000331', mvprpRletDvsCd: '00031R', cortAuctnSrchCondCd: '0004601',
+    rprsAdongSdCd: '', rprsAdongSggCd: '', rprsAdongEmdCd: '', rdnmSdCd: '', rdnmSggCd: '', rdnmNo: '',
+    mvprpDspslPlcAdongSdCd: '', mvprpDspslPlcAdongSggCd: '', mvprpDspslPlcAdongEmdCd: '',
+    rdDspslPlcAdongSdCd: '', rdDspslPlcAdongSggCd: '', rdDspslPlcAdongEmdCd: '',
+    cortOfcCd: courtCode, jdbnCd: '', execrOfcDvsCd: '',
+    lclDspslGdsLstUsgCd: '', mclDspslGdsLstUsgCd: '', sclDspslGdsLstUsgCd: '', cortAuctnMbrsId: '',
+    aeeEvlAmtMin: '', aeeEvlAmtMax: '', lwsDspslPrcRateMin: '', lwsDspslPrcRateMax: '',
+    flbdNcntMin: '', flbdNcntMax: '', objctArDtsMin: '', objctArDtsMax: '',
+    mvprpArtclKndCd: '', mvprpArtclNm: '', mvprpAtchmPlcTypCd: '', notifyLoc: 'off', lafjOrderBy: '',
+    pgmId: 'PGJ151F01', csNo: '', cortStDvs: '1', statNum: 1,
+    bidBgngYmd: ymdKST(0), bidEndYmd: ymdKST(COURT_BID_DAYS),
+    dspslDxdyYmd: '', fstDspslHm: '', scndDspslHm: '', thrdDspslHm: '', fothDspslHm: '',
+    dspslPlcNm: '', lwsDspslPrcMin: '', lwsDspslPrcMax: '', grbxTypCd: '', gdsVendNm: '',
+    fuelKndCd: '', carMdyrMax: '', carMdyrMin: '', carMdlNm: '', sideDvsCd: '',
   };
+}
+
+// ── 상세 API: 매각물건명세서 기반 권리 데이터(최선순위설정·비고·배당종기) ──
+/** 상세 조회 — selectAuctnCsSrchRslt.on (dma_srchGdsDtlSrch 본문 + submissionid 헤더). dma_result 반환(라이브 캡처로 확정). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchDetail(csNo: string, cortOfcCd: string, dspslGdsSeq: string, srchInfo: Record<string, unknown>, cookies: CookieJar): Promise<any | null> {
+  const body = { dma_srchGdsDtlSrch: { csNo, cortOfcCd, dspslGdsSeq, pgmId: 'PGJ151F01', srchInfo } };
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res = (await post('/pgj/pgj15B/selectAuctnCsSrchRslt.on', { body, cookies })) as any;
+    const res = (await post('/pgj/pgj15B/selectAuctnCsSrchRslt.on', {
+      body, cookies,
+      referer: `${BASE}/pgj/index.on?w2xPath=/pgj/ui/pgj100/PGJ151F00.xml`,
+      headers: { submissionid: 'mf_wfm_mainFrame_sbm_selectGdsDtlSrchDtlInfo', 'sc-userid': 'SYSTEM' },
+    })) as any;
     if (res?.data?.ipcheck === false) throw new CourtAuctionBlockedError();
-    return res.data?.dma_result ?? null;
+    return res?.data?.dma_result ?? null;
   } catch (e) {
     if (e instanceof CourtAuctionBlockedError) throw e;
     return null;
   }
 }
 
-/** 상세 결과로 listing 보강 (면적·건물정보 등) */
+export interface CourtDetailParsed {
+  registry: RegistryEntry[];
+  tenants: Tenant[];
+  notes: string[];
+  siteAssumedAmount: number | null;
+  statementSeniorDate?: string;
+  demandDeadline?: string;
+  areaM2?: number;
+  isCollective: boolean;
+}
+
+/**
+ * dma_result(법원 매각물건명세서 구조화본) → 권리 데이터.
+ * 주의: 등기부등본 원본이 아니라 **법원 명세서 기반** — 최선순위설정(말소기준)·비고(유치권/토지별도등기 등)·배당종기를 추출.
+ * 점유자(임차인) 표는 명세서 e-doc(PDF)에만 있어 baseline은 비고 notes로 처리(추후 PDF 파싱 보강 여지).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function parseCourtDetail(dma: any): CourtDetailParsed {
+  const info = dma?.dspslGdsDxdyInfo ?? {};
+  const notes: string[] = [];
+  for (const ln of String(info.gdsSpcfcRmk ?? '').split(/\n+/)) { const s = ln.trim(); if (s) notes.push(s); }
+  const addNote = (label: string, v: unknown) => { const s = String(v ?? '').trim(); if (s) notes.push(`${label}: ${s}`); };
+  addNote('인수권리', info.ndstrcRghCtt);
+  addNote('법정지상권', info.sprfcExstcDts);
+
+  // 최선순위 설정(말소기준권리) — "… : YYYY.MM.DD. 근저당권" 류에서 날짜+종류 추출
+  const registry: RegistryEntry[] = [];
+  const senior = String(info.tprtyRnkHypthcStngDts ?? '');
+  const dre = /(\d{4})[.\-](\d{1,2})[.\-](\d{1,2})/g;
+  let dm: RegExpExecArray | null;
+  while ((dm = dre.exec(senior))) {
+    const iso = parseKoreanDate(`${dm[1]}.${dm[2]}.${dm[3]}`);
+    if (!iso) continue;
+    const win = senior.slice(dm.index, dm.index + 24);
+    const kind = mapRightKind(win);
+    registry.push({ kind: kind === 'other' ? 'geunjeodang' : kind, receiptDate: iso, section: 'eulgu', raw: win.replace(/\s+/g, ' ').trim() });
+  }
+  if (senior.trim()) notes.push(`최선순위설정: ${senior.replace(/\s+/g, ' ').trim()}`);
+  const statementSeniorDate = registry.length ? [...registry].map((r) => r.receiptDate).sort()[0] : undefined;
+
+  const demandDeadline = parseCourtDate(String(dma?.dstrtDemnInfo?.[0]?.dstrtDemnLstprdYmd ?? '') || undefined);
+
+  const objct = dma?.gdsDspslObjctLst?.[0] ?? {};
+  let areaM2: number | undefined;
+  const aM = String(objct.pjbBuldList ?? '').match(/([\d,]+\.\d+)\s*㎡/) ?? String(objct.objctArDts ?? '').match(/(\d+\.\d+)/);
+  if (aM) { const n = parseFloat(aM[1]!.replace(/,/g, '')); if (n > 0) areaM2 = n; }
+  const isCollective = /집합|전유/.test(`${objct.rletDvsDts ?? ''} ${objct.pjbBuldList ?? ''}`);
+
+  return { registry, tenants: [], notes, siteAssumedAmount: null, statementSeniorDate, demandDeadline, areaM2, isCollective };
+}
+
+/** 상세(dma_result)로 listing 보강 + 권리 docs(registry_summary·sale_statement) emit → 권리엔진이 자동 소비. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function applyDetail(scraped: ScrapedListing, detail: any): void {
   if (!detail) return;
-  const objct = detail.gdsDspslObjctLst?.[0];
-  if (!objct) return;
-  // 전용면적 (㎡)
-  const areaTxt: string = objct.gdsArDts ?? objct.gdsAr ?? '';
-  const areaNum = parseFloat(areaTxt.replace(/[^\d.]/g, ''));
-  if (!isNaN(areaNum) && areaNum > 0) scraped.listing.areaM2 = areaNum;
-  // 집합건물 여부 (아파트·오피스텔은 일반적으로 집합건물)
-  if (/집합/.test(objct.gdsKndNm ?? '')) scraped.listing.isCollectiveBuilding = true;
-  // 배당요구 종기일
-  const demandDl = detail.dstrtDemnInfo?.dstrtDemnDxdyYmd;
-  if (demandDl) scraped.listing.demandDeadline = parseCourtDate(demandDl);
+  const d = parseCourtDetail(detail);
+  if (d.areaM2 && !scraped.listing.areaM2) scraped.listing.areaM2 = d.areaM2;
+  if (d.isCollective) scraped.listing.isCollectiveBuilding = true;
+  if (d.demandDeadline) scraped.listing.demandDeadline = d.demandDeadline;
+  const docs: ListingDoc[] = scraped.docs ?? [];
+  docs.push({
+    caseNo: scraped.listing.caseNo, itemNo: scraped.listing.itemNo, docType: 'registry_summary',
+    parsedJson: { registry: d.registry, siteAssumedAmount: d.siteAssumedAmount, statementSeniorDate: d.statementSeniorDate },
+  });
+  docs.push({
+    caseNo: scraped.listing.caseNo, itemNo: scraped.listing.itemNo, docType: 'sale_statement',
+    parsedJson: { tenants: d.tenants, notes: d.notes },
+  });
+  scraped.docs = docs;
 }
 
 // ── 메인 크롤 로직 ────────────────────────────────────────────────────
@@ -270,7 +343,7 @@ export class CourtAuctionAdapter implements Adapter {
 
   async crawl(filter: CrawlFilter): Promise<ScrapedListing[]> {
     const maxItems = filter.maxItems ?? 200;
-    const fetchDetail_ = process.env.COURT_FETCH_DETAIL === 'true';
+    const fetchDetail_ = process.env.COURT_FETCH_DETAIL !== 'false'; // 권리분석 위해 기본 ON(상세=명세서 권리데이터). 끄려면 false.
     const courts = filterCourts(filter.regions);
 
     if (!courts.length) {
@@ -290,29 +363,15 @@ export class CourtAuctionAdapter implements Adapter {
     for (const court of courts) {
       if (blocked || results.length >= maxItems) break;
       console.log(`[courtauction] 검색: ${court.name} (${court.code})`);
+      const srchInfo = buildSrchInfo(court.code); // 검색·상세 공용
 
       for (let page = 1; ; page++) {
         if (blocked || results.length >= maxItems) break;
 
-        // 실제 사이트(WebSquare) 검색 포맷 — dma_ 맵 본문 + submissionid 헤더. 라이브 캡처로 확정한 스키마.
+        // 실제 사이트(WebSquare) 검색 포맷 — dma_ 맵 본문 + submissionid 헤더. srchInfo는 상세 조회와 공용.
         const body = {
           dma_pageInfo: { pageNo: page, pageSize: COURT_PAGE_SIZE, bfPageNo: '', startRowNo: '', totalCnt: '', totalYn: page === 1 ? 'Y' : 'N', groupTotalCount: '' },
-          dma_srchGdsDtlSrchInfo: {
-            rletDspslSpcCondCd: '', bidDvsCd: '000331', mvprpRletDvsCd: '00031R', cortAuctnSrchCondCd: '0004601',
-            rprsAdongSdCd: '', rprsAdongSggCd: '', rprsAdongEmdCd: '', rdnmSdCd: '', rdnmSggCd: '', rdnmNo: '',
-            mvprpDspslPlcAdongSdCd: '', mvprpDspslPlcAdongSggCd: '', mvprpDspslPlcAdongEmdCd: '',
-            rdDspslPlcAdongSdCd: '', rdDspslPlcAdongSggCd: '', rdDspslPlcAdongEmdCd: '',
-            cortOfcCd: court.code, jdbnCd: '', execrOfcDvsCd: '',
-            lclDspslGdsLstUsgCd: '', mclDspslGdsLstUsgCd: '', sclDspslGdsLstUsgCd: '', cortAuctnMbrsId: '',
-            aeeEvlAmtMin: '', aeeEvlAmtMax: '', lwsDspslPrcRateMin: '', lwsDspslPrcRateMax: '',
-            flbdNcntMin: '', flbdNcntMax: '', objctArDtsMin: '', objctArDtsMax: '',
-            mvprpArtclKndCd: '', mvprpArtclNm: '', mvprpAtchmPlcTypCd: '', notifyLoc: 'off', lafjOrderBy: '',
-            pgmId: 'PGJ151F01', csNo: '', cortStDvs: '1', statNum: 1,
-            bidBgngYmd: ymdKST(0), bidEndYmd: ymdKST(COURT_BID_DAYS),
-            dspslDxdyYmd: '', fstDspslHm: '', scndDspslHm: '', thrdDspslHm: '', fothDspslHm: '',
-            dspslPlcNm: '', lwsDspslPrcMin: '', lwsDspslPrcMax: '', grbxTypCd: '', gdsVendNm: '',
-            fuelKndCd: '', carMdyrMax: '', carMdyrMin: '', carMdlNm: '', sideDvsCd: '',
-          },
+          dma_srchGdsDtlSrchInfo: srchInfo,
         };
 
         let resp: unknown;
@@ -364,7 +423,7 @@ export class CourtAuctionAdapter implements Adapter {
           // 상세 보강 (선택적)
           if (fetchDetail_) {
             try {
-              const detail = await fetchDetail(scraped.listing.caseNo, court.code, scraped.listing.itemNo ?? '1', cookies);
+              const detail = await fetchDetail(scraped.listing.caseNo, court.code, scraped.listing.itemNo ?? '1', srchInfo, cookies);
               applyDetail(scraped, detail);
             } catch (e) {
               if (e instanceof CourtAuctionBlockedError) { blocked = true; break; }
