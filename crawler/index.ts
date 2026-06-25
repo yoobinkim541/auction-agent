@@ -71,7 +71,8 @@ async function main() {
     try {
       const { nFound, nNew } = await runAdapter(new CourtAuctionAdapter(), filter);
       await finishCrawlRun(runId, { nFound, nNew, status: 'ok' });
-      console.log(`[courtauction] 수집 완료: ${nFound}건 (저장 ${nNew})`);
+      if (nFound === 0) console.warn('[courtauction] ⚠️ 0건 — VM IP 차단 의심. 집 IP 프록시 필요: docs/crawl-proxy.md');
+      else console.log(`[courtauction] 수집 완료: ${nFound}건 (저장 ${nNew})`);
     } catch (e) {
       await finishCrawlRun(runId, { status: 'error', error: String(e) });
       throw e;
@@ -97,7 +98,8 @@ async function main() {
     try {
       const { nFound, nNew } = await runAdapter(new DeonakchalAdapter(), filter);
       await finishCrawlRun(runId, { nFound, nNew, status: 'ok' });
-      console.log(`수집 완료: ${nFound}건 (저장 ${nNew})`);
+      if (nFound === 0) console.warn('[crawl] ⚠️ 더낙찰 0건 수집 — status=ok지만 실제 빈손(차단/세션/필터 의심). `npm run crawl:health` 로 확인.');
+      else console.log(`수집 완료: ${nFound}건 (저장 ${nNew})`);
       return; // 성공 → 종료
     } catch (e) {
       if (e instanceof SiteBlockedError) {
@@ -130,7 +132,8 @@ async function runCourtAuctionFallback(filter: CrawlFilter) {
   try {
     const { nFound, nNew } = await runAdapter(new CourtAuctionAdapter(), { ...filter, maxItems: 200 });
     await finishCrawlRun(runId, { nFound, nNew, status: 'ok' });
-    console.log(`[법원경매 폴백] ${nFound}건 (저장 ${nNew}) — 더낙찰옥션 차단 해제 후 재크롤 권장`);
+    if (nFound === 0) console.warn('[법원경매 폴백] ⚠️ 0건 — VM IP 차단 의심(status=ok지만 빈손). 집 IP 프록시 필요: docs/crawl-proxy.md');
+    else console.log(`[법원경매 폴백] ${nFound}건 (저장 ${nNew}) — 더낙찰옥션 차단 해제 후 재크롤 권장`);
   } catch (e) {
     if (e instanceof CourtAuctionBlockedError) {
       await finishCrawlRun(runId, { status: 'blocked', error: '법원경매도 차단' });

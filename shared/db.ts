@@ -6,6 +6,7 @@ import pg from 'pg';
 import type {
   Listing, ListingDoc, RightsAnalysisResult, LocationAnalysis, Score,
 } from './types.ts';
+import type { CrawlRunRow } from './crawl-health.ts';
 
 let _pool: pg.Pool | null = null;
 
@@ -169,6 +170,15 @@ export async function finishCrawlRun(
   await query(
     `update gm_crawl_runs set n_found=$2, n_new=$3, status=$4, error=$5, finished_at=now() where id=$1`,
     [id, patch.nFound ?? 0, patch.nNew ?? 0, patch.status, patch.error ?? null],
+  );
+}
+
+/** 최근 크롤런 N개(최신순) — 수집 헬스체크용(scripts/crawl-health.ts). */
+export async function recentCrawlRuns(limit = 50): Promise<CrawlRunRow[]> {
+  return query<CrawlRunRow>(
+    `select id, source, status, n_found, n_new, started_at, finished_at
+       from gm_crawl_runs order by started_at desc limit $1`,
+    [limit],
   );
 }
 

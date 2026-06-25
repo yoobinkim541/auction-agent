@@ -6,6 +6,7 @@
   "description": "부동산 경매 매물 크롤링 + 권리분석/입지분석 Claude 에이전트 (개인 투자용)",
   "scripts": {
     "crawl": "tsx crawler/index.ts",
+    "crawl:health": "tsx scripts/crawl-health.ts",
     "analyze": "tsx pipeline/run.ts",
     "ingest:legal": "tsx pipeline/legal/ingest.ts",
     "eval": "tsx pipeline/eval/run.ts",
