@@ -215,6 +215,9 @@ export interface ListingReport {
   glossary?: GlossaryEntry[]; // 이 매물에 등장한 용어 풀이(초보자용)
   legalRisk?: LegalRisk; // 법령 근거 리스크 평가
   fieldwork?: FieldworkReport; // 발품-절감 리포트 + 현장 체크리스트
+  memo?: string; // LLM 투자 의견서(통과 상위 후보만, Claude 구독 CLI). 권리·입지·수익·리스크 종합 + 입찰가/임장 관점
+  memoModel?: string; // 의견서 생성 모델 표기
+  memoHash?: string; // 입력 핵심수치 해시 — 변동 없으면 재생성 생략(캐시)
 }
 
 export interface SiteMetrics {

@@ -376,6 +376,20 @@ async function main() {
    }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, listings.length) || 1 }, () => worker()));
+
+  // 2차 패스 — LLM 투자 의견서(통과 상위 N건, Claude 구독 CLI). 입력 해시 캐시로 재생성 최소화.
+  // MEMO=off 로 끄고, MEMO_TOP_N 으로 건수 조절(기본 30). 실패해도 분석 결과엔 영향 없음.
+  if (process.env.MEMO !== 'off') {
+    const { claudeCliAvailable, generateMemosForTopCandidates } = await import('./report/memo.ts');
+    if (await claudeCliAvailable()) {
+      const topN = Math.max(1, parseInt(process.env.MEMO_TOP_N ?? '30', 10));
+      console.log(`[memo] 투자 의견서 생성(통과 상위 ${topN}건, Claude 구독 CLI)…`);
+      const m = await generateMemosForTopCandidates(topN);
+      console.log(`[memo] 후보 ${m.candidates} · 생성 ${m.generated} · 캐시 ${m.cached} · 실패 ${m.failed}`);
+    } else {
+      console.log('[memo] claude CLI 미가용 — 의견서 생략');
+    }
+  }
 }
 
 main().catch((e) => {

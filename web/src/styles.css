@@ -576,6 +576,11 @@ table.mini td.num { text-align: right; font-family: var(--mono); }
   padding: 14px 16px;
 }
 .report-head { font-size: 13.5px; font-weight: 600; margin: 4px 0 8px; line-height: 1.5; }
+.memo-sect { background: linear-gradient(180deg, rgba(150,110,255,.08), rgba(150,110,255,.02)); border: 1px solid rgba(150,110,255,.32); border-radius: 10px; padding: 14px 16px; }
+.memo-sect h3 { display: flex; align-items: center; gap: 8px; }
+.memo-model { font-size: 10px; font-weight: 600; color: #b39aff; background: rgba(150,110,255,.14); border: 1px solid rgba(150,110,255,.3); border-radius: 4px; padding: 1px 6px; }
+.memo-body { font-size: 13px; line-height: 1.75; margin: 6px 0 8px; white-space: pre-wrap; }
+.memo-disclaimer { font-size: 11px; color: var(--muted); margin: 0; }
 .report-sum { margin: 0 0 10px; padding-left: 18px; font-size: 12.5px; line-height: 1.7; }
 .report-sum li { margin: 1px 0; }
 

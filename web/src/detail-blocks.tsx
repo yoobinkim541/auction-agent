@@ -173,6 +173,14 @@ export function ReportBlock({ report, listingId }: { report: ReportObj; listingI
         <p className="muted"><b>비용</b> {report.costSummary}</p>
       </section>
 
+      {report.memo && (
+        <section className="sect memo-sect">
+          <h3>🧠 AI 투자 의견서 {report.memoModel && <span className="memo-model">{report.memoModel}</span>}</h3>
+          <p className="memo-body">{report.memo}</p>
+          <p className="memo-disclaimer">참고용 의견 — 법률자문이 아니며, 핵심 수치·권리·현장은 입찰 전 직접 확인하세요.</p>
+        </section>
+      )}
+
       {report.fieldwork && (
         <Section title={`발품 절감 — 원격 분석 ${report.fieldwork.legworkSavedPct}% 완료`}>
           <div className="fw-bar"><div className="fw-fill" style={{ width: `${report.fieldwork.legworkSavedPct}%` }} /></div>

@@ -100,6 +100,8 @@ export interface ReportObj {
   glossary?: GlossaryObj[];
   legalRisk?: LegalRiskObj;
   fieldwork?: FieldworkObj;
+  memo?: string; // LLM 투자 의견서(통과 상위 후보)
+  memoModel?: string;
 }
 export interface ListingItem {
   id: number;
