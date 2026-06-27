@@ -76,6 +76,26 @@ describe('scoreListing', () => {
     expect(s.passedFilter).toBe(true);
     expect(s.safetyMarginScore).toBe(50);
   });
+
+  it('경쟁 신호 없으면 점수 불변(클라이언트와 동일 — 기존 100 유지)', () => {
+    const s = scoreListing('x', rights(), loc(0.4), 'apartment', '서울', DEFAULT_SCORE_CONFIG);
+    expect(s.totalScore).toBe(100); // 경쟁 가중 미적용
+  });
+
+  it('저경쟁(조회 0) > 고경쟁(조회 많음) 총점', () => {
+    const low = scoreListing('x', rights(), loc(0.4), 'apartment', '서울', DEFAULT_SCORE_CONFIG, { inq: 0, interest: 0 });
+    const high = scoreListing('x', rights(), loc(0.4), 'apartment', '서울', DEFAULT_SCORE_CONFIG, { inq: 80, interest: 10 });
+    expect(low.totalScore).toBeGreaterThan(high.totalScore);
+  });
+
+  it('특수권리(위험 red_flag) → excludeSpecialRights 기본 탈락', () => {
+    const danger = rights({ riskGrade: 'caution', isClean: false, redFlags: [{ kind: 'yuchikwon', severity: 'danger', message: '유치권', needsHumanReview: true } as never] });
+    const s = scoreListing('x', danger, loc(0.4), 'apartment', '서울');
+    expect(s.passedFilter).toBe(false);
+    expect(s.reason).toContain('특수권리');
+    const s2 = scoreListing('x', danger, loc(0.4), 'apartment', '서울', { ...DEFAULT_SCORE_CONFIG, excludeSpecialRights: false });
+    expect(s2.reason ?? '').not.toContain('특수권리');
+  });
 });
 
 describe('maxSafeBid', () => {

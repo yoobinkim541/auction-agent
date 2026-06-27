@@ -19,6 +19,12 @@ export interface ScoreConfig {
   regionKeywords: string[];
   /** 인수금액 0만 통과시킬지 */
   requireCleanRights: boolean;
+  /** 경쟁도 가중치(조회·관심 낮을수록 가점). 신호 없으면 중립 */
+  wCompetition: number;
+  /** 경쟁압력 만점기준(이 값 이상이면 경쟁점수 0). 압력=조회+관심×3 */
+  competitionMaxAt: number;
+  /** 특수권리(위험 red_flag) 하드 제외 */
+  excludeSpecialRights: boolean;
 }
 
 export const DEFAULT_SCORE_CONFIG: ScoreConfig = {
@@ -29,6 +35,9 @@ export const DEFAULT_SCORE_CONFIG: ScoreConfig = {
   allowedTypes: ['apartment', 'villa', 'officetel'],
   regionKeywords: ['서울', '경기', '인천'],
   requireCleanRights: true,
+  wCompetition: 0.2,
+  competitionMaxAt: 50,
+  excludeSpecialRights: true,
 };
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
@@ -57,6 +66,7 @@ export function scoreListing(
   propertyType: string,
   address: string,
   cfg: ScoreConfig = DEFAULT_SCORE_CONFIG,
+  competition?: { inq?: number | null; interest?: number | null },
 ): Score {
   // trueSafetyMargin(취득비용·예상낙찰가 반영)을 우선 사용, 없으면 raw safetyMargin으로 fallback
   const trueSM = loc.acquisitionCost?.trueSafetyMargin ?? null;
@@ -69,7 +79,13 @@ export function scoreListing(
   // 위험항목 감점(-8점/건, 최대 -30) — web/src/scoring.ts 클라이언트 로직과 동일하게 유지
   const dangerCnt = loc.report?.dangerCount ?? 0;
   const dangerPenalty = Math.min(30, dangerCnt * 8);
-  const total = Math.max(0, Math.min(100, Math.round(cfg.wSafety * sSafety + cfg.wClean * sClean) + zeroPiBonus - dangerPenalty));
+  // 경쟁도(조회·관심 낮을수록 가점). 신호 없으면 중립(가중 제외) — 클라이언트와 동일 산식.
+  const compPressure = (competition?.inq ?? 0) + (competition?.interest ?? 0) * 3;
+  const hasComp = competition != null && (competition.inq != null || competition.interest != null);
+  const sComp = hasComp ? Math.round(clamp(1 - compPressure / (cfg.competitionMaxAt || 50), 0, 1) * 100) : 0;
+  const wComp = hasComp ? cfg.wCompetition : 0;
+  const wSum = cfg.wSafety + cfg.wClean + wComp || 1;
+  const total = Math.max(0, Math.min(100, Math.round((cfg.wSafety * sSafety + cfg.wClean * sClean + wComp * sComp) / wSum) + zeroPiBonus - dangerPenalty));
 
   const reasons: string[] = [];
   let passed = true;
@@ -89,6 +105,10 @@ export function scoreListing(
   if (rights.riskGrade === 'review_required') {
     passed = false;
     reasons.push('사람 검토 필요(특수권리)');
+  }
+  if (cfg.excludeSpecialRights && rights.redFlags.some((f) => f.severity === 'danger')) {
+    passed = false;
+    reasons.push('특수권리(위험) 제외');
   }
   if (effectiveMargin !== null && effectiveMargin < cfg.minSafetyMargin) {
     passed = false;
