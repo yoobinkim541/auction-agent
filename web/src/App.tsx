@@ -10,7 +10,7 @@ import {
   type ListingItem,
 } from './api.ts';
 import { scoreClient, type ScoreConfig } from './scoring.ts';
-import { applyListingFilters, sortRows, type SortKey } from './filters.ts';
+import { applyListingFilters, sortRows, groupRowsByCase, type SortKey } from './filters.ts';
 import { resolveRound, saleDaysDiff, localDateISO } from './listing-utils.ts';
 import { useListings } from './useListings.ts';
 import { Detail } from './Detail.tsx';
@@ -73,6 +73,7 @@ export default function App() {
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<SortKey>(() => loadUIState().sort ?? 'score');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => loadUIState().sortDir ?? 'desc');
+  const [groupByCase, setGroupByCase] = useState<boolean>(() => loadUIState().groupByCase ?? false);
   const [selected, setSelected] = useState<ListingItem | null>(null);
   const [showCompare, setShowCompare] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
@@ -86,7 +87,7 @@ export default function App() {
 
   // 데이터 로드(rows·lastCrawl·load)는 useListings()로 이동(위 destructure)
   useEffect(() => { saveConfig(cfg); }, [cfg]);
-  useEffect(() => { saveUIState({ sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete }); }, [sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete]);
+  useEffect(() => { saveUIState({ sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete, groupByCase }); }, [sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete, groupByCase]);
 
   const toggleFav = (item: ListingItem) => {
     const nv = !item.is_favorite;
@@ -154,7 +155,7 @@ export default function App() {
       .finally(() => setDetailLoading((cur) => (cur === item.case_no ? null : cur)));
   };
 
-  const view = useMemo(() => {
+  const viewFull = useMemo(() => {
     const scored = rows.map((item) => ({ item, sc: scoreClient(item, cfg) }));
     const filtered = applyListingFilters(scored, {
       cfg, hideExpired, hideIncomplete, onlyPassed, onlyFavorite, onlyZeroPi, onlyConsider,
@@ -162,6 +163,12 @@ export default function App() {
     });
     return sortRows(filtered, sort, sortDir);
   }, [rows, cfg, hideExpired, hideIncomplete, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyPassedAvoid, onlyUrgent, onlyToday, filterDate, maxGapEok, type, q, sort, sortDir]);
+
+  // 사건 그룹핑: 한 사건의 여러 물건을 대표(현재 정렬 1위) 한 행으로 접어 검토 횟수를 줄인다.
+  // caseSizes = 사건별 물건 수(접힌 행에 "외 N물건" 배지). 끄면 viewFull 그대로.
+  const caseGroups = useMemo(() => groupRowsByCase(viewFull), [viewFull]);
+  const view = useMemo(() => (groupByCase ? caseGroups.map((g) => g.rows[0]!) : viewFull), [groupByCase, caseGroups, viewFull]);
+  const caseSizes = useMemo(() => new Map(caseGroups.map((g) => [g.caseNo, g.rows.length] as const)), [caseGroups]);
 
   const favCount = rows.filter((r) => r.is_favorite).length;
   const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
@@ -392,6 +399,9 @@ export default function App() {
         <button onClick={() => runJob('analyze', '분석')} title="분석 실행">분석</button>
         <button onClick={() => exportCSV(view)} title="현재 목록을 CSV로 내보내기">↓ CSV</button>
         {favCount >= 2 && <button className="cmp-btn" onClick={() => setShowCompare(true)} title="관심 매물을 나란히 비교">⚖ 비교 ({favCount})</button>}
+        <button className={`viewmode-btn${groupByCase ? ' on' : ''}`} onClick={() => setGroupByCase((g) => !g)} title="같은 사건의 여러 물건을 대표 1건으로 묶어 검토 횟수↓">
+          {groupByCase ? '🗂 사건묶음✓' : '🗂 사건묶기'}
+        </button>
         <button className={`viewmode-btn${viewMode === 'map' ? ' on' : ''}`} onClick={() => setViewMode((m) => (m === 'list' ? 'map' : 'list'))} title="목록/지도 전환">
           {viewMode === 'list' ? '🗺 지도' : '📋 목록'}
         </button>
@@ -443,6 +453,9 @@ export default function App() {
                   <td className="mono" onClick={() => handleSelect(r)}>
                     {r.case_no}
                     {r.crawled_at && r.crawled_at.slice(0, 10) >= TODAY && <span className="new-chip" title={`신규 수집: ${r.crawled_at.slice(0, 10)}`}>NEW</span>}
+                    {groupByCase && (caseSizes.get(r.case_no) ?? 1) > 1 && (
+                      <span className="case-multi-chip" title={`이 사건에 물건 ${caseSizes.get(r.case_no)}개 — 대표 1건만 표시(사건묶기)`}>외 {(caseSizes.get(r.case_no) ?? 1) - 1}물건</span>
+                    )}
                     <FieldProgress r={r} />
                   </td>
                   <td onClick={() => handleSelect(r)} title={r.area_m2 != null ? `전용 ${r.area_m2.toFixed(1)}㎡` : undefined}>{TYPE_LABEL[r.property_type] ?? r.property_type}</td>
@@ -524,6 +537,9 @@ export default function App() {
                 <div className="card-sub">
                   <span>{TYPE_LABEL[r.property_type] ?? r.property_type}{r.area_m2 != null ? ` · ${r.area_m2.toFixed(0)}㎡` : ''}</span>
                   <span className="mono">{r.case_no}</span>
+                  {groupByCase && (caseSizes.get(r.case_no) ?? 1) > 1 && (
+                    <span className="case-multi-chip" title={`이 사건에 물건 ${caseSizes.get(r.case_no)}개 — 대표 1건만 표시`}>외 {(caseSizes.get(r.case_no) ?? 1) - 1}물건</span>
+                  )}
                   {isIncomplete
                     ? <span className="badge badge-incomplete" title="등기 미수집 — 권리분석 보류">등기?</span>
                     : <span className={`badge ${risk.cls}`} title={r.rights?.red_flags?.map((f) => f.message).join(' | ')}>{risk.label}</span>}

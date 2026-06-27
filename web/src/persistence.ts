@@ -7,6 +7,7 @@ const UI_KEY = 'gm_ui_state';
 export type UIState = {
   sort?: SortKey; sortDir?: 'asc' | 'desc'; type?: string;
   hideExpired?: boolean; onlyPassed?: boolean; onlyMultiRound?: boolean; hideIncomplete?: boolean;
+  groupByCase?: boolean;
 };
 
 /** localStorage에서 점수 설정 로드 — 없거나 손상 시 기본값과 병합(부분 저장 호환). */
