@@ -88,3 +88,33 @@ CRAWL_PROXY=socks5://127.0.0.1:1080 npm run crawl -- --source=courtauction --max
 - VM `sshd`는 기본값(`AllowTcpForwarding yes`)이면 역방향 SOCKS에 추가 설정 불필요(127.0.0.1 바인딩이라 `GatewayPorts` 불필요).
 - 프록시는 IP 우회용이 아니라 **본래의 주거용 회선으로 정직하게 나가기** 위한 것. 수집량은 여전히 천천히
   (`CRAWL_MIN_REQ_MS`/`CRAWL_REQ_JITTER_MS`), 약관 범위 내에서.
+
+---
+
+## 5. 무인 운영 — 권장 최종 구성 (창 없음 · 자동 · 중복 방지)
+
+여러 런처/재접속 루프를 쓰면 ssh가 중복돼 1080 포트 충돌(`remote port forwarding failed`)·좀비 세션이 생긴다.
+아래 구성이 이를 **구조적으로** 막는다.
+
+**홈(Windows) — 작업 스케줄러 단일 인스턴스 (관리자 PowerShell 1회):**
+```powershell
+$act = New-ScheduledTaskAction -Execute "ssh" -Argument "-N -R 1080 ubuntu@<VM_공인_IP> -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new"
+$trg = New-ScheduledTaskTrigger -AtLogOn
+$set = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -RestartCount 9999 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+$prn = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType S4U
+Register-ScheduledTask -TaskName "AuctionTunnel" -Action $act -Trigger $trg -Settings $set -Principal $prn -Force
+```
+- `S4U` = 창 없이 백그라운드(로그오프해도 유지) · `IgnoreNew` = 중복 실행 불가 · `RestartCount` = autossh 대체(끊기면 1분 내 재시작). 키인증(passphrase 없는 키) 선행 필요. 시작프로그램 VBS/while 루프는 쓰지 말 것(중복 원인).
+
+**VM — 죽은 터널 자동 정리 (`/etc/ssh/sshd_config.d/60-tunnel-keepalive.conf`):**
+```
+ClientAliveInterval 30
+ClientAliveCountMax 3
+```
+→ 끊긴 reverse-tunnel 세션을 ~90초 내 종료해 1080 포트를 신속 해제(좀비·포트점유 예방). `sudo sshd -t && sudo systemctl reload ssh`.
+
+**VM — 사전 경보:** `scripts/tunnel-health.sh`를 crontab `0 */3 * * *`로. egress가 집 IP가 아니면(다운) **상태 변화 시에만** 텔레그램. (크롤 시점 헬스체크 `daily-parse.sh`와 별개로, 새벽 크롤 전에 다운을 미리 감지.)
+
+**홈 PC 절전 금지:** `powercfg /change standby-timeout-ac 0` + 덮개 닫을 때 "아무것도 안 함"(전원 연결 시) — 새벽 크롤 때 깨어 있어야 함.
+
+> 꼬였을 때 리셋: 홈 PC **재부팅**(누적 런처 정리) → 로그인 시 작업이 무창 단일 터널 자동 시작. VM에서 `ss -tn | grep :22 | grep <집IP>` 가 1줄이면 정상.
