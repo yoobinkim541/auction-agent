@@ -206,6 +206,7 @@ export function rowToScraped(row: any, courtCode: string): ScrapedListing | null
   const propertyType = mapUsgCd(row.dspslUsgNm, row.mulBigo); // 용도명 텍스트("아파트"…). maemulUtilCd는 숫자코드라 안 됨
   const itemNo = row.maemulSer ?? row.mokmulSer ?? '1';
   // 경쟁 신호(검색행에 이미 옴): 조회수 inqCnt · 관심물건수 gwansMulRegCnt. 낮을수록 저경쟁.
+  // 참고: 법원경매 검색 응답의 inqCnt는 현재 항상 "0"(목록 단계 미노출) → 실질 신호는 관심수(gwansMulRegCnt).
   const inq = parseInt(row.inqCnt ?? '', 10);
   const interest = parseInt(row.gwansMulRegCnt ?? '', 10);
 
