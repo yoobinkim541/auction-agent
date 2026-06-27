@@ -59,15 +59,20 @@ async function runClaude(prompt: string, timeoutMs = 120_000): Promise<string> {
     cp.on('error', reject);
     cp.on('close', (code) => {
       clearTimeout(timer);
-      if (code !== 0) return reject(new Error(`claude CLI exit ${code}: ${stderr.slice(0, 200)}`));
+      if (code !== 0) return reject(new Error(`claude CLI exit ${code}: ${(stderr || stdout).slice(0, 200) || '(빈 stderr — 레이트리밋 추정)'}`));
       resolve(stdout);
     });
     cp.stdin.write(prompt);
     cp.stdin.end();
   });
-  const envelope = JSON.parse(out) as { result?: string };
+  const envelope = JSON.parse(out) as { result?: string; is_error?: boolean; subtype?: string; api_error_status?: unknown };
+  if (envelope.is_error || envelope.api_error_status || (envelope.subtype && envelope.subtype !== 'success')) {
+    throw new Error(`claude 응답 오류: ${envelope.subtype ?? ''} ${JSON.stringify(envelope.api_error_status ?? '')}`.trim());
+  }
   return (envelope.result ?? out).trim();
 }
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export async function generateMemo(c: MemoCandidate): Promise<string> {
   return runClaude(buildMemoPrompt(c));
@@ -111,16 +116,25 @@ export async function generateMemosForTopCandidates(n: number): Promise<{ candid
     };
     const h = memoHash(c);
     if (row.report.memo && row.report.memoHash === h) { cached++; continue; }
-    try {
-      const memo = await generateMemo(c);
-      if (!memo) { failed++; continue; }
+
+    // 구독 CLI 버스트 레이트리밋 대비: 실패 시 백오프 재시도(최대 3회), 성공 후 호출 간 간격.
+    let memo: string | null = null;
+    for (let attempt = 1; attempt <= 3 && memo == null; attempt++) {
+      try {
+        const out = await generateMemo(c);
+        if (out) memo = out;
+        else if (attempt === 3) failed++;
+      } catch (e) {
+        if (attempt === 3) { failed++; console.error(`의견서 실패 ${row.case_no}: ${e instanceof Error ? e.message : e}`); }
+        else await sleep(5000 * attempt); // 5s, 10s 백오프
+      }
+    }
+    if (memo) {
       await query('update gm_location_analysis set report = report || $2::jsonb where listing_id = $1', [
         row.id, JSON.stringify({ memo, memoModel: MEMO_MODEL, memoHash: h }),
       ]);
       generated++;
-    } catch (e) {
-      failed++;
-      console.error(`의견서 실패 ${row.case_no}: ${e instanceof Error ? e.message : e}`);
+      await sleep(Number(process.env.MEMO_THROTTLE_MS) || 1500); // 호출 간 간격(버스트 한도 회피)
     }
   }
   return { candidates: rows.length, generated, cached, failed };
