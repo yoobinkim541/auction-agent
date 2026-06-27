@@ -27,4 +27,10 @@ if [ "$HRC" != "0" ]; then
     "신규 수집 굶음 — 차단/계정플래그/프록시 점검. ${SUMMARY}" 2>/dev/null || true
 fi
 
+# 일일 추천 다이제스트: 통과 상위 N건을 텔레그램으로(stdout만 발생 = 안전). 비어도 안내 전송.
+DIGEST=$(npm run --silent digest 2>/dev/null)
+if [ -n "$DIGEST" ]; then
+  bash /home/ubuntu/.hermes/scripts/notify-telegram.sh "경매 추천" "완료" "$DIGEST" 2>/dev/null || true
+fi
+
 exit $rc

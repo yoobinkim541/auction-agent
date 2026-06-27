@@ -7,6 +7,7 @@
   "scripts": {
     "crawl": "tsx crawler/index.ts",
     "crawl:health": "tsx scripts/crawl-health.ts",
+    "digest": "tsx scripts/daily-digest.ts",
     "analyze": "tsx pipeline/run.ts",
     "ingest:legal": "tsx pipeline/legal/ingest.ts",
     "eval": "tsx pipeline/eval/run.ts",
