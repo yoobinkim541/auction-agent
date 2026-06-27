@@ -78,6 +78,7 @@ export default function App() {
   const [selected, setSelected] = useState<ListingItem | null>(null);
   const [showCompare, setShowCompare] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
+  const [mapShowAll, setMapShowAll] = useState(true); // 지도는 기본 전체 매물(수집한 모든 데이터)
   const [cfg, setCfg] = useState<ScoreConfig>(loadConfig);
   const [showCfg, setShowCfg] = useState(false);
   const [showLegend, setShowLegend] = useState(false);
@@ -171,6 +172,13 @@ export default function App() {
   const caseGroups = useMemo(() => groupRowsByCase(viewFull), [viewFull]);
   const view = useMemo(() => (groupByCase ? caseGroups.map((g) => g.rows[0]!) : viewFull), [groupByCase, caseGroups, viewFull]);
   const caseSizes = useMemo(() => new Map(caseGroups.map((g) => [g.caseNo, g.rows.length] as const)), [caseGroups]);
+
+  // 지도용 포인트 — 전체(수집한 모든 매물) 또는 현재 목록(필터). 통과 여부로 마커 스타일 구분.
+  const allScored = useMemo(() => rows.map((item) => ({ item, sc: scoreClient(item, cfg) })), [rows, cfg]);
+  const mapPoints = useMemo(
+    () => (mapShowAll ? allScored : viewFull).map((x) => ({ item: x.item, passed: x.sc.passed })),
+    [mapShowAll, allScored, viewFull],
+  );
 
   const favCount = rows.filter((r) => r.is_favorite).length;
   const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
@@ -434,8 +442,8 @@ export default function App() {
         </div>
       )}
 
-      {viewMode === 'map' && view.length > 0 && (
-        <MapView items={view.map((v) => v.item)} onSelect={handleSelect} />
+      {viewMode === 'map' && (
+        <MapView items={mapPoints} onSelect={handleSelect} showAll={mapShowAll} onToggleShowAll={() => setMapShowAll((s) => !s)} />
       )}
 
       {viewMode === 'list' && view.length > 0 && (
