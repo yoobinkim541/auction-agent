@@ -193,6 +193,14 @@ async function main() {
     if (row.market_price) prevMarket.set(row.listing_id, { price: row.market_price, conf: row.market_confidence, basis: row.comp_basis });
   }
 
+  // 직전 LLM 의견서 캐시 — report 재생성이 memo를 덮어쓰지 않도록 보존(2차 패스 해시 캐시 적중 위함).
+  const prevMemo = new Map<number, { memo: string; memoHash?: string; memoModel?: string }>();
+  for (const row of await query<{ listing_id: number; memo: string | null; memohash: string | null; memomodel: string | null }>(
+    "select listing_id, report->>'memo' memo, report->>'memoHash' memohash, report->>'memoModel' memomodel from gm_location_analysis where report->>'memo' is not null",
+  )) {
+    if (row.memo) prevMemo.set(row.listing_id, { memo: row.memo, memoHash: row.memohash ?? undefined, memoModel: row.memomodel ?? undefined });
+  }
+
   let cursor = 0;
   let done = 0;
   const worker = async (): Promise<void> => {
@@ -314,6 +322,10 @@ async function main() {
       // 등기 미수집(빈 배열 = 사이트 접속차단/로드실패)이면 분석 보류 처리
       const dataComplete = input.registry.length > 0 || siteAssumed != null || input.tenants.length > 0;
       loc.report = buildReport({ rights, loc, listing, notes: scanNotes, scanText, dataComplete });
+      // 직전 LLM 의견서 보존 — report를 새로 만들면 memo가 사라져 2차 패스가 매번 전건 재생성하게 됨.
+      // 입력이 그대로면 memoHash가 일치해 2차 패스가 캐시 적중(재생성 생략)한다.
+      const pm = prevMemo.get(r.id);
+      if (pm) { loc.report.memo = pm.memo; loc.report.memoHash = pm.memoHash; loc.report.memoModel = pm.memoModel; }
       // 3-c) 초보자 용어 풀이 + 법령 근거 리스크 평가
       loc.report.glossary = attachGlossary([
         loc.report.headline, loc.report.rightsSummary, loc.report.locationSummary, loc.report.costSummary,
