@@ -230,8 +230,8 @@ export default function App() {
         <h1>경매 매물 분석 <span className="sub">권리분석 · 입지분석</span>{lastCrawl && <span className="crawl-date">데이터 기준 {lastCrawl.date}</span>}</h1>
         {lastCrawl?.blocked && (
           <div className="stale-banner blocked" role="alert">
-            ⛔ <strong>크롤 차단 중</strong> — 더낙찰옥션 수집이 막혀 있습니다. 데이터가 {lastCrawl.daysAgo}일 전 기준입니다.
-            프록시 IP 변경 후 재시도 필요.
+            ⛔ <strong>크롤 차단 의심</strong> — 법원경매 최근 수집이 0건/실패입니다{lastCrawl.daysAgo < 900 ? ` (마지막 정상 수집 ${lastCrawl.daysAgo}일 전)` : ''}.
+            집 IP 프록시(터널) 상태 확인 후 재시도 필요.
           </div>
         )}
         {!lastCrawl?.blocked && lastCrawl?.stale && (

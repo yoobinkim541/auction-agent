@@ -192,31 +192,25 @@ export interface CrawlStatus {
   source: string;      // 'deonakchal' | 'courtauction'
   blocked: boolean;    // 최근 실행이 차단으로 끝났는지
 }
-/** 로그인 실패 패턴 — IP 차단이 계정 오류처럼 보이는 경우 포함 */
-function isBlockRun(r: { status: string; error?: string | null }): boolean {
-  if (r.status === 'blocked') return true;
-  // 이전 버전 호환: error 상태이지만 로그인 실패 메시지 = 사실상 차단
-  return r.status === 'error' && typeof r.error === 'string' && /로그인 실패|SITE_BLOCKED/.test(r.error);
-}
-
 export async function fetchLastCrawl(): Promise<CrawlStatus | null> {
   try {
     const res = await fetch(`${BASE}/api/crawl-runs`);
     if (!res.ok) return null;
-    const runs = (await res.json()) as { started_at: string; status: string; source: string; error?: string | null }[];
-    const deona = runs.filter((r) => r.source === 'deonakchal');
-    const lastOk = deona.find((r) => r.status === 'ok');
+    const runs = (await res.json()) as { started_at: string; status: string; source: string; n_found?: number; error?: string | null }[];
+    // 법원경매(courtauction)가 현재 메인 소스 → 신선도·차단은 이 소스 기준으로 판단한다.
+    // (더낙찰옥션은 계정 단위 차단으로 사실상 중단된 보조 소스라, 그 실패로 배너를 띄우면 오탐이 된다.)
+    const court = runs.filter((r) => r.source === 'courtauction');
+    const lastOk = court.find((r) => r.status === 'ok' && (r.n_found ?? 0) > 0) ?? court.find((r) => r.status === 'ok');
     if (!lastOk) {
-      const anyBlocked = deona.some(isBlockRun);
-      return anyBlocked
-        ? { date: '없음', daysAgo: 999, stale: true, source: 'deonakchal', blocked: true }
-        : null;
+      // 메인 소스가 최근 기록에서 한 번도 정상 수집한 적이 없음 → 차단/장애로 표시
+      return { date: '없음', daysAgo: 999, stale: true, source: 'courtauction', blocked: true };
     }
     const date = lastOk.started_at.slice(0, 10);
-    const daysAgo = Math.floor((Date.now() - new Date(date).getTime()) / 86_400_000);
-    // 가장 최근 실행이 차단이었는지 (성공 이후에 차단이 왔는지)
-    const blocked = deona.length > 0 && isBlockRun(deona[0]!);
-    return { date, daysAgo, stale: daysAgo > 3, source: 'deonakchal', blocked };
+    const daysAgo = Math.max(0, Math.floor((Date.now() - new Date(date).getTime()) / 86_400_000));
+    // 차단 = 가장 최근 실행이 실패(error/blocked)거나, status는 ok지만 0건(법원경매 IP 차단 신호).
+    const latest = court[0];
+    const blocked = latest != null && (latest.status !== 'ok' || (latest.n_found ?? 0) === 0);
+    return { date, daysAgo, stale: daysAgo > 3, source: 'courtauction', blocked };
   } catch { return null; }
 }
 
