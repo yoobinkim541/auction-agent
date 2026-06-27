@@ -23,7 +23,7 @@ public class ListingService {
   private static final String SELECT_BODY = """
       select l.id, l.case_no, l.court, l.address, l.property_type,
              l.appraisal_value, l.min_bid_price, l.fail_count, l.sale_date, l.area_m2, l.source,
-             l.source_url, l.is_favorite,
+             l.source_url, l.is_favorite, l.inq_cnt, l.interest_cnt,
              (to_jsonb(r)   - 'id' - 'listing_id') as rights,
              (to_jsonb(loc) - 'id' - 'listing_id') as location,
              s.total_score, s.passed_filter, s.safety_margin_score, s.clean_rights_score, s.reason
@@ -37,7 +37,7 @@ public class ListingService {
   private static final String SELECT_SLIM = """
       select l.id, l.case_no, l.court, l.address, l.property_type,
              l.appraisal_value, l.min_bid_price, l.fail_count, l.sale_date, l.area_m2, l.source,
-             l.source_url, l.is_favorite, l.crawled_at, l.lat, l.lng,
+             l.source_url, l.is_favorite, l.crawled_at, l.lat, l.lng, l.inq_cnt, l.interest_cnt,
              (select count(*) from gm_fieldwork_notes fn where fn.listing_id = l.id and fn.checked) as field_done,
              coalesce(jsonb_array_length(loc.report->'fieldwork'->'fieldChecklist'), 0) as field_total,
              (select count(*) from gm_fieldwork_notes fn where fn.listing_id = l.id and fn.note <> '') as field_notes,
