@@ -9,7 +9,8 @@ import {
   apiBase, eok, pct,
   type ListingItem,
 } from './api.ts';
-import { scoreClient, type ScoreConfig } from './scoring.ts';
+import { scoreClient, scoreBreakdown, type ScoreConfig } from './scoring.ts';
+import { Legend } from './Legend.tsx';
 import { applyListingFilters, sortRows, groupRowsByCase, type SortKey } from './filters.ts';
 import { resolveRound, saleDaysDiff, localDateISO } from './listing-utils.ts';
 import { useListings } from './useListings.ts';
@@ -79,6 +80,7 @@ export default function App() {
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [cfg, setCfg] = useState<ScoreConfig>(loadConfig);
   const [showCfg, setShowCfg] = useState(false);
+  const [showLegend, setShowLegend] = useState(false);
   const detailCacheRef = useRef(new Map<string, ListingItem>());
   const [detailLoading, setDetailLoading] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<{ msg: string; ok: boolean } | null>(null);
@@ -393,21 +395,27 @@ export default function App() {
           <option value={2}>갭 2억↓</option>
           <option value={3}>갭 3억↓</option>
         </select>
-        <button onClick={() => setShowCfg((s) => !s)}>{showCfg ? '조건 닫기' : '⚙ 조건·기준'}</button>
-        <button onClick={load}>새로고침</button>
-        <button onClick={() => runJob('crawl', '크롤')} title="더낙찰옥션 크롤">크롤</button>
-        <button onClick={() => runJob('analyze', '분석')} title="분석 실행">분석</button>
-        <button onClick={() => exportCSV(view)} title="현재 목록을 CSV로 내보내기">↓ CSV</button>
-        {favCount >= 2 && <button className="cmp-btn" onClick={() => setShowCompare(true)} title="관심 매물을 나란히 비교">⚖ 비교 ({favCount})</button>}
         <button className={`viewmode-btn${groupByCase ? ' on' : ''}`} onClick={() => setGroupByCase((g) => !g)} title="같은 사건의 여러 물건을 대표 1건으로 묶어 검토 횟수↓">
           {groupByCase ? '🗂 사건묶음✓' : '🗂 사건묶기'}
         </button>
         <button className={`viewmode-btn${viewMode === 'map' ? ' on' : ''}`} onClick={() => setViewMode((m) => (m === 'list' ? 'map' : 'list'))} title="목록/지도 전환">
           {viewMode === 'list' ? '🗺 지도' : '📋 목록'}
         </button>
+
+        <span className="ctrl-sep" />
+        <button className={`help-btn${showLegend ? ' on' : ''}`} onClick={() => setShowLegend((s) => !s)} title="점수·통과 기준·배지 의미 도움말">❓ 도움말</button>
+        <button onClick={() => setShowCfg((s) => !s)}>{showCfg ? '조건 닫기' : '⚙ 조건·기준'}</button>
+        <button onClick={() => exportCSV(view)} title="현재 목록을 CSV로 내보내기">↓ CSV</button>
+        {favCount >= 2 && <button className="cmp-btn" onClick={() => setShowCompare(true)} title="관심 매물을 나란히 비교">⚖ 비교 ({favCount})</button>}
+
+        <span className="ctrl-sep" />
+        <button className="admin-btn" onClick={load} title="목록 새로고침">↻ 새로고침</button>
+        <button className="admin-btn" onClick={() => runJob('crawl', '크롤')} title="크롤 실행(법원경매·더낙찰옥션)">크롤</button>
+        <button className="admin-btn" onClick={() => runJob('analyze', '분석')} title="권리·입지·점수 재분석">분석</button>
         <span className="count">{view.length}건</span>
       </div>
 
+      {showLegend && <Legend cfg={cfg} />}
       {showCfg && <ConfigPanel cfg={cfg} setCfg={setCfg} />}
 
       {loading && <SkeletonList />}
@@ -491,7 +499,7 @@ export default function App() {
                       <span className="lowcomp-chip" title={`저경쟁 — 조회 ${r.inq_cnt ?? '?'}·관심 ${r.interest_cnt ?? 0} (남들이 덜 본 매물)`}>🔥저경쟁</span>
                     )}
                   </td>
-                  <td className="num" onClick={() => handleSelect(r)} title={sc.reasons.length ? sc.reasons.join(' · ') : undefined}>
+                  <td className="num" onClick={() => handleSelect(r)} title={[scoreBreakdown(sc), ...(sc.reasons.length ? ['—', ...sc.reasons] : [])].join(' · ')}>
                     <b className={sc.totalScore >= 70 ? 'good' : sc.totalScore < 40 ? 'danger' : ''}>{sc.totalScore}</b>
                     {!sc.passed && sc.reasons.length > 0 && <span className="score-fail-hint">{sc.reasons[0]}</span>}
                   </td>
@@ -556,7 +564,7 @@ export default function App() {
                     : <div><span>진짜마진</span><b className={(tm ?? 0) < 0 ? 'danger' : 'good'}>{pct(tm)}</b></div>}
                 </div>
                 <div className="card-foot">
-                  <span className="card-score">점수 <b>{sc.totalScore}</b></span>
+                  <span className="card-score" title={scoreBreakdown(sc)}>점수 <b>{sc.totalScore}</b></span>
                   {assumed > 0 && <span className="card-assumed">인수 {eok(assumed)}</span>}
                   {r.location?.income?.zeroPiCandidate && <span className="zero-pi-chip">★무피</span>}
                   {currentRound && currentRound > 1 && <span className="round-badge">{currentRound}차 진행</span>}

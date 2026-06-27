@@ -59,6 +59,12 @@ export interface ClientScore {
   reasons: string[];
 }
 
+/** 점수 구성 한 줄 설명(툴팁용) — 왜 이 점수인지 안전·권리·경쟁 분해. */
+export function scoreBreakdown(sc: ClientScore): string {
+  const comp = sc.competitionScore == null ? '경쟁 –' : `경쟁 ${sc.competitionScore}`;
+  return `안전 ${sc.safetyScore} · 권리 ${sc.cleanScore} · ${comp} → 총점 ${sc.totalScore}`;
+}
+
 export function scoreClient(item: ListingItem, cfg: ScoreConfig): ClientScore {
   // 진짜 안전마진(총취득비용 반영)이 있으면 우선 사용, 없으면 raw 안전마진 폴백
   const margin = item.location?.acquisition_cost?.trueSafetyMargin ?? item.location?.safety_margin ?? null;
