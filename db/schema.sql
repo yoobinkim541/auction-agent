@@ -25,6 +25,8 @@ create table if not exists gm_listings (
   area_m2         numeric,
   building_area_m2 numeric,
   is_collective_building boolean default false,
+  inq_cnt       int,  -- 조회수(경쟁 신호)
+  interest_cnt  int,  -- 관심물건 등록수(경쟁 신호)
   is_favorite   boolean default false,
   source        text not null check (source in ('deonakchal','courtauction')),
   source_url    text,

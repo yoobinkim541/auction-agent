@@ -117,6 +117,7 @@ const sampleRow = {
   dspslUsgNm: '아파트',        // 용도명 텍스트(이걸로 분류해야 'apartment')
   gamevalAmt: '194000000', minmaePrice: '194000000', yuchalCnt: '1',
   maeGiil: '20260625', printSt: '서울특별시 성북구 정릉동 508-123 1층102호',
+  inqCnt: '19', gwansMulRegCnt: '2', // 경쟁 신호
 };
 
 describe('rowToScraped', () => {
@@ -133,6 +134,8 @@ describe('rowToScraped', () => {
     expect(s.listing.saleDate).toBe('2026-06-25');
     expect(s.listing.court).toBe('서울중앙지방법원');
     expect(s.listing.source).toBe('courtauction');
+    expect(s.listing.inquiryCount).toBe(19);   // 경쟁 신호(조회수)
+    expect(s.listing.interestCount).toBe(2);   // 경쟁 신호(관심수)
   });
 
   it('종결(mulJinYn=N)·금액0·주소없음 → 제외(null)', () => {

@@ -34,8 +34,9 @@ export async function upsertListing(l: Listing): Promise<number> {
     `insert into gm_listings
        (case_no,item_no,court,address,road_address,lat,lng,property_type,
         appraisal_value,min_bid_price,min_bid_ratio,fail_count,sale_date,demand_deadline,
-        area_m2,building_area_m2,is_collective_building,source,source_url,raw_json,crawled_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,$21)
+        area_m2,building_area_m2,is_collective_building,source,source_url,raw_json,crawled_at,
+        inq_cnt,interest_cnt)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,$21,$22,$23)
      on conflict (case_no,item_no,source) do update set
        court=excluded.court, address=excluded.address, road_address=excluded.road_address,
        lat=excluded.lat, lng=excluded.lng, property_type=excluded.property_type,
@@ -44,14 +45,15 @@ export async function upsertListing(l: Listing): Promise<number> {
        sale_date=excluded.sale_date, demand_deadline=excluded.demand_deadline,
        area_m2=excluded.area_m2, building_area_m2=excluded.building_area_m2,
        is_collective_building=excluded.is_collective_building, source_url=excluded.source_url,
-       raw_json=excluded.raw_json, crawled_at=excluded.crawled_at
+       raw_json=excluded.raw_json, crawled_at=excluded.crawled_at,
+       inq_cnt=excluded.inq_cnt, interest_cnt=excluded.interest_cnt
      returning id`,
     [
       l.caseNo, l.itemNo ?? '', l.court, l.address, l.roadAddress ?? null, l.lat ?? null, l.lng ?? null,
       l.propertyType, l.appraisalValue ?? null, l.minBidPrice ?? null, l.minBidRatio ?? null,
       l.failCount ?? 0, l.saleDate ?? null, l.demandDeadline ?? null, l.areaM2 ?? null,
       l.buildingAreaM2 ?? null, l.isCollectiveBuilding ?? false, l.source, l.sourceUrl ?? null,
-      j(l.rawJson), l.crawledAt,
+      j(l.rawJson), l.crawledAt, l.inquiryCount ?? null, l.interestCount ?? null,
     ],
   );
   return rows[0]!.id;

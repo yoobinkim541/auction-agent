@@ -32,6 +32,8 @@ export interface Listing {
   areaM2?: number; // 전용/대지 면적 (㎡)
   buildingAreaM2?: number;
   isCollectiveBuilding?: boolean; // 집합건물 여부(아파트/오피스텔 등) → 토지 등기부 별도 확인 필요
+  inquiryCount?: number; // 조회수(경쟁 신호 — 낮을수록 저경쟁). 법원경매 검색행 inqCnt
+  interestCount?: number; // 관심물건 등록수(경쟁 신호). 법원경매 gwansMulRegCnt
   source: CrawlSource;
   sourceUrl?: string;
   rawJson?: unknown; // 원본 스냅샷
