@@ -116,6 +116,9 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position 
           <div><span>최저매각가</span><b>{eok(row.min_bid_price)}</b></div>
           {row.area_m2 != null && <div><span>전용면적</span><b>{row.area_m2.toFixed(2)}㎡{` (${(row.area_m2 / 3.3058).toFixed(1)}평)`}</b></div>}
           <div><span>매각기일</span><b>{row.sale_date ?? '-'}</b></div>
+          {(row.inq_cnt != null || row.interest_cnt != null) && (
+            <div><span title="법원경매 조회수·관심물건 등록수 — 낮을수록 저경쟁(남들이 덜 본 매물)">경쟁(조회·관심)</span><b>{row.inq_cnt ?? '?'} · {row.interest_cnt ?? 0}</b></div>
+          )}
           {currentRound != null && (
             <div><span>현재 차수</span><b className={currentRound > 1 ? 'danger' : ''} title={detailResolvedRound?.est ? '분석 후 재매각기일 갱신 — 차수 추정값' : ''}>{currentRound}차{detailResolvedRound?.est ? '+' : ''}{currentRound > 1 ? ` · 유찰 ${currentRound - 1}회${detailResolvedRound?.est ? '~' : ''}` : ''}</b></div>
           )}

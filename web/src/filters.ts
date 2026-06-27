@@ -5,7 +5,7 @@
 import type { ListingItem } from './api.ts';
 import type { ClientScore, ScoreConfig } from './scoring.ts';
 
-export type SortKey = 'score' | 'safety' | 'trueSafety' | 'sale' | 'price' | 'appraisal' | 'assumed' | 'gap' | 'fieldwork';
+export type SortKey = 'score' | 'safety' | 'trueSafety' | 'sale' | 'price' | 'appraisal' | 'assumed' | 'gap' | 'fieldwork' | 'competition';
 
 export interface ScoredRow { item: ListingItem; sc: ClientScore }
 
@@ -93,8 +93,21 @@ export function sortRows(rows: ScoredRow[], sort: SortKey, sortDir: 'asc' | 'des
       const gb = b.item.location?.income?.gapInvestment ?? Infinity;
       diff = ga - gb;
     } else if (sort === 'fieldwork') diff = fieldworkRank(a.item) - fieldworkRank(b.item);
+    else if (sort === 'competition') diff = (a.sc.competitionScore ?? -1) - (b.sc.competitionScore ?? -1); // 높을수록 저경쟁 → desc로 저경쟁 우선
     else diff = a.sc.totalScore - b.sc.totalScore;
     return sortDir === 'asc' ? diff : -diff;
   });
   return v;
+}
+
+/** 사건(case_no) 단위 그룹화 — 한 사건의 여러 물건을 묶는다. 정렬 순서 보존(그룹은 최상위 멤버 위치에). */
+export function groupRowsByCase(rows: ScoredRow[]): { caseNo: string; rows: ScoredRow[] }[] {
+  const order: string[] = [];
+  const map = new Map<string, ScoredRow[]>();
+  for (const r of rows) {
+    const k = r.item.case_no;
+    if (!map.has(k)) { map.set(k, []); order.push(k); }
+    map.get(k)!.push(r);
+  }
+  return order.map((caseNo) => ({ caseNo, rows: map.get(caseNo)! }));
 }

@@ -36,6 +36,7 @@ const TODAY = localDateISO(); // KST 기준 로컬 날짜(UTC slice는 00:00~09:
 const SORT_DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
   score: 'desc', safety: 'desc', trueSafety: 'desc', sale: 'asc',
   price: 'asc', appraisal: 'desc', assumed: 'asc', gap: 'asc', fieldwork: 'desc',
+  competition: 'desc', // 경쟁점수 높을수록(=저경쟁) 앞
 };
 
 /** 임장 진행 가중치: 진행중(체크 일부) > 메모만 > 미시작 > 완료(끝난 건 뒤로). 진행도순 정렬·배지 공용. */
@@ -376,6 +377,7 @@ export default function App() {
           <option value="assumed">인수금액순</option>
           <option value="gap">갭(소자본)순</option>
           <option value="fieldwork">🚶 임장 진행도순</option>
+          <option value="competition">🔥 저경쟁순</option>
         </select>
         <select value={maxGapEok} onChange={(e) => setMaxGapEok(Number(e.target.value))}>
           <option value={0}>갭 제한 없음</option>
@@ -471,6 +473,9 @@ export default function App() {
                     )}
                     {(r.location?.report?.dangerCount ?? 0) === 0 && (r.location?.report?.warnCount ?? 0) > 0 && (
                       <span className="warn-cnt-chip" title={`주의항목 ${r.location!.report!.warnCount}건`}>🟡{r.location!.report!.warnCount}</span>
+                    )}
+                    {sc.competitionScore != null && sc.competitionScore >= 70 && (
+                      <span className="lowcomp-chip" title={`저경쟁 — 조회 ${r.inq_cnt ?? '?'}·관심 ${r.interest_cnt ?? 0} (남들이 덜 본 매물)`}>🔥저경쟁</span>
                     )}
                   </td>
                   <td className="num" onClick={() => handleSelect(r)} title={sc.reasons.length ? sc.reasons.join(' · ') : undefined}>

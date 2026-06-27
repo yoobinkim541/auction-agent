@@ -57,4 +57,27 @@ describe('web scoreClient', () => {
     expect(r.passed).toBe(false);
     expect(r.reasons.some((x) => x.startsWith('안전마진'))).toBe(true);
   });
+
+  it('경쟁 신호 없으면 competitionScore=null·점수 중립(기존 75 유지)', () => {
+    const r = scoreClient(mk(), DEFAULT_CONFIG);
+    expect(r.competitionScore).toBeNull();
+    expect(r.totalScore).toBe(75); // 경쟁 가중 미적용(신호 없음)
+  });
+
+  it('저경쟁(조회 0)이 고경쟁(조회 많음)보다 경쟁점수·총점 높음', () => {
+    const low = scoreClient(mk({ inq_cnt: 0, interest_cnt: 0 }), DEFAULT_CONFIG);
+    const high = scoreClient(mk({ inq_cnt: 80, interest_cnt: 10 }), DEFAULT_CONFIG);
+    expect(low.competitionScore!).toBeGreaterThan(high.competitionScore!);
+    expect(low.competitionScore).toBe(100);     // 압력 0 → 만점
+    expect(low.totalScore).toBeGreaterThan(high.totalScore);
+  });
+
+  it('특수권리(위험 red_flag) → excludeSpecialRights 기본 탈락', () => {
+    const r = scoreClient(mk({ rights: { risk_grade: 'caution', assumed_amount: 0, red_flags: [{ kind: 'yuchikwon', severity: 'danger', message: '유치권' }] } }), DEFAULT_CONFIG);
+    expect(r.passed).toBe(false);
+    expect(r.reasons).toContain('특수권리(위험)');
+    // 끄면 통과(다른 조건 충족 시)
+    const r2 = scoreClient(mk({ rights: { risk_grade: 'caution', assumed_amount: 0, red_flags: [{ kind: 'yuchikwon', severity: 'danger', message: '유치권' }] } }), { ...DEFAULT_CONFIG, excludeSpecialRights: false });
+    expect(r2.reasons).not.toContain('특수권리(위험)');
+  });
 });

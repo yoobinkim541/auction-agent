@@ -78,6 +78,11 @@ export function ConfigPanel({ cfg, setCfg }: { cfg: ScoreConfig; setCfg: (c: Sco
           onChange={(e) => { const v = +e.target.value / 100; setCfg({ ...cfg, wSafety: v, wClean: 1 - v }); }} />
       </div>
       <div className="cfg-row">
+        <label>경쟁도 가중치: {Math.round(cfg.wCompetition * 100)}% <span className="cfg-hint">(조회·관심 낮을수록 가점 — 저경쟁 발굴)</span></label>
+        <input type="range" min={0} max={50} value={Math.round(cfg.wCompetition * 100)}
+          onChange={(e) => setCfg({ ...cfg, wCompetition: +e.target.value / 100 })} />
+      </div>
+      <div className="cfg-row">
         <label>통과 최소 안전마진: {(cfg.minSafetyMargin * 100).toFixed(0)}%</label>
         <input type="range" min={0} max={40} value={Math.round(cfg.minSafetyMargin * 100)}
           onChange={(e) => setCfg({ ...cfg, minSafetyMargin: +e.target.value / 100 })} />
@@ -105,6 +110,7 @@ export function ConfigPanel({ cfg, setCfg }: { cfg: ScoreConfig; setCfg: (c: Sco
         <label><input type="checkbox" checked={cfg.requireCleanRights} onChange={(e) => setCfg({ ...cfg, requireCleanRights: e.target.checked })} /> 인수금액 0만 통과</label>
         <label><input type="checkbox" checked={cfg.includeReviewRequired} onChange={(e) => setCfg({ ...cfg, includeReviewRequired: e.target.checked })} /> 검토필요(특수권리)도 통과에 포함</label>
         <label><input type="checkbox" checked={cfg.requireMarketPrice} onChange={(e) => setCfg({ ...cfg, requireMarketPrice: e.target.checked })} /> 시세 미확보 제외</label>
+        <label><input type="checkbox" checked={cfg.excludeSpecialRights} onChange={(e) => setCfg({ ...cfg, excludeSpecialRights: e.target.checked })} /> 특수권리(위험) 제외</label>
         <button onClick={() => setCfg(DEFAULT_CONFIG)}>기본값</button>
       </div>
     </div>

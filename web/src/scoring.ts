@@ -20,6 +20,9 @@ export interface ScoreConfig {
   minTrueSafetyMarginPct: number; // 진짜마진 하한(%), -99=무제한
   maxDangerCount: number; // 허용 위험항목 최대수, -1=무제한
   requireMarketPrice: boolean; // 시세 미확보 매물 제외
+  wCompetition: number;        // 경쟁도 가중치(0~1). 조회·관심 낮을수록 가점. 신호 없으면 중립
+  competitionMaxAt: number;    // 경쟁압력 만점기준(이 값 이상이면 경쟁점수 0). 압력=조회+관심×3
+  excludeSpecialRights: boolean; // 특수권리(위험 red_flag) 하드 제외
 }
 
 export const DEFAULT_CONFIG: ScoreConfig = {
@@ -38,6 +41,9 @@ export const DEFAULT_CONFIG: ScoreConfig = {
   minTrueSafetyMarginPct: -99,
   maxDangerCount: -1,
   requireMarketPrice: true,
+  wCompetition: 0.2,
+  competitionMaxAt: 50,
+  excludeSpecialRights: true,
 };
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
@@ -48,6 +54,7 @@ export interface ClientScore {
   totalScore: number;
   safetyScore: number;
   cleanScore: number;
+  competitionScore: number | null; // 경쟁도 점수(신호 없으면 null=중립)
   passed: boolean;
   reasons: string[];
 }
@@ -62,11 +69,17 @@ export function scoreClient(item: ListingItem, cfg: ScoreConfig): ClientScore {
   const assumed = item.rights?.assumed_amount ?? 0;
   if (assumed > 0) cleanScore = Math.min(cleanScore, 20);
 
-  const wSum = cfg.wSafety + cfg.wClean || 1;
+  // 경쟁도: 조회·관심 낮을수록 가점(저경쟁=저평가 기회). 신호 없으면 중립(가중에서 제외).
+  const compPressure = (item.inq_cnt ?? 0) + (item.interest_cnt ?? 0) * 3; // 관심등록은 조회보다 강한 경쟁 신호
+  const hasComp = item.inq_cnt != null || item.interest_cnt != null;
+  const competitionScore = hasComp ? Math.round(clamp(1 - compPressure / (cfg.competitionMaxAt || 50), 0, 1) * 100) : null;
+
+  const wComp = hasComp ? cfg.wCompetition : 0;
+  const wSum = cfg.wSafety + cfg.wClean + wComp || 1;
   const zeroPiBonus = (item.location?.income?.zeroPiCandidate && !item.location?.income?.estimated) ? 5 : 0;
   const dangerCnt = item.location?.report?.dangerCount ?? 0;
   const dangerPenalty = Math.min(30, dangerCnt * 8); // -8점/위험항목, 최대 -30
-  const totalScore = Math.max(0, Math.min(100, Math.round((cfg.wSafety * safetyScore + cfg.wClean * cleanScore) / wSum) + zeroPiBonus - dangerPenalty));
+  const totalScore = Math.max(0, Math.min(100, Math.round((cfg.wSafety * safetyScore + cfg.wClean * cleanScore + wComp * (competitionScore ?? 0)) / wSum) + zeroPiBonus - dangerPenalty));
 
   const reasons: string[] = [];
   let passed = true;
@@ -81,6 +94,7 @@ export function scoreClient(item: ListingItem, cfg: ScoreConfig): ClientScore {
   if (cfg.apprMaxEok > 0 && appr > cfg.apprMaxEok * 1e8) { passed = false; reasons.push(`감정가>${cfg.apprMaxEok}억`); }
   if (cfg.requireCleanRights && assumed > 0) { passed = false; reasons.push(`인수금액 ${(assumed / 1e8).toFixed(1)}억`); }
   if (grade === 'review_required' && !cfg.includeReviewRequired) { passed = false; reasons.push('검토필요(특수권리)'); }
+  if (cfg.excludeSpecialRights && (item.rights?.red_flags ?? []).some((f) => f.severity === 'danger')) { passed = false; reasons.push('특수권리(위험)'); }
   if (margin != null && margin < cfg.minSafetyMargin) {
     passed = false;
     const marginLabel = item.location?.acquisition_cost?.trueSafetyMargin != null ? '진짜마진' : '안전마진';
@@ -98,5 +112,5 @@ export function scoreClient(item: ListingItem, cfg: ScoreConfig): ClientScore {
     passed = false; reasons.push(`위험항목 ${dangerCnt}건>${cfg.maxDangerCount}건`);
   }
 
-  return { totalScore, safetyScore, cleanScore, passed, reasons };
+  return { totalScore, safetyScore, cleanScore, competitionScore, passed, reasons };
 }

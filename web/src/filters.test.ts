@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { applyListingFilters, sortRows, fieldworkRank, type FilterState, type ScoredRow } from './filters.ts';
+import { applyListingFilters, sortRows, fieldworkRank, groupRowsByCase, type FilterState, type ScoredRow } from './filters.ts';
 import { DEFAULT_CONFIG } from './scoring.ts';
 import type { ListingItem } from './api.ts';
 
-const row = (item: Record<string, unknown>, passed = true, totalScore = 50): ScoredRow =>
-  ({ item: item as unknown as ListingItem, sc: { passed, totalScore, safetyScore: 0, cleanScore: 0, reasons: [] } });
+const row = (item: Record<string, unknown>, passed = true, totalScore = 50, competitionScore: number | null = null): ScoredRow =>
+  ({ item: item as unknown as ListingItem, sc: { passed, totalScore, safetyScore: 0, cleanScore: 0, competitionScore, reasons: [] } });
 
 const A = row({ address: '서울 강남구', property_type: 'apartment', min_bid_price: 3e8, case_no: '2024-1', court: '서울중앙' }, true, 80);
 const B = row({ address: '부산 해운대구', property_type: 'villa', min_bid_price: 1e8, case_no: '2024-2', court: '부산' }, false, 40);
@@ -70,6 +70,24 @@ describe('sortRows', () => {
     const snapshot = [...rows];
     sortRows(rows, 'price', 'asc');
     expect(rows).toEqual(snapshot);
+  });
+  it('경쟁도순(desc) — 저경쟁(점수↑) 먼저, 신호없음(null)은 뒤', () => {
+    const hi = row({ case_no: 'comp-hi' }, true, 50, 90); // 저경쟁
+    const lo = row({ case_no: 'comp-lo' }, true, 50, 20); // 고경쟁
+    const nul = row({ case_no: 'comp-null' }, true, 50, null);
+    expect(sortRows([lo, nul, hi], 'competition', 'desc').map((x) => x.item.case_no)).toEqual(['comp-hi', 'comp-lo', 'comp-null']);
+  });
+});
+
+describe('groupRowsByCase', () => {
+  it('사건별 묶음 + 정렬순서(최상위 멤버 위치) 보존', () => {
+    const a1 = row({ case_no: 'A', address: '서울' });
+    const b1 = row({ case_no: 'B', address: '서울' });
+    const a2 = row({ case_no: 'A', address: '서울' });
+    const g = groupRowsByCase([a1, b1, a2]);
+    expect(g.map((x) => x.caseNo)).toEqual(['A', 'B']); // A가 먼저 등장
+    expect(g[0]!.rows).toHaveLength(2); // A 물건 2개
+    expect(g[1]!.rows).toHaveLength(1);
   });
 });
 

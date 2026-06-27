@@ -121,6 +121,8 @@ export interface ListingItem {
   field_done: number | null;   // 현장 체크리스트 확인 완료 개수
   field_total: number | null;  // 현장 체크리스트 전체 개수
   field_notes: number | null;  // 현장 메모 작성 개수
+  inq_cnt: number | null;      // 조회수(경쟁 신호 — 낮을수록 저경쟁)
+  interest_cnt: number | null; // 관심물건 등록수(경쟁 신호)
   rights: RightsObj | null;
   location: LocationObj | null;
   total_score: number | null;
