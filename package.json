@@ -8,6 +8,8 @@
     "crawl": "tsx crawler/index.ts",
     "crawl:health": "tsx scripts/crawl-health.ts",
     "digest": "tsx scripts/daily-digest.ts",
+    "snapshot": "tsx scripts/snapshot-predictions.ts",
+    "collect:results": "tsx scripts/collect-results.ts",
     "analyze": "tsx pipeline/run.ts",
     "ingest:legal": "tsx pipeline/legal/ingest.ts",
     "eval": "tsx pipeline/eval/run.ts",

@@ -18,6 +18,11 @@ npm run analyze -- --all
 rc=$?
 echo "[$(date '+%F %T')] === parse done (analyze rc=$rc) ==="
 
+# 학습 데이터 적재(결과 피드백 루프) — 실패해도 본 분석 rc는 보존.
+#  Phase 0: 매각 임박 예측 동결(analyze 직후라 최신). Phase 1: 최근 매각결과(낙찰가/유찰) 수집.
+npm run snapshot 2>&1 || echo "[snapshot] 실패(무시)"
+npm run collect:results 2>&1 || echo "[collect:results] 실패(무시)"
+
 # 수집 헬스: status=ok·0건(굶음) 감지 → 비정상이면 텔레그램 알림. 분석 rc는 보존.
 HEALTH_OUT=$(npm run crawl:health 2>&1); HRC=$?
 echo "$HEALTH_OUT"

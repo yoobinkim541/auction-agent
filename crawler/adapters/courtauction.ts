@@ -272,6 +272,71 @@ async function fetchDetail(csNo: string, cortOfcCd: string, dspslGdsSeq: string,
   }
 }
 
+// ── 결과 수집(Phase 1): 상세의 gdsDspslDxdyLst(매각기일 내역)에서 회차별 결과·낙찰가 추출 ──
+export interface SaleResultRound {
+  date: string;            // 기일 ISO (YYYY-MM-DD)
+  kindCd: string;          // auctnDxdyKndCd (01 매각기일 / 02 매각결정기일 …)
+  resultCd: string | null; // auctnDxdyRsltCd 원본 코드 (002=유찰 등)
+  minPrice: number | null; // tsLwsDspslPrc 해당 기일 최저매각가
+  soldAmount: number | null; // dspslAmt 매각가(낙찰가) — 매각된 기일만
+  sold: boolean;           // dspslAmt>0 이면 매각(낙찰)
+}
+
+/** 법원명 → 법원코드(cortOfcCd). 결과 폴러가 DB의 court명으로 상세 조회 시 필요. */
+export function courtCodeByName(name: string): string | null {
+  return METRO_COURTS.find((c) => c.name === name)?.code ?? null;
+}
+
+/** 상세 조회 가능한(코드 매핑 보유) 법원명 목록 — 결과 폴러 SQL 필터용(미매핑 법원에 슬롯 낭비 방지). */
+export function queryableCourtNames(): string[] {
+  return METRO_COURTS.map((c) => c.name);
+}
+
+/** 상세 dma_result → 회차별 기일결과. 응찰자수는 이 엔드포인트에 없음(추후 별도 캡처). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function parseSaleResults(dma: any): SaleResultRound[] {
+  const out: SaleResultRound[] = [];
+  for (const r of (dma?.gdsDspslDxdyLst ?? [])) {
+    const ymd = String(r.dxdyYmd ?? '').trim();
+    const date = /^\d{8}$/.test(ymd) ? `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}` : (parseCourtDate(ymd) ?? null);
+    if (!date) continue;
+    const amt = Number(r.dspslAmt) || 0;
+    out.push({
+      date, kindCd: String(r.auctnDxdyKndCd ?? ''), resultCd: r.auctnDxdyRsltCd != null ? String(r.auctnDxdyRsltCd) : null,
+      minPrice: Number(r.tsLwsDspslPrc) || null, soldAmount: amt > 0 ? amt : null, sold: amt > 0,
+    });
+  }
+  return out;
+}
+
+/**
+ * 여러 사건의 기일결과를 세션 1회로 배치 조회(폴라이트 지연).
+ * onResult 콜백을 주면 **사건별 즉시 콜백**(중단/타임아웃에도 부분 진행 보존). 반환 Map은 누적 결과.
+ */
+export async function collectSaleResults(
+  cases: { caseNo: string; cortOfcCd: string; itemNo: string }[],
+  onResult?: (key: string, rounds: SaleResultRound[]) => Promise<void> | void,
+): Promise<Map<string, SaleResultRound[]>> {
+  const cookies = new CookieJar();
+  await initSession(cookies);
+  const out = new Map<string, SaleResultRound[]>();
+  for (const c of cases) {
+    try {
+      const dma = await fetchDetail(c.caseNo, c.cortOfcCd, c.itemNo, buildSrchInfo(c.cortOfcCd), cookies);
+      if (dma) {
+        const rounds = parseSaleResults(dma);
+        const key = `${c.caseNo}|${c.itemNo}`;
+        out.set(key, rounds);
+        if (onResult && rounds.length) await onResult(key, rounds);
+      }
+    } catch (e) {
+      if (e instanceof CourtAuctionBlockedError) throw e;
+    }
+    await new Promise((r) => setTimeout(r, 400)); // 폴라이트 간격
+  }
+  return out;
+}
+
 export interface CourtDetailParsed {
   registry: RegistryEntry[];
   tenants: Tenant[];

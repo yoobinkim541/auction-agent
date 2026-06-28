@@ -194,3 +194,40 @@ create table if not exists gm_fieldwork_notes (
   updated_at timestamptz not null default now(),
   primary key (listing_id, item_key)
 );
+
+-- 실제 경매 결과(결과 피드백 학습 Phase 1) — 상세 gdsDspslDxdyLst 회차별 결과·낙찰가.
+-- sold = dspslAmt>0(매각). 응찰자수는 이 엔드포인트 미제공(추후). 회차가 확정되며 upsert 갱신.
+create table if not exists gm_auction_results (
+  id          serial primary key,
+  case_no     text not null,
+  item_no     text not null default '1',
+  court       text,
+  dxdy_date   date not null,                       -- 기일
+  kind_cd     text,                                -- auctnDxdyKndCd (01 매각기일 / 02 매각결정기일)
+  result_cd   text,                                -- auctnDxdyRsltCd 원본(002=유찰 등)
+  min_price   bigint,                              -- 해당 기일 최저매각가
+  sold_amount bigint,                              -- 매각가(낙찰가)
+  sold        boolean not null default false,
+  captured_at timestamptz not null default now(),
+  unique (case_no, item_no, dxdy_date)
+);
+create index if not exists idx_gm_auction_results_date on gm_auction_results (dxdy_date);
+
+-- 예측 스냅샷(Phase 0) — analyze가 점수를 덮어쓰므로, 매각 직전 예측을 동결해 사후 결과와 비교.
+create table if not exists gm_prediction_snapshots (
+  id             serial primary key,
+  case_no        text not null,
+  item_no        text not null default '1',
+  sale_date      date,                             -- 이 예측이 겨눈 매각기일
+  expected_bid   bigint,                           -- 예상낙찰가(loc.expected_bid_price)
+  market_price   bigint,                           -- 추정시세
+  min_bid_price  bigint,                           -- 스냅샷 시점 최저가
+  total_score    int,
+  passed_filter  boolean,
+  recommendation text,
+  true_margin    double precision,                 -- 진짜 안전마진
+  inq_cnt        int,
+  interest_cnt   int,
+  snapped_at     timestamptz not null default now(),
+  unique (case_no, item_no, sale_date)
+);
