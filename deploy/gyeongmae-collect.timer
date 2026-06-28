@@ -1,0 +1,9 @@
+[Unit]
+Description=매일 20:00 경매 낙찰결과 저녁 보강 수집
+
+[Timer]
+OnCalendar=*-*-* 20:00:00 Asia/Seoul
+Persistent=true
+
+[Install]
+WantedBy=timers.target

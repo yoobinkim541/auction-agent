@@ -1,0 +1,12 @@
+[Unit]
+Description=Gyeongmae evening result collect (낙찰결과 보강 — 당일 기일 같은 날 반영)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/projects/gyeongmae-agent/deploy/evening-collect.sh
+TimeoutStartSec=1800
+StandardOutput=append:/home/ubuntu/projects/gyeongmae-agent/collect.log
+StandardError=append:/home/ubuntu/projects/gyeongmae-agent/collect.log
