@@ -310,6 +310,22 @@ export function parseSaleResults(dma: any): SaleResultRound[] {
 }
 
 /**
+ * 다음(예정) 매각기일 — 회차 목록에서 매각기일(kindCd '01') & 오늘 이후 & 미낙찰 중 가장 이른 것.
+ * 유찰되면 법원이 다음 회차를 잡으므로, 이를 gm_listings.sale_date에 반영해 D+로 죽지 않게 한다.
+ */
+export function nextSaleDate(rounds: SaleResultRound[], today: string): { date: string; minPrice: number | null } | null {
+  const upcoming = rounds
+    .filter((r) => r.kindCd === '01' && !r.sold && r.date >= today)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  return upcoming[0] ? { date: upcoming[0].date, minPrice: upcoming[0].minPrice } : null;
+}
+
+/** 과거 매각기일 중 미낙찰(유찰) 회차 수 — fail_count 갱신용. */
+export function failedRoundCount(rounds: SaleResultRound[], today: string): number {
+  return rounds.filter((r) => r.kindCd === '01' && !r.sold && r.date < today).length;
+}
+
+/**
  * 여러 사건의 기일결과를 세션 1회로 배치 조회(폴라이트 지연).
  * onResult 콜백을 주면 **사건별 즉시 콜백**(중단/타임아웃에도 부분 진행 보존). 반환 Map은 누적 결과.
  */

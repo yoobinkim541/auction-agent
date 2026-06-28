@@ -8,15 +8,16 @@
  */
 import 'dotenv/config';
 import { query, pool } from '../shared/db.ts';
-import { collectSaleResults, courtCodeByName, queryableCourtNames } from '../crawler/adapters/courtauction.ts';
+import { collectSaleResults, courtCodeByName, queryableCourtNames, nextSaleDate, failedRoundCount } from '../crawler/adapters/courtauction.ts';
 
 async function main(): Promise<void> {
   // 진행물건 상세는 활성/예정 사건만 회차내역을 돌려준다(매각 완료 후 며칠 내 사라짐).
   //  → 최근 매각기일(today-daysBack, 매각결과 포착 윈도우) + 예정(today+daysFwd, 유찰이력 누적)을 대상으로.
   //  코드 매핑 가능한 법원으로 SQL에서 미리 필터(미조회 법원에 limit 낭비 방지).
-  const daysBack = Number(process.env.RESULT_DAYS_BACK) || 2;
+  const daysBack = Number(process.env.RESULT_DAYS_BACK) || 5;
   const daysFwd = Number(process.env.RESULT_DAYS_FWD) || 21;
   const limit = Number(process.env.RESULT_LIMIT) || 300;
+  const today = new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10); // KST
 
   const rows = await query<{ case_no: string; item_no: string; court: string; sale_date: string }>(
     `select distinct l.case_no, coalesce(l.item_no,'1') item_no, l.court, l.sale_date
@@ -38,7 +39,7 @@ async function main(): Promise<void> {
   console.log(`[collect-results] 대상 ${cases.length}건 — 상세 조회 중…`);
 
   // 사건별 즉시 upsert(콜백) — 타임아웃/중단에도 진행분 보존.
-  let upserted = 0, sold = 0, withRounds = 0;
+  let upserted = 0, sold = 0, withRounds = 0, refreshed = 0;
   await collectSaleResults(cases, async (key, rounds) => {
     withRounds++;
     const [caseNo, itemNo] = key.split('|');
@@ -55,8 +56,19 @@ async function main(): Promise<void> {
       upserted++;
       if (rd.sold) sold++;
     }
+    // ② 유찰분 다음 회차 기일을 gm_listings.sale_date에 반영(D+로 죽지 않게). 변경 있을 때만.
+    const next = nextSaleDate(rounds, today);
+    if (next) {
+      const res = await query(
+        `update gm_listings set sale_date=$1::date, min_bid_price=coalesce($2, min_bid_price), fail_count=$3
+           where case_no=$4 and coalesce(item_no,'1')=$5 and sale_date is distinct from $1::date
+         returning case_no`,
+        [next.date, next.minPrice, failedRoundCount(rounds, today), caseNo, itemNo],
+      );
+      if (res.length) refreshed++;
+    }
   });
-  console.log(`[collect-results] 기일보유 사건 ${withRounds} · upsert ${upserted}행 · 매각(낙찰) ${sold}건`);
+  console.log(`[collect-results] 기일보유 사건 ${withRounds} · upsert ${upserted}행 · 매각(낙찰) ${sold}건 · 기일갱신 ${refreshed}건`);
   await pool().end();
 }
 

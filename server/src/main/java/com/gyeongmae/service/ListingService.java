@@ -90,6 +90,10 @@ public class ListingService {
         + " where (:passedOnly = false or s.passed_filter = true)\n"
         + "   and (:type = 'all' or l.property_type = :type)\n"
         + "   and (:q = '' or l.address ilike '%'||:q||'%' or l.case_no ilike '%'||:q||'%')\n"
+        // 정지/경과 매물 제외: 최근 7일 내 수집된 것만(차단으로 굳은 deonakchal 등 제외) + 매각기일 경과(D+) 제외(2일 유예).
+        // 목록·페이로드 정리용. 차단 해제·재수집 시 crawled_at 갱신으로 자동 복귀. 상세/다이제스트/학습 쿼리는 무관.
+        + "   and l.crawled_at >= current_date - 7\n"
+        + "   and (l.sale_date is null or l.sale_date >= current_date - 2)\n"
         + ") t";
     var params = new MapSqlParameterSource()
         .addValue("passedOnly", passedOnly)
