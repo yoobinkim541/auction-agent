@@ -9,7 +9,7 @@ import {
   apiBase, eok, pct,
   type ListingItem,
 } from './api.ts';
-import { scoreClient, scoreBreakdown, type ScoreConfig } from './scoring.ts';
+import { scoreClient, scoreBreakdown, type ScoreConfig, type ClientScore } from './scoring.ts';
 import { Legend } from './Legend.tsx';
 import { applyListingFilters, sortRows, groupRowsByCase, type SortKey } from './filters.ts';
 import { resolveRound, saleDaysDiff, localDateISO } from './listing-utils.ts';
@@ -160,7 +160,21 @@ export default function App() {
   };
 
   // 단일 패스 스코어링 — rows·cfg 변경 시에만 1회. (과거: view/stats/allScored 3중 패스가 매 상호작용 재계산)
-  const scored = useMemo(() => rows.map((item) => ({ item, sc: scoreClient(item, cfg) })), [rows, cfg]);
+  // 항목 ref+cfg ref 키 캐시 — ★토글 등으로 일부 행만 바뀌면 변경된 항목만 재스코어, 나머지 sc 참조 안정
+  // → React.memo 행이 실제로 스킵된다(불변 업데이트 패턴 활용).
+  const scoreCacheRef = useRef(new Map<ListingItem, { cfg: ScoreConfig; sc: ClientScore }>());
+  const scored = useMemo(() => {
+    const prev = scoreCacheRef.current;
+    const next = new Map<ListingItem, { cfg: ScoreConfig; sc: ClientScore }>();
+    const out = rows.map((item) => {
+      const hit = prev.get(item);
+      const sc = hit && hit.cfg === cfg ? hit.sc : scoreClient(item, cfg);
+      next.set(item, { cfg, sc });
+      return { item, sc };
+    });
+    scoreCacheRef.current = next;
+    return out;
+  }, [rows, cfg]);
   // 검색어는 deferred — 타이핑 즉시 반응, 무거운 목록 재계산은 지연.
   const dq = useDeferredValue(q);
 
