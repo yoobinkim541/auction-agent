@@ -231,3 +231,24 @@ create table if not exists gm_prediction_snapshots (
   snapped_at     timestamptz not null default now(),
   unique (case_no, item_no, sale_date)
 );
+
+-- 라벨 데이터셋(Phase 2) — 예측 스냅샷 ⋈ 실제 결과 ⋈ 매물. 보정·서프라이즈 복기의 단일 소스.
+-- matched=결과 매칭됨, sold/sold_amount=낙찰, residual=실제−예상, sale_ratio=낙찰가/감정가.
+create or replace view gm_outcome_eval as
+  with L as (
+    select distinct on (case_no, coalesce(item_no,'1')) case_no, coalesce(item_no,'1') item_no,
+           property_type, court, address, appraisal_value
+      from gm_listings order by case_no, coalesce(item_no,'1'), crawled_at desc nulls last
+  )
+  select s.case_no, s.item_no, s.sale_date,
+         l.property_type, l.court, l.address, l.appraisal_value,
+         s.expected_bid, s.market_price, s.min_bid_price, s.total_score, s.passed_filter,
+         s.recommendation, s.true_margin, s.inq_cnt, s.interest_cnt,
+         r.sold, r.sold_amount, r.result_cd, r.min_price as result_min_price,
+         (r.dxdy_date is not null) as matched,
+         case when r.sold then r.sold_amount - s.expected_bid end as residual,
+         case when r.sold and s.expected_bid > 0 then (r.sold_amount - s.expected_bid)::float8 / s.expected_bid end as residual_pct,
+         case when r.sold and l.appraisal_value > 0 then r.sold_amount::float8 / l.appraisal_value end as sale_ratio
+    from gm_prediction_snapshots s
+    join L l on l.case_no = s.case_no and l.item_no = s.item_no
+    left join gm_auction_results r on r.case_no = s.case_no and r.item_no = s.item_no and r.dxdy_date = s.sale_date;
