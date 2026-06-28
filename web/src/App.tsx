@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useDeferredValue } from 'react';
 import { MapView } from './MapView.tsx';
 import { CompareView } from './CompareView.tsx';
 import { ConfigPanel } from './ConfigPanel.tsx';
@@ -17,6 +17,7 @@ import { useListings } from './useListings.ts';
 import { Detail } from './Detail.tsx';
 import { exportCSV } from './export-csv.ts';
 import { loadConfig, saveConfig, loadUIState, saveUIState } from './persistence.ts';
+import { useMediaQuery } from './useMediaQuery.ts';
 
 const TODAY = localDateISO(); // KST 기준 로컬 날짜(UTC slice는 00:00~09:00 KST 구간에서 어제 날짜)
 
@@ -158,14 +159,18 @@ export default function App() {
       .finally(() => setDetailLoading((cur) => (cur === item.case_no ? null : cur)));
   };
 
+  // 단일 패스 스코어링 — rows·cfg 변경 시에만 1회. (과거: view/stats/allScored 3중 패스가 매 상호작용 재계산)
+  const scored = useMemo(() => rows.map((item) => ({ item, sc: scoreClient(item, cfg) })), [rows, cfg]);
+  // 검색어는 deferred — 타이핑 즉시 반응, 무거운 목록 재계산은 지연.
+  const dq = useDeferredValue(q);
+
   const viewFull = useMemo(() => {
-    const scored = rows.map((item) => ({ item, sc: scoreClient(item, cfg) }));
     const filtered = applyListingFilters(scored, {
       cfg, hideExpired, hideIncomplete, onlyPassed, onlyFavorite, onlyZeroPi, onlyConsider,
-      onlyPassedAvoid, onlyToday, filterDate, onlyUrgent, maxGapEok, onlyMultiRound, type, q, today: TODAY,
+      onlyPassedAvoid, onlyToday, filterDate, onlyUrgent, maxGapEok, onlyMultiRound, type, q: dq, today: TODAY,
     });
     return sortRows(filtered, sort, sortDir);
-  }, [rows, cfg, hideExpired, hideIncomplete, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyPassedAvoid, onlyUrgent, onlyToday, filterDate, maxGapEok, type, q, sort, sortDir]);
+  }, [scored, cfg, hideExpired, hideIncomplete, onlyPassed, onlyFavorite, onlyMultiRound, onlyZeroPi, onlyConsider, onlyPassedAvoid, onlyUrgent, onlyToday, filterDate, maxGapEok, type, dq, sort, sortDir]);
 
   // 사건 그룹핑: 한 사건의 여러 물건을 대표(현재 정렬 1위) 한 행으로 접어 검토 횟수를 줄인다.
   // caseSizes = 사건별 물건 수(접힌 행에 "외 N물건" 배지). 끄면 viewFull 그대로.
@@ -173,13 +178,14 @@ export default function App() {
   const view = useMemo(() => (groupByCase ? caseGroups.map((g) => g.rows[0]!) : viewFull), [groupByCase, caseGroups, viewFull]);
   const caseSizes = useMemo(() => new Map(caseGroups.map((g) => [g.caseNo, g.rows.length] as const)), [caseGroups]);
 
-  // 지도용 포인트 — 전체(수집한 모든 매물) 또는 현재 목록(필터). 통과 여부로 마커 스타일 구분.
-  const allScored = useMemo(() => rows.map((item) => ({ item, sc: scoreClient(item, cfg) })), [rows, cfg]);
+  // 지도용 포인트 — 전체(수집한 모든 매물=scored) 또는 현재 목록(필터). 통과 여부로 마커 스타일 구분.
   const mapPoints = useMemo(
-    () => (mapShowAll ? allScored : viewFull).map((x) => ({ item: x.item, passed: x.sc.passed })),
-    [mapShowAll, allScored, viewFull],
+    () => (mapShowAll ? scored : viewFull).map((x) => ({ item: x.item, passed: x.sc.passed })),
+    [mapShowAll, scored, viewFull],
   );
 
+  // 활성 레이아웃만 렌더(표 또는 카드) — 둘 다 DOM에 만들던 것을 하나로(노드 절반↓).
+  const isMobile = useMediaQuery('(max-width: 760px)');
   const favCount = rows.filter((r) => r.is_favorite).length;
   const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
   // 배지 카운트 — 결과를 좁히는 '숨은' 필터(오늘기일·달력일·갭·발품회피 등)까지 포함해야
@@ -199,7 +205,7 @@ export default function App() {
   };
 
   const stats = useMemo(() => {
-    const all = rows.map((item) => ({ item, sc: scoreClient(item, cfg) }));
+    const all = scored; // 단일 패스 재사용(별도 scoreClient 패스 제거)
     const upcoming = all.filter((x) => !x.item.sale_date || x.item.sale_date >= TODAY);
     const passed = upcoming.filter((x) => x.sc.passed).length;
     const todayStr = TODAY;
@@ -446,7 +452,7 @@ export default function App() {
         <MapView items={mapPoints} onSelect={handleSelect} showAll={mapShowAll} onToggleShowAll={() => setMapShowAll((s) => !s)} />
       )}
 
-      {viewMode === 'list' && view.length > 0 && (
+      {viewMode === 'list' && view.length > 0 && !isMobile && (
         <table className="grid">
           <thead>
             <tr>
@@ -526,7 +532,7 @@ export default function App() {
         </table>
       )}
 
-      {viewMode === 'list' && view.length > 0 && (
+      {viewMode === 'list' && view.length > 0 && isMobile && (
         <ul className="cards">
           {view.map(({ item: r, sc }, i) => {
             const risk = RISK[r.rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };

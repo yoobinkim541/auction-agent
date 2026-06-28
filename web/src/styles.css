@@ -215,6 +215,8 @@ table.grid th.sorted { color: var(--text); }
 .sort-ind { color: var(--accent); font-size: 10px; }
 .score-fail-hint { display: block; font-size: 9px; color: var(--muted); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80px; }
 table.grid td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+/* 화면 밖 행은 레이아웃·페인트 생략(수백~수천 행 스크롤·렌더 비용↓). 행 높이 근사로 스크롤바 안정. */
+.grid tbody tr.row { content-visibility: auto; contain-intrinsic-size: 0 44px; }
 .row { cursor: pointer; transition: background .1s; }
 .row:hover { background: var(--panel); }
 .row-consider { background: rgba(30,199,88,.025); }
@@ -255,6 +257,7 @@ table.grid td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertica
   padding: 13px 15px;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  content-visibility: auto; contain-intrinsic-size: 0 132px; /* 화면 밖 카드 렌더 생략 */
   animation: cardin .3s cubic-bezier(.2,.7,.3,1) both;
 }
 .card:active { background: var(--panel2); }
