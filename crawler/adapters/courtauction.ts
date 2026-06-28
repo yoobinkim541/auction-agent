@@ -353,6 +353,69 @@ export async function collectSaleResults(
   return out;
 }
 
+// ── 경매사건검색(pgj15A) — 과거/종결 사건의 낙찰가·결과 소급 수집 (S1 스펙: docs/courtauction-result-endpoint.md) ──
+/** pgj15A 응답(res.data) → 해당 물건(itemNo)의 회차별 결과. 결과코드 001=매각/002=유찰, 낙찰가=물건 dspslAmt. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function parseCaseResult(data: any, itemNo = '1'): SaleResultRound[] {
+  const objs: any[] = data?.dlt_dspslGdsDspslObjctLst ?? [];
+  const obj = objs.find((o) => String(o.dspslGdsSeq) === String(itemNo)) ?? objs[0];
+  const soldAmt = Number(obj?.dspslAmt) || 0;
+  const mins = [obj?.fstPbancLwsDspslPrc, obj?.scndPbancLwsDspslPrc, obj?.thrdPbancLwsDspslPrc, obj?.fothPbancLwsDspslPrc].map((x) => Number(x) || null);
+  const rows: any[] = (data?.dlt_rletCsGdsDtsDxdyInf ?? []).filter((r: any) => r.dspslGdsSeq == null || String(r.dspslGdsSeq) === String(itemNo));
+  const out: SaleResultRound[] = [];
+  let saleIdx = 0; // 매각기일(kind 01) 순번 → 차수별 최저가 매핑
+  for (const r of rows) {
+    const ymd = String(r.dxdyYmd ?? '').trim();
+    const date = /^\d{8}$/.test(ymd) ? `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}` : (parseCourtDate(ymd) ?? null);
+    if (!date) continue;
+    const kindCd = String(r.auctnDxdyKndCd ?? '');
+    const resultCd = r.auctnDxdyRsltCd != null ? String(r.auctnDxdyRsltCd) : null;
+    const sold = resultCd === '001'; // 001=매각, 002=유찰
+    const minPrice = kindCd === '01' ? (mins[saleIdx] ?? null) : null;
+    if (kindCd === '01') saleIdx++;
+    out.push({ date, kindCd, resultCd, minPrice, soldAmount: sold && soldAmt > 0 ? soldAmt : null, sold });
+  }
+  return out;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function postCaseResult(caseNo: string, cortOfcCd: string, cookies: CookieJar): Promise<any | null> {
+  const body = { dma_srchCsDtlInf: { cortOfcCd, csNo: caseNo } };
+  const res = (await post('/pgj/pgj15A/selectAuctnCsSrchRslt.on', {
+    body, cookies,
+    referer: `${BASE}/pgj/index.on?w2xPath=/pgj/ui/pgj100/PGJ15AF01.xml`,
+    headers: { submissionid: 'mf_wfm_mainFrame_sbm_selectCsDtlInf', 'sc-userid': 'SYSTEM' },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  })) as any;
+  if (res?.data?.ipcheck === false) throw new CourtAuctionBlockedError();
+  return res?.data ?? null;
+}
+
+/** 여러 사건의 결과를 경매사건검색(pgj15A)으로 세션 1회 배치 조회. 과거/종결 사건 소급용. */
+export async function collectCaseResults(
+  cases: { caseNo: string; cortOfcCd: string; itemNo: string }[],
+  onResult?: (key: string, rounds: SaleResultRound[]) => Promise<void> | void,
+): Promise<Map<string, SaleResultRound[]>> {
+  const cookies = new CookieJar();
+  await initSession(cookies);
+  const out = new Map<string, SaleResultRound[]>();
+  for (const c of cases) {
+    try {
+      const data = await postCaseResult(c.caseNo, c.cortOfcCd, cookies);
+      if (data) {
+        const rounds = parseCaseResult(data, c.itemNo);
+        const key = `${c.caseNo}|${c.itemNo}`;
+        out.set(key, rounds);
+        if (onResult && rounds.length) await onResult(key, rounds);
+      }
+    } catch (e) {
+      if (e instanceof CourtAuctionBlockedError) throw e;
+    }
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return out;
+}
+
 export interface CourtDetailParsed {
   registry: RegistryEntry[];
   tenants: Tenant[];

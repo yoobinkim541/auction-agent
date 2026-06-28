@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseSaleResults, nextSaleDate, failedRoundCount, type SaleResultRound } from './courtauction.ts';
+import { parseSaleResults, nextSaleDate, failedRoundCount, parseCaseResult, type SaleResultRound } from './courtauction.ts';
 
 describe('parseSaleResults', () => {
   it('gdsDspslDxdyLst → 회차별 결과(유찰/매각) 파싱', () => {
@@ -47,5 +47,39 @@ describe('nextSaleDate / failedRoundCount', () => {
   });
   it('예정 기일 없으면 null', () => {
     expect(nextSaleDate([round({ date: '2026-04-14', resultCd: '002' })], '2026-06-28')).toBeNull();
+  });
+});
+
+describe('parseCaseResult (pgj15A 경매사건검색)', () => {
+  const data = {
+    dlt_dspslGdsDspslObjctLst: [
+      { dspslGdsSeq: '1', dspslAmt: 477000000, fstPbancLwsDspslPrc: 416500000, scndPbancLwsDspslPrc: 333200000 },
+      { dspslGdsSeq: '2', dspslAmt: 0, fstPbancLwsDspslPrc: 200000000 },
+    ],
+    dlt_rletCsGdsDtsDxdyInf: [
+      { dspslGdsSeq: '1', auctnDxdyKndCd: '01', dxdyYmd: '20260520', auctnDxdyRsltCd: '002' }, // 유찰
+      { dspslGdsSeq: '1', auctnDxdyKndCd: '01', dxdyYmd: '20260625', auctnDxdyRsltCd: '001' }, // 매각
+      { dspslGdsSeq: '1', auctnDxdyKndCd: '02', dxdyYmd: '20260702', auctnDxdyRsltCd: null },  // 매각결정
+      { dspslGdsSeq: '2', auctnDxdyKndCd: '01', dxdyYmd: '20260625', auctnDxdyRsltCd: '002' }, // 다른 물건
+    ],
+  };
+
+  it('물건1: 유찰→매각, 낙찰가·차수별 최저가 부착', () => {
+    const r = parseCaseResult(data, '1');
+    expect(r).toHaveLength(3);
+    expect(r[0]).toMatchObject({ date: '2026-05-20', resultCd: '002', minPrice: 416500000, sold: false, soldAmount: null });
+    expect(r[1]).toMatchObject({ date: '2026-06-25', resultCd: '001', minPrice: 333200000, sold: true, soldAmount: 477000000 });
+    expect(r[2]).toMatchObject({ kindCd: '02', sold: false, minPrice: null });
+  });
+
+  it('물건2만 필터(다물건 분리)', () => {
+    const r = parseCaseResult(data, '2');
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ date: '2026-06-25', resultCd: '002', minPrice: 200000000, sold: false });
+  });
+
+  it('빈 입력 안전', () => {
+    expect(parseCaseResult(null)).toEqual([]);
+    expect(parseCaseResult({})).toEqual([]);
   });
 });
