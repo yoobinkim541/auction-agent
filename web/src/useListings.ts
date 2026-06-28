@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { fetchListings, fetchLastCrawl, type ListingItem, type CrawlStatus } from './api.ts';
 
 /**
@@ -10,11 +10,12 @@ export function useListings() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [lastCrawl, setLastCrawl] = useState<CrawlStatus | null>(null);
-  const load = () => {
+  // useCallback로 안정화 — toggleFav 등이 의존하는 콜백이 매 렌더 새로 만들어져 React.memo 행을 깨지 않도록.
+  const load = useCallback(() => {
     setLoading(true); setErr(null);
     fetchListings().then(setRows).catch((e) => setErr(String(e))).finally(() => setLoading(false));
     fetchLastCrawl().then((r) => { if (r) setLastCrawl(r); });
-  };
-  useEffect(load, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
   return { rows, setRows, loading, err, lastCrawl, load };
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useDeferredValue } from 'react';
+import { useEffect, useMemo, useRef, useState, useDeferredValue, useCallback, memo } from 'react';
 import { MapView } from './MapView.tsx';
 import { CompareView } from './CompareView.tsx';
 import { ConfigPanel } from './ConfigPanel.tsx';
@@ -93,7 +93,8 @@ export default function App() {
   useEffect(() => { saveConfig(cfg); }, [cfg]);
   useEffect(() => { saveUIState({ sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete, groupByCase }); }, [sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete, groupByCase]);
 
-  const toggleFav = (item: ListingItem) => {
+  // useCallback — 안정 참조여야 React.memo 행이 스킵된다(load도 useListings에서 안정화).
+  const toggleFav = useCallback((item: ListingItem) => {
     const nv = !item.is_favorite;
     setRows((rs) => rs.map((r) => (r.id === item.id ? { ...r, is_favorite: nv } : r)));
     // 함수형 업데이트 — 상세 로드로 교체된 최신 selected(전체 데이터)를 slim 으로 덮어쓰지 않도록
@@ -102,7 +103,7 @@ export default function App() {
     const cached = detailCacheRef.current.get(item.case_no);
     if (cached) detailCacheRef.current.set(item.case_no, { ...cached, is_favorite: nv });
     setFavorite(item.id, nv).catch(() => load());
-  };
+  }, [setRows, load]);
 
   const showJob = (msg: string, ok: boolean, ttl = ok ? 4000 : 7000) => {
     if (jobTimerRef.current) clearTimeout(jobTimerRef.current);
@@ -145,7 +146,7 @@ export default function App() {
     else { setSort(key); setSortDir(SORT_DEFAULT_DIR[key]); }
   };
 
-  const handleSelect = (item: ListingItem) => {
+  const handleSelect = useCallback((item: ListingItem) => {
     const cached = detailCacheRef.current.get(item.case_no);
     if (cached) { setSelected(cached); return; }
     setSelected(item);
@@ -157,7 +158,7 @@ export default function App() {
       })
       .catch(() => {})
       .finally(() => setDetailLoading((cur) => (cur === item.case_no ? null : cur)));
-  };
+  }, []);
 
   // 단일 패스 스코어링 — rows·cfg 변경 시에만 1회. (과거: view/stats/allScored 3중 패스가 매 상호작용 재계산)
   // 항목 ref+cfg ref 키 캐시 — ★토글 등으로 일부 행만 바뀌면 변경된 항목만 재스코어, 나머지 sc 참조 안정
@@ -481,128 +482,20 @@ export default function App() {
             </tr>
           </thead>
           <tbody>
-            {view.map(({ item: r, sc }) => {
-              const risk = RISK[r.rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
-              return (
-                <tr key={r.id} className={`row${r.location?.report?.recommendation === 'consider' ? ' row-consider' : ''}${sc.passed && r.location?.report?.recommendation === 'avoid' ? ' row-pass-avoid' : ''}`}>
-                  <td className="star" onClick={() => toggleFav(r)} title="관심">{r.is_favorite ? '★' : '☆'}</td>
-                  <td className="mono" onClick={() => handleSelect(r)}>
-                    {r.case_no}
-                    {r.crawled_at && r.crawled_at.slice(0, 10) >= TODAY && <span className="new-chip" title={`신규 수집: ${r.crawled_at.slice(0, 10)}`}>NEW</span>}
-                    {groupByCase && (caseSizes.get(r.case_no) ?? 1) > 1 && (
-                      <span className="case-multi-chip" title={`이 사건에 물건 ${caseSizes.get(r.case_no)}개 — 대표 1건만 표시(사건묶기)`}>외 {(caseSizes.get(r.case_no) ?? 1) - 1}물건</span>
-                    )}
-                    <FieldProgress r={r} />
-                  </td>
-                  <td onClick={() => handleSelect(r)} title={r.area_m2 != null ? `전용 ${r.area_m2.toFixed(1)}㎡` : undefined}>{TYPE_LABEL[r.property_type] ?? r.property_type}</td>
-                  <td className="addr" onClick={() => handleSelect(r)}>{r.address}</td>
-                  <td className="num" onClick={() => handleSelect(r)}>{eok(r.appraisal_value)}</td>
-                  <td className="num" onClick={() => handleSelect(r)}>{eok(r.min_bid_price)}</td>
-                  <td className="num safety-cell" onClick={() => handleSelect(r)}>
-                    {r.location?.safety_margin == null
-                      ? <span className="no-mkt" title="시세 미확보 — 안전마진 산정 불가">?</span>
-                      : pct(r.location.safety_margin)}
-                    {r.location?.acquisition_cost?.trueSafetyMargin != null && (
-                      <span className={`true-margin${(r.location.acquisition_cost.trueSafetyMargin ?? 0) < 0 ? ' neg-margin' : ''}`} title="진짜 안전마진(취득비용 반영)"> / {pct(r.location.acquisition_cost.trueSafetyMargin)}</span>
-                    )}
-                    {r.location?.market_confidence === 'low' && <span className="conf-dot conf-low" title="시세 추정 신뢰도: 낮음(표본 부족)">●</span>}
-                    {r.location?.market_confidence === 'medium' && <span className="conf-dot conf-med" title="시세 추정 신뢰도: 보통">●</span>}
-                  </td>
-                  <td className="num" onClick={() => handleSelect(r)}>{r.rights ? (r.rights.assumed_amount ? eok(r.rights.assumed_amount) : '0') : '-'}</td>
-                  <td onClick={() => handleSelect(r)}>
-                    {r.location?.report?.headline?.startsWith('[데이터 불완전]')
-                      ? <span className="badge badge-incomplete" title="등기 미수집 — 권리분석 보류(재수집 필요)">등기?</span>
-                      : <span className={`badge ${risk.cls}`}>{risk.label}</span>}
-                    {r.location?.report?.recommendation === 'consider' && <span className="badge reco-consider reco-badge">권장✦</span>}
-                    {sc.passed && r.location?.report?.recommendation === 'avoid' && (
-                      <span className="badge reco-avoid reco-badge pass-avoid-badge" title="점수는 통과 기준이지만 AI 보고서가 회피 권고 — 상세 확인 필요">⚠회피</span>
-                    )}
-                    {(r.location?.report?.dangerCount ?? 0) > 0 && (
-                      <span className="danger-cnt-chip" title={`위험항목 ${r.location!.report!.dangerCount}건`}>🔴{r.location!.report!.dangerCount}</span>
-                    )}
-                    {(r.location?.report?.dangerCount ?? 0) === 0 && (r.location?.report?.warnCount ?? 0) > 0 && (
-                      <span className="warn-cnt-chip" title={`주의항목 ${r.location!.report!.warnCount}건`}>🟡{r.location!.report!.warnCount}</span>
-                    )}
-                    {sc.competitionScore != null && sc.competitionScore >= 70 && (
-                      <span className="lowcomp-chip" title={`저경쟁 — 조회 ${r.inq_cnt ?? '?'}·관심 ${r.interest_cnt ?? 0} (남들이 덜 본 매물)`}>🔥저경쟁</span>
-                    )}
-                  </td>
-                  <td className="num" onClick={() => handleSelect(r)} title={[scoreBreakdown(sc), ...(sc.reasons.length ? ['—', ...sc.reasons] : [])].join(' · ')}>
-                    <b className={sc.totalScore >= 70 ? 'good' : sc.totalScore < 40 ? 'danger' : ''}>{sc.totalScore}</b>
-                    {!sc.passed && sc.reasons.length > 0 && <span className="score-fail-hint">{sc.reasons[0]}</span>}
-                  </td>
-                  <td onClick={() => handleSelect(r)}>
-                    <DDay dateStr={r.sale_date} /><span className="sale-date-txt">{r.sale_date ?? '-'}</span>
-                    {(() => {
-                      const rr = resolveRound(r.location?.sale_rounds ?? [], r.sale_date, r.fail_count);
-                      if (!rr || rr.n <= 1) return null;
-                      return <span className={`round-badge${rr.est ? ' round-badge-est' : ''}`} style={{ marginLeft: 3 }} title={rr.est ? '분석 후 재매각기일 갱신 — 차수 추정값' : ''}>{rr.n}차{rr.est ? '+' : ''}</span>;
-                    })()}
-                  </td>
-                </tr>
-              );
-            })}
+            {view.map(({ item, sc }) => (
+              <ListingRow key={item.id} item={item} sc={sc} onSelect={handleSelect} onFav={toggleFav}
+                today={TODAY} groupByCase={groupByCase} caseSize={caseSizes.get(item.case_no) ?? 1} />
+            ))}
           </tbody>
         </table>
       )}
 
       {viewMode === 'list' && view.length > 0 && isMobile && (
         <ul className="cards">
-          {view.map(({ item: r, sc }, i) => {
-            const risk = RISK[r.rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
-            const reco = r.location?.report?.recommendation;
-            const tm = r.location?.acquisition_cost?.trueSafetyMargin;
-            const assumed = r.rights?.assumed_amount ?? 0;
-            const rounds = r.location?.sale_rounds ?? [];
-            const resolvedRound = resolveRound(rounds, r.sale_date, r.fail_count);
-            const currentRound = resolvedRound?.n ?? null;
-            const expBid = r.location?.expected_bid_price;
-            const isIncomplete = r.location?.report?.headline?.startsWith('[데이터 불완전]') ?? false;
-            const passedAvoid = sc.passed && reco === 'avoid';
-            return (
-              <li
-                key={r.id}
-                className={`card reco-edge-${reco ?? 'none'}${passedAvoid ? ' card-pass-avoid' : ''}`}
-                style={{ animationDelay: `${Math.min(i, 12) * 28}ms` }}
-                onClick={() => handleSelect(r)}
-              >
-                <div className="card-top">
-                  <span className="card-addr">{r.address}</span>
-                  <span className="card-star" onClick={(e) => { e.stopPropagation(); toggleFav(r); }}>{r.is_favorite ? '★' : '☆'}</span>
-                </div>
-                <div className="card-sub">
-                  <span>{TYPE_LABEL[r.property_type] ?? r.property_type}{r.area_m2 != null ? ` · ${r.area_m2.toFixed(0)}㎡` : ''}</span>
-                  <span className="mono">{r.case_no}</span>
-                  {groupByCase && (caseSizes.get(r.case_no) ?? 1) > 1 && (
-                    <span className="case-multi-chip" title={`이 사건에 물건 ${caseSizes.get(r.case_no)}개 — 대표 1건만 표시`}>외 {(caseSizes.get(r.case_no) ?? 1) - 1}물건</span>
-                  )}
-                  {isIncomplete
-                    ? <span className="badge badge-incomplete" title="등기 미수집 — 권리분석 보류">등기?</span>
-                    : <span className={`badge ${risk.cls}`} title={r.rights?.red_flags?.map((f) => f.message).join(' | ')}>{risk.label}</span>}
-                  {reco && <span className={`badge ${RECO[reco]?.cls ?? ''}`}>{RECO[reco]?.label ?? reco}</span>}
-                  {r.rights?.risk_grade === 'review_required' && (r.rights.red_flags ?? []).slice(0, 2).map((f) => (
-                    <span key={f.kind} className="flag-chip" title={f.message}>{FLAG_LABEL[f.kind] ?? f.kind}</span>
-                  ))}
-                </div>
-                <div className="card-metrics">
-                  <div><span>감정가</span><b>{eok(r.appraisal_value)}</b></div>
-                  <div><span>최저가{currentRound && currentRound > 1 ? ` (${currentRound}차)` : ''}</span><b>{eok(r.min_bid_price)}</b></div>
-                  <div><span>안전마진</span><b>{pct(r.location?.safety_margin)}</b></div>
-                  {expBid ? <div><span>예상낙찰가</span><b className="good">{eok(expBid)}</b></div>
-                    : <div><span>진짜마진</span><b className={(tm ?? 0) < 0 ? 'danger' : 'good'}>{pct(tm)}</b></div>}
-                </div>
-                <div className="card-foot">
-                  <span className="card-score" title={scoreBreakdown(sc)}>점수 <b>{sc.totalScore}</b></span>
-                  {assumed > 0 && <span className="card-assumed">인수 {eok(assumed)}</span>}
-                  {r.location?.income?.zeroPiCandidate && <span className="zero-pi-chip">★무피</span>}
-                  {currentRound && currentRound > 1 && <span className="round-badge">{currentRound}차 진행</span>}
-                  <FieldProgress r={r} />
-                  <DDay dateStr={r.sale_date} />
-                  <span className="card-go">자세히 ›</span>
-                </div>
-              </li>
-            );
-          })}
+          {view.map(({ item, sc }, i) => (
+            <ListingCard key={item.id} item={item} sc={sc} onSelect={handleSelect} onFav={toggleFav}
+              groupByCase={groupByCase} caseSize={caseSizes.get(item.case_no) ?? 1} index={i} />
+          ))}
         </ul>
       )}
 
@@ -644,6 +537,130 @@ export default function App() {
     </div>
   );
 }
+
+// ── 목록 행/카드 — React.memo + 안정 콜백(handleSelect/toggleFav useCallback) + 행별 점수 캐시 →
+//    정렬·필터·★토글·잡 폴링 시 변경 안 된 행은 재렌더 스킵(1355행 reconcile 비용↓).
+interface RowBaseProps {
+  item: ListingItem; sc: ClientScore;
+  onSelect: (item: ListingItem) => void; onFav: (item: ListingItem) => void;
+  groupByCase: boolean; caseSize: number;
+}
+
+const ListingRow = memo(function ListingRow({ item: r, sc, onSelect, onFav, today, groupByCase, caseSize }: RowBaseProps & { today: string }) {
+  const risk = RISK[r.rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
+  return (
+    <tr className={`row${r.location?.report?.recommendation === 'consider' ? ' row-consider' : ''}${sc.passed && r.location?.report?.recommendation === 'avoid' ? ' row-pass-avoid' : ''}`}>
+      <td className="star" onClick={() => onFav(r)} title="관심">{r.is_favorite ? '★' : '☆'}</td>
+      <td className="mono" onClick={() => onSelect(r)}>
+        {r.case_no}
+        {r.crawled_at && r.crawled_at.slice(0, 10) >= today && <span className="new-chip" title={`신규 수집: ${r.crawled_at.slice(0, 10)}`}>NEW</span>}
+        {groupByCase && caseSize > 1 && (
+          <span className="case-multi-chip" title={`이 사건에 물건 ${caseSize}개 — 대표 1건만 표시(사건묶기)`}>외 {caseSize - 1}물건</span>
+        )}
+        <FieldProgress r={r} />
+      </td>
+      <td onClick={() => onSelect(r)} title={r.area_m2 != null ? `전용 ${r.area_m2.toFixed(1)}㎡` : undefined}>{TYPE_LABEL[r.property_type] ?? r.property_type}</td>
+      <td className="addr" onClick={() => onSelect(r)}>{r.address}</td>
+      <td className="num" onClick={() => onSelect(r)}>{eok(r.appraisal_value)}</td>
+      <td className="num" onClick={() => onSelect(r)}>{eok(r.min_bid_price)}</td>
+      <td className="num safety-cell" onClick={() => onSelect(r)}>
+        {r.location?.safety_margin == null
+          ? <span className="no-mkt" title="시세 미확보 — 안전마진 산정 불가">?</span>
+          : pct(r.location.safety_margin)}
+        {r.location?.acquisition_cost?.trueSafetyMargin != null && (
+          <span className={`true-margin${(r.location.acquisition_cost.trueSafetyMargin ?? 0) < 0 ? ' neg-margin' : ''}`} title="진짜 안전마진(취득비용 반영)"> / {pct(r.location.acquisition_cost.trueSafetyMargin)}</span>
+        )}
+        {r.location?.market_confidence === 'low' && <span className="conf-dot conf-low" title="시세 추정 신뢰도: 낮음(표본 부족)">●</span>}
+        {r.location?.market_confidence === 'medium' && <span className="conf-dot conf-med" title="시세 추정 신뢰도: 보통">●</span>}
+      </td>
+      <td className="num" onClick={() => onSelect(r)}>{r.rights ? (r.rights.assumed_amount ? eok(r.rights.assumed_amount) : '0') : '-'}</td>
+      <td onClick={() => onSelect(r)}>
+        {r.location?.report?.headline?.startsWith('[데이터 불완전]')
+          ? <span className="badge badge-incomplete" title="등기 미수집 — 권리분석 보류(재수집 필요)">등기?</span>
+          : <span className={`badge ${risk.cls}`}>{risk.label}</span>}
+        {r.location?.report?.recommendation === 'consider' && <span className="badge reco-consider reco-badge">권장✦</span>}
+        {sc.passed && r.location?.report?.recommendation === 'avoid' && (
+          <span className="badge reco-avoid reco-badge pass-avoid-badge" title="점수는 통과 기준이지만 AI 보고서가 회피 권고 — 상세 확인 필요">⚠회피</span>
+        )}
+        {(r.location?.report?.dangerCount ?? 0) > 0 && (
+          <span className="danger-cnt-chip" title={`위험항목 ${r.location!.report!.dangerCount}건`}>🔴{r.location!.report!.dangerCount}</span>
+        )}
+        {(r.location?.report?.dangerCount ?? 0) === 0 && (r.location?.report?.warnCount ?? 0) > 0 && (
+          <span className="warn-cnt-chip" title={`주의항목 ${r.location!.report!.warnCount}건`}>🟡{r.location!.report!.warnCount}</span>
+        )}
+        {sc.competitionScore != null && sc.competitionScore >= 70 && (
+          <span className="lowcomp-chip" title={`저경쟁 — 조회 ${r.inq_cnt ?? '?'}·관심 ${r.interest_cnt ?? 0} (남들이 덜 본 매물)`}>🔥저경쟁</span>
+        )}
+      </td>
+      <td className="num" onClick={() => onSelect(r)} title={[scoreBreakdown(sc), ...(sc.reasons.length ? ['—', ...sc.reasons] : [])].join(' · ')}>
+        <b className={sc.totalScore >= 70 ? 'good' : sc.totalScore < 40 ? 'danger' : ''}>{sc.totalScore}</b>
+        {!sc.passed && sc.reasons.length > 0 && <span className="score-fail-hint">{sc.reasons[0]}</span>}
+      </td>
+      <td onClick={() => onSelect(r)}>
+        <DDay dateStr={r.sale_date} /><span className="sale-date-txt">{r.sale_date ?? '-'}</span>
+        {(() => {
+          const rr = resolveRound(r.location?.sale_rounds ?? [], r.sale_date, r.fail_count);
+          if (!rr || rr.n <= 1) return null;
+          return <span className={`round-badge${rr.est ? ' round-badge-est' : ''}`} style={{ marginLeft: 3 }} title={rr.est ? '분석 후 재매각기일 갱신 — 차수 추정값' : ''}>{rr.n}차{rr.est ? '+' : ''}</span>;
+        })()}
+      </td>
+    </tr>
+  );
+});
+
+const ListingCard = memo(function ListingCard({ item: r, sc, onSelect, onFav, groupByCase, caseSize, index }: RowBaseProps & { index: number }) {
+  const risk = RISK[r.rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
+  const reco = r.location?.report?.recommendation;
+  const tm = r.location?.acquisition_cost?.trueSafetyMargin;
+  const assumed = r.rights?.assumed_amount ?? 0;
+  const resolvedRound = resolveRound(r.location?.sale_rounds ?? [], r.sale_date, r.fail_count);
+  const currentRound = resolvedRound?.n ?? null;
+  const expBid = r.location?.expected_bid_price;
+  const isIncomplete = r.location?.report?.headline?.startsWith('[데이터 불완전]') ?? false;
+  const passedAvoid = sc.passed && reco === 'avoid';
+  return (
+    <li
+      className={`card reco-edge-${reco ?? 'none'}${passedAvoid ? ' card-pass-avoid' : ''}`}
+      style={{ animationDelay: `${Math.min(index, 12) * 28}ms` }}
+      onClick={() => onSelect(r)}
+    >
+      <div className="card-top">
+        <span className="card-addr">{r.address}</span>
+        <span className="card-star" onClick={(e) => { e.stopPropagation(); onFav(r); }}>{r.is_favorite ? '★' : '☆'}</span>
+      </div>
+      <div className="card-sub">
+        <span>{TYPE_LABEL[r.property_type] ?? r.property_type}{r.area_m2 != null ? ` · ${r.area_m2.toFixed(0)}㎡` : ''}</span>
+        <span className="mono">{r.case_no}</span>
+        {groupByCase && caseSize > 1 && (
+          <span className="case-multi-chip" title={`이 사건에 물건 ${caseSize}개 — 대표 1건만 표시`}>외 {caseSize - 1}물건</span>
+        )}
+        {isIncomplete
+          ? <span className="badge badge-incomplete" title="등기 미수집 — 권리분석 보류">등기?</span>
+          : <span className={`badge ${risk.cls}`} title={r.rights?.red_flags?.map((f) => f.message).join(' | ')}>{risk.label}</span>}
+        {reco && <span className={`badge ${RECO[reco]?.cls ?? ''}`}>{RECO[reco]?.label ?? reco}</span>}
+        {r.rights?.risk_grade === 'review_required' && (r.rights.red_flags ?? []).slice(0, 2).map((f) => (
+          <span key={f.kind} className="flag-chip" title={f.message}>{FLAG_LABEL[f.kind] ?? f.kind}</span>
+        ))}
+      </div>
+      <div className="card-metrics">
+        <div><span>감정가</span><b>{eok(r.appraisal_value)}</b></div>
+        <div><span>최저가{currentRound && currentRound > 1 ? ` (${currentRound}차)` : ''}</span><b>{eok(r.min_bid_price)}</b></div>
+        <div><span>안전마진</span><b>{pct(r.location?.safety_margin)}</b></div>
+        {expBid ? <div><span>예상낙찰가</span><b className="good">{eok(expBid)}</b></div>
+          : <div><span>진짜마진</span><b className={(tm ?? 0) < 0 ? 'danger' : 'good'}>{pct(tm)}</b></div>}
+      </div>
+      <div className="card-foot">
+        <span className="card-score" title={scoreBreakdown(sc)}>점수 <b>{sc.totalScore}</b></span>
+        {assumed > 0 && <span className="card-assumed">인수 {eok(assumed)}</span>}
+        {r.location?.income?.zeroPiCandidate && <span className="zero-pi-chip">★무피</span>}
+        {currentRound && currentRound > 1 && <span className="round-badge">{currentRound}차 진행</span>}
+        <FieldProgress r={r} />
+        <DDay dateStr={r.sale_date} />
+        <span className="card-go">자세히 ›</span>
+      </div>
+    </li>
+  );
+});
 
 // REGIONS·PRICE_BANDS·ALLOWED_TYPES는 ConfigPanel.tsx로 이동
 
