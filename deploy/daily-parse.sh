@@ -40,4 +40,14 @@ if [ -n "$DIGEST" ]; then
 ${EVAL}" 2>/dev/null || true
 fi
 
+# 학습 게이트 도달(매칭≥EVAL_GATE) 첫날 1회 — 전체 복기 리포트 + "이어서 진행" 알림. 마커로 재발송 방지.
+GATE_MARK="$HOME/.gyeongmae-phase2-alerted"
+if echo "$EVAL" | grep -q "시작 가능" && [ ! -f "$GATE_MARK" ]; then
+  FULL=$(npm run --silent eval:report 2>/dev/null)
+  bash /home/ubuntu/.hermes/scripts/notify-telegram.sh "경매 학습 Phase2 준비" "완료" \
+    "복기 데이터 게이트 도달 — Claude 세션에서 '진행해'로 Phase 2(복기·모델) 이어가세요.
+
+${FULL}" 2>/dev/null && touch "$GATE_MARK" || true
+fi
+
 exit $rc
