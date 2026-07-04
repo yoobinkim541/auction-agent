@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# 매일 자동 파싱: 더낙찰옥션 크롤(상세 정밀 파싱) → 전체 재분석.
+# 매일 자동 파싱: 법원경매(courtauction) 크롤(메인, 풀 수집) → 전체 재분석.
+#   더낙찰옥션은 계정 단위 차단(데이터센터 IP 로그인이 트리거)이라 일일 배치에서 제외 — 필요 시 수동 실행.
+#   (과거: 옵션 없는 `npm run crawl` = 더낙찰 메인 → 차단으로 매일 굶거나 폴백 축소수집(200건)만 됨)
 #
 # 크롤이 실패해도(접속차단·로그인 폼 변경·네트워크 등) 분석은 항상 수행한다.
 #   분석은 DB(기존 등기/명세서 + gm_molit_cache 영구 캐시)만으로도 income·시세·리포트를 갱신하므로,
 #   크롤 한 번의 실패가 전체 분석 갱신을 막아선 안 된다. (과거: set -e + crawl 실패 → analyze 통째 스킵 버그)
 cd /home/ubuntu/projects/gyeongmae-agent || exit 1
 export PATH="/home/ubuntu/.local/bin:$PATH"
+NOTIFY="scripts/notify-telegram.sh"   # 경매 전용 봇(GM_TELEGRAM_*) — 스톡봇(.hermes) 공용 스크립트 대체
 echo "[$(date '+%F %T')] === parse start ==="
 
-if npm run crawl; then
+if npm run crawl -- --source=courtauction; then
   echo "[$(date '+%F %T')] crawl ok"
 else
   echo "[$(date '+%F %T')] ⚠ crawl 실패(rc=$?) — 분석은 계속 진행(DB·캐시 기반)"
@@ -28,7 +31,7 @@ HEALTH_OUT=$(npm run crawl:health 2>&1); HRC=$?
 echo "$HEALTH_OUT"
 if [ "$HRC" != "0" ]; then
   SUMMARY=$(echo "$HEALTH_OUT" | grep -E "마지막 실수집|연속 0건|사유" | tr '\n' ' ' | cut -c1-350)
-  bash /home/ubuntu/.hermes/scripts/notify-telegram.sh "경매 크롤 헬스" "실패" \
+  bash "$NOTIFY" "경매 크롤 헬스" "실패" \
     "신규 수집 굶음 — 차단/계정플래그/프록시 점검. ${SUMMARY}" 2>/dev/null || true
 fi
 
@@ -36,7 +39,7 @@ fi
 DIGEST=$(npm run --silent digest 2>/dev/null)
 EVAL=$(npm run --silent eval:report -- --summary 2>/dev/null)
 if [ -n "$DIGEST" ]; then
-  bash /home/ubuntu/.hermes/scripts/notify-telegram.sh "경매 추천" "완료" "${DIGEST}
+  bash "$NOTIFY" "경매 추천" "완료" "${DIGEST}
 ${EVAL}" 2>/dev/null || true
 fi
 
@@ -44,7 +47,7 @@ fi
 GATE_MARK="$HOME/.gyeongmae-phase2-alerted"
 if echo "$EVAL" | grep -q "시작 가능" && [ ! -f "$GATE_MARK" ]; then
   FULL=$(npm run --silent eval:report 2>/dev/null)
-  bash /home/ubuntu/.hermes/scripts/notify-telegram.sh "경매 학습 Phase2 준비" "완료" \
+  bash "$NOTIFY" "경매 학습 Phase2 준비" "완료" \
     "복기 데이터 게이트 도달 — Claude 세션에서 '진행해'로 Phase 2(복기·모델) 이어가세요.
 
 ${FULL}" 2>/dev/null && touch "$GATE_MARK" || true

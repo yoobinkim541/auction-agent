@@ -4,7 +4,8 @@
 # cron 권장: 0 */3 * * *  (3시간마다). 새벽 크롤(21:00 UTC) 전에 다운을 미리 감지.
 PORT=1080
 STATE=/tmp/gm-tunnel-state
-NOTIFY=/home/ubuntu/.hermes/scripts/notify-telegram.sh
+# 경매 전용 봇(GM_TELEGRAM_*) — cron이 어디서 실행하든 스크립트 기준 상대경로로 해석
+NOTIFY="$(cd "$(dirname "$0")" && pwd)/notify-telegram.sh"
 
 direct=$(curl -s --max-time 8 https://api.ipify.org 2>/dev/null)
 egress=$(curl -s --socks5-hostname 127.0.0.1:"$PORT" --max-time 12 https://api.ipify.org 2>/dev/null)
