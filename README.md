@@ -55,13 +55,14 @@ Spring Boot가 API·작업 트리거를 담당하고, 검증된 TS 크롤러/권
 ## 무인 운영
 
 - **일일 배치**: `gyeongmae-parse.timer`(매일 06:00 KST) → `deploy/daily-parse.sh`:
-  `크롤 → analyze --all(권리·입지·점수 + LLM 의견서 2차 패스) → 수집 헬스체크 → 다이제스트 → 텔레그램 발송`.
+  `법원경매 크롤(--source=courtauction, 메인) → analyze --all(권리·입지·점수 + LLM 의견서 2차 패스) → 수집 헬스체크 → 다이제스트 → 텔레그램 발송`.
   크롤이 실패해도(차단 등) 분석은 DB·캐시 기반으로 계속 진행.
 - **크롤 IP**: VM(데이터센터) IP는 차단되므로 **집 IP SOCKS 프록시**(`CRAWL_PROXY`, `ssh -R` 역터널) 경유. 구성·예방은 `docs/crawl-proxy.md`.
   - ⚠️ 더낙찰옥션 차단은 **계정 단위**(데이터센터 IP 로그인이 트리거) — 법원경매를 메인으로 운용.
 - **LLM 비용**: 의견서·2차 검증은 **Claude Max 구독 CLI**(`claude -p`) 사용 → 종량제 API 회피.
   배치 버스트 레이트리밋 대비 throttle + 백오프 재시도 + 입력 해시 캐시 적용(`MEMO`, `MEMO_TOP_N`, `MEMO_THROTTLE_MS`).
-- **알림**: 수집 굶음(0건)·크롤 차단·일일 추천을 텔레그램으로(`notify-telegram.sh`).
+- **알림**: 수집 굶음(0건)·크롤 차단·터널 다운·일일 추천을 텔레그램으로 — **경매 전용 봇** `scripts/notify-telegram.sh`
+  (`GM_TELEGRAM_BOT_TOKEN`·`GM_TELEGRAM_CHAT_ID`, 미설정 시 기존 `.hermes` 봇 폴백).
 
 ## 빠른 시작
 

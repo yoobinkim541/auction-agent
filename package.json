@@ -21,7 +21,7 @@
     "geocode:bulk": "tsx scripts/geocode-bulk.ts"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",
