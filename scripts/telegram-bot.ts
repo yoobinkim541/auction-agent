@@ -7,6 +7,10 @@
  * 실행: npm run bot  (systemd gyeongmae-bot.service 로 상시). CRAWL_PROXY 비활성=직접.
  */
 import 'dotenv/config';
+import { Agent, setGlobalDispatcher } from 'undici';
+// 이 VM은 IPv6 미도달 → undici happy-eyeballs가 IPv6를 먼저 시도해 간헐 connect timeout.
+// IPv4 강제 + connect timeout으로 텔레그램/코트옥션 fetch 안정화.
+setGlobalDispatcher(new Agent({ connect: { family: 4, timeout: 15_000 } }));
 import { spawn } from 'node:child_process';
 import { query, pool } from '../shared/db.ts';
 import { collectCaseResults, courtCodeByName, type SaleResultRound } from '../crawler/adapters/courtauction.ts';
@@ -95,13 +99,18 @@ async function main(): Promise<void> {
   if (!TOKEN) { console.error('AUCTION_BOT_TOKEN 필요'); process.exit(1); }
   console.log(`[bot] 경매 봇 시작 — owner ${OWNER}`);
   let offset = 0;
-  // 시작 시 밀린 업데이트 건너뛰기(중복 응답 방지)
-  const init = await (await fetch(`${API}/getUpdates?offset=-1`)).json().catch(() => null) as { result?: { update_id: number }[] } | null;
-  if (init?.result?.length) offset = init.result[init.result.length - 1]!.update_id + 1;
+  // 시작 시 밀린 업데이트 건너뛰기(중복 응답 방지). 텔레그램 일시 연결오류에도 죽지 않게 try/catch.
+  try {
+    const init = await (await fetch(`${API}/getUpdates?offset=-1`)).json() as { result?: { update_id: number }[] };
+    if (init?.result?.length) offset = init.result[init.result.length - 1]!.update_id + 1;
+  } catch (e) {
+    console.error('[bot] init getUpdates 실패(무시, offset=0):', e instanceof Error ? e.message : e);
+  }
 
+  // 짧은 폴링(3초 간격) — 30s 롱폴은 이 VM 네트워크에서 간헐 connect 실패. 짧은 연결(getMe급)은 안정적.
   for (;;) {
     try {
-      const res = await fetch(`${API}/getUpdates?timeout=30&offset=${offset}`);
+      const res = await fetch(`${API}/getUpdates?timeout=0&offset=${offset}`);
       const j = await res.json() as { ok: boolean; result?: { update_id: number; message?: { chat: { id: number }; text?: string } }[] };
       for (const u of j.result ?? []) {
         offset = u.update_id + 1;
@@ -113,8 +122,8 @@ async function main(): Promise<void> {
       }
     } catch (e) {
       console.error('[bot] loop 오류:', e instanceof Error ? e.message : e);
-      await new Promise((r) => setTimeout(r, 5000));
     }
+    await new Promise((r) => setTimeout(r, 3000));
   }
 }
 
