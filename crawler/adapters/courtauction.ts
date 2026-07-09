@@ -519,6 +519,7 @@ export class CourtAuctionAdapter implements Adapter {
 
   async crawl(filter: CrawlFilter): Promise<ScrapedListing[]> {
     const maxItems = filter.maxItems ?? 200;
+    const perCourt = filter.perCourt ?? maxItems; // 법원당 상한 — 미설정 시 전역과 동일(기존 동작). 설정 시 서울·경기 균형 수집(서울중앙이 예산 독식 방지).
     const fetchDetail_ = process.env.COURT_FETCH_DETAIL !== 'false'; // 권리분석 위해 기본 ON(상세=명세서 권리데이터). 끄려면 false.
     const courts = filterCourts(filter.regions);
 
@@ -538,11 +539,12 @@ export class CourtAuctionAdapter implements Adapter {
 
     for (const court of courts) {
       if (blocked || results.length >= maxItems) break;
+      const courtStart = results.length; // 이 법원 수집량 = results.length - courtStart (perCourt 상한 판정용)
       console.log(`[courtauction] 검색: ${court.name} (${court.code})`);
       const srchInfo = buildSrchInfo(court.code); // 검색·상세 공용
 
       for (let page = 1; ; page++) {
-        if (blocked || results.length >= maxItems) break;
+        if (blocked || results.length >= maxItems || results.length - courtStart >= perCourt) break;
 
         // 실제 사이트(WebSquare) 검색 포맷 — dma_ 맵 본문 + submissionid 헤더. srchInfo는 상세 조회와 공용.
         const body = {
@@ -608,7 +610,7 @@ export class CourtAuctionAdapter implements Adapter {
           }
 
           results.push(scraped);
-          if (results.length >= maxItems) break;
+          if (results.length >= maxItems || results.length - courtStart >= perCourt) break;
         }
 
         if (newOnPage === 0) break; // 중복만 있으면 종료

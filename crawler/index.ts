@@ -67,9 +67,11 @@ async function main() {
   }
 
   const maxArg = args.find((a) => a.startsWith('--max='));
+  const perCourtArg = args.find((a) => a.startsWith('--per-court='));
   const filter: CrawlFilter = {
     ...DEFAULT_FILTER,
     maxItems: maxArg ? parseInt(maxArg.split('=')[1]!, 10) : DEFAULT_FILTER.maxItems,
+    ...(perCourtArg ? { perCourt: parseInt(perCourtArg.split('=')[1]!, 10) } : {}),
   };
 
   const forcedSource = args.find((a) => a.startsWith('--source='))?.split('=')[1];
