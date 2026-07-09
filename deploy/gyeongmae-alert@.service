@@ -1,0 +1,7 @@
+[Unit]
+Description=Gyeongmae 배치 실패 알림 (%i)
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/projects/gyeongmae-agent/deploy/notify-fail.sh %i

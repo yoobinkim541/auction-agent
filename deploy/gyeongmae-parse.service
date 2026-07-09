@@ -2,6 +2,7 @@
 Description=Gyeongmae daily parse (crawl + analyze)
 After=network.target postgresql.service gyeongmae-api.service
 Wants=postgresql.service
+OnFailure=gyeongmae-alert@%n.service
 
 [Service]
 Type=oneshot

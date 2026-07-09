@@ -2,6 +2,7 @@
 Description=Gyeongmae evening result collect (낙찰결과 보강 — 당일 기일 같은 날 반영)
 After=network.target postgresql.service
 Wants=postgresql.service
+OnFailure=gyeongmae-alert@%n.service
 
 [Service]
 Type=oneshot
