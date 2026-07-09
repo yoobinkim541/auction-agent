@@ -90,6 +90,12 @@ export default function App() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 데이터 로드(rows·lastCrawl·load)는 useListings()로 이동(위 destructure)
+  // 딥링크: URL #case=<사건번호> 로 진입하면 해당 매물 상세를 자동으로 연다(다이제스트/봇 링크용).
+  useEffect(() => {
+    const m = window.location.hash.match(/#case=(.+)/);
+    if (!m) return;
+    fetchDetail(decodeURIComponent(m[1]!)).then((full) => { if (full) setSelected(full); }).catch(() => {});
+  }, []);
   useEffect(() => { saveConfig(cfg); }, [cfg]);
   useEffect(() => { saveUIState({ sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete, groupByCase }); }, [sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete, groupByCase]);
 
