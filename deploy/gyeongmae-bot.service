@@ -1,0 +1,18 @@
+[Unit]
+Description=Gyeongmae 경매 봇 (텔레그램 양방향 — /case /digest /status)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/projects/gyeongmae-agent
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/ubuntu/.local/bin/npm run bot
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/ubuntu/projects/gyeongmae-agent/bot.log
+StandardError=append:/home/ubuntu/projects/gyeongmae-agent/bot.log
+
+[Install]
+WantedBy=multi-user.target
