@@ -78,6 +78,30 @@ async function rateGate(): Promise<void> {
   if (w > 0) await wait(w);
 }
 
+/** 일시적 네트워크 오류(TypeError: fetch failed / ECONNRESET / timeout)에 한해 백오프 재시도.
+ *  이 VM 네트워크가 간헐적으로 끊겨(예: run 47 "fetch failed") 장시간 크롤이 통째로 실패하는 것을 방지.
+ *  HTTP 상태·차단(ipcheck) 오류는 여기까지 오지 않음(호출부에서 처리) → 재시도 대상 아님. */
+async function crawlFetchRetry(
+  url: string,
+  init: Parameters<typeof crawlFetch>[1],
+  tries = 3,
+): Promise<Awaited<ReturnType<typeof crawlFetch>>> {
+  let lastErr: unknown;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await crawlFetch(url, init);
+    } catch (e) {
+      lastErr = e;
+      if (i < tries - 1) {
+        const backoff = 2_000 * (i + 1) + rnd(0, 1_000);
+        console.warn(`[courtauction] fetch 재시도 ${i + 1}/${tries - 1}: ${e instanceof Error ? e.message : e} — ${Math.round(backoff / 1000)}s 후`);
+        await wait(backoff);
+      }
+    }
+  }
+  throw lastErr;
+}
+
 // ── 쿠키 관리 ─────────────────────────────────────────────────────────
 class CookieJar {
   private store = new Map<string, string>();
@@ -115,7 +139,7 @@ interface FetchOpts {
 
 async function post(path: string, { body, cookies, referer, headers: extra }: FetchOpts): Promise<unknown> {
   await rateGate();
-  const res = await crawlFetch(BASE + path, {
+  const res = await crawlFetchRetry(BASE + path, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json; charset=UTF-8',
@@ -137,7 +161,7 @@ async function post(path: string, { body, cookies, referer, headers: extra }: Fe
 /** 세션 초기화 (JSESSIONID + WMONID 취득) */
 async function initSession(cookies: CookieJar): Promise<void> {
   await rateGate();
-  const res = await crawlFetch(BASE + '/pgj/index.on', {
+  const res = await crawlFetchRetry(BASE + '/pgj/index.on', {
     headers: {
       Accept: 'text/html,application/xhtml+xml,*/*;q=0.8',
       'Accept-Language': 'ko-KR,ko;q=0.9',

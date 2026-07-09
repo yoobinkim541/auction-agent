@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatDigest, formatResultsRecap, type DigestRow, type DigestResult } from './digest-format.ts';
+import { formatDigest, formatResultsRecap, formatUpcoming, type DigestRow, type DigestResult } from './digest-format.ts';
 
 const row = (over: Partial<DigestRow> = {}): DigestRow => ({
   case_no: '2024타경1', property_type: 'apartment', address: '서울특별시 강남구 역삼동 1-2',
@@ -45,6 +45,30 @@ describe('formatDigest', () => {
     const s = formatDigest([row({ memo: '권리관계 깨끗하고 입지 양호. 두 번째 문장은 생략.' })], { today: '2026-06-27', totalPassed: 1 });
     expect(s).toContain('💬 권리관계 깨끗하고 입지 양호.');
     expect(s).not.toContain('두 번째 문장');
+  });
+
+  it('dashboardBase 설정 시 원본 대신 대시보드 딥링크(#case=)', () => {
+    const s = formatDigest([row({ case_no: '2024타경1' })], { today: '2026-06-27', totalPassed: 1, dashboardBase: 'https://dash.example.com/' });
+    expect(s).toContain('https://dash.example.com/#case=2024%ED%83%80%EA%B2%BD1');
+    expect(s).not.toContain('https://x'); // source_url 대체됨
+  });
+});
+
+describe('formatUpcoming', () => {
+  const row = (over: Partial<DigestRow> = {}): DigestRow => ({
+    case_no: '2024타경1', property_type: 'apartment', address: '서울특별시 강남구 역삼동 1-2',
+    appraisal_value: 3e8, min_bid_price: 2e8, sale_date: '2026-07-11',
+    source_url: null, inq_cnt: null, interest_cnt: null, crawled_at: null,
+    risk_grade: 'clean', safety_margin: 0.3, true_margin: 0.25, total_score: 80, memo: null, ...over,
+  });
+  it('임박순 D-day 리스트', () => {
+    const s = formatUpcoming([row({ sale_date: '2026-07-09' }), row({ case_no: '2024타경2', sale_date: '2026-07-12' })], '2026-07-09');
+    expect(s).toContain('이번 주 입찰 후보 2건');
+    expect(s).toContain('D-day · 2024타경1');
+    expect(s).toContain('D-3 · 2024타경2');
+  });
+  it('빈 목록 → 빈 문자열(섹션 생략)', () => {
+    expect(formatUpcoming([], '2026-07-09')).toBe('');
   });
 });
 

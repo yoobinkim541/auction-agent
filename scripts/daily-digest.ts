@@ -5,7 +5,7 @@
  */
 import 'dotenv/config';
 import { query, pool } from '../shared/db.ts';
-import { formatDigest, formatResultsRecap, type DigestRow, type DigestResult } from './digest-format.ts';
+import { formatDigest, formatResultsRecap, formatUpcoming, type DigestRow, type DigestResult } from './digest-format.ts';
 
 async function main(): Promise<void> {
   const N = Number(process.env.DIGEST_TOP_N) || 5;
@@ -49,9 +49,24 @@ async function main(): Promise<void> {
       order by r.sold desc, sale_ratio desc nulls last`,
   );
 
-  const digest = formatDigest(rows, { today, totalPassed, dataAsOf, dataAgeDays });
+  // 이번 주 입찰 후보(통과 + 매각기일 7일 이내, 임박순)
+  const upcoming = await query<DigestRow>(
+    `select l.case_no, l.property_type, l.address, l.appraisal_value::float8, l.min_bid_price::float8,
+            l.sale_date::text, l.source_url, l.inq_cnt, l.interest_cnt, l.crawled_at::text,
+            r.risk_grade, loc.safety_margin::float8, (loc.acquisition_cost->>'trueSafetyMargin')::float8 as true_margin,
+            s.total_score::int, null as memo
+       from gm_scores s join gm_listings l on l.id = s.listing_id
+       left join gm_rights_analysis r on r.listing_id = l.id
+       left join gm_location_analysis loc on loc.listing_id = l.id
+      where s.passed_filter = true and l.sale_date >= current_date and l.sale_date <= current_date + 7
+      order by l.sale_date, s.total_score desc nulls last`,
+  );
+
+  const dashboardBase = process.env.DASHBOARD_URL || null;
+  const digest = formatDigest(rows, { today, totalPassed, dataAsOf, dataAgeDays, dashboardBase });
+  const week = formatUpcoming(upcoming, today);
   const recap = formatResultsRecap(results, '최근');
-  console.log([digest, recap].filter(Boolean).join('\n\n'));
+  console.log([digest, week, recap].filter(Boolean).join('\n\n'));
   await pool().end();
 }
 

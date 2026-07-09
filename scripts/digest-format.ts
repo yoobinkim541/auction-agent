@@ -31,7 +31,14 @@ export interface DigestOpts {
   totalPassed: number;
   dataAsOf?: string | null;   // 마지막 실수집(n_found>0) 날짜 YYYY-MM-DD
   dataAgeDays?: number | null; // 오늘 - dataAsOf (일)
+  dashboardBase?: string | null; // 설정 시 매물 링크를 대시보드 딥링크(#case=)로 — 없으면 원본(courtauction) 링크
 }
+
+const ddayLabel = (d: string | null, today: string): string => {
+  if (!d) return '';
+  const days = Math.round((new Date(d).getTime() - new Date(today).getTime()) / 86_400_000);
+  return days === 0 ? 'D-day' : days > 0 ? `D-${days}` : `D+${-days}`;
+};
 
 /** 통과 상위 N건 → 텔레그램용 다이제스트 텍스트. */
 export function formatDigest(rows: DigestRow[], opts: DigestOpts): string {
@@ -62,10 +69,21 @@ export function formatDigest(rows: DigestRow[], opts: DigestOpts): string {
     ].filter(Boolean);
     out.push(`   ${tags.join(' · ')}`);
     if (r.memo) out.push(`   💬 ${firstSentence(r.memo)}`);
-    if (r.source_url) out.push(`   ${r.source_url}`);
+    const link = opts.dashboardBase ? `${opts.dashboardBase.replace(/\/+$/, '')}/#case=${encodeURIComponent(r.case_no)}` : r.source_url;
+    if (link) out.push(`   ${link}`);
     out.push('');
   });
   return out.join('\n').trim();
+}
+
+/** 이번 주 입찰 후보 — 매각 임박순 압축 리스트(다이제스트가 '읽기'에서 '행동'으로). */
+export function formatUpcoming(rows: DigestRow[], today: string): string {
+  if (!rows.length) return '';
+  const out: string[] = [`🗓 이번 주 입찰 후보 ${rows.length}건`];
+  for (const r of rows.slice(0, 8)) {
+    out.push(`  ${ddayLabel(r.sale_date, today)} · ${r.case_no} · ${TYPE[r.property_type] ?? r.property_type} · ${r.address.slice(0, 14)} ⭐${r.total_score ?? '-'}`);
+  }
+  return out.join('\n');
 }
 
 /** 어제 기일 결과 회고 — 학습 루프를 눈에 보이게(낙찰/유찰 + 우리가 추천했던 물건 결과). */
