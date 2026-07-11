@@ -80,9 +80,12 @@ async function main() {
   if (forcedSource === 'courtauction') {
     // 증분 모드: 이미 권리분석된 물건은 상세를 건너뛰고 메타만 갱신 → 신규만 풀 파싱(정기 배치용).
     if (args.includes('--incremental')) {
+      // "이미 파싱됨" 기준은 문서(gm_listing_docs) 존재 — fetchDetail이 만드는 산출물 그 자체.
+      // (권리분석 행 기준은 오답: analyze가 문서 없는 이월 물건에도 review_required 행을 만들어
+      //  영영 상세를 못 받는 오염 발생 — 2026-07-11 1,243건 실측.)
       const known = await query<{ k: string }>(
         `select case_no || '|' || coalesce(item_no,'1') as k from gm_listings l
-          where exists (select 1 from gm_rights_analysis r where r.listing_id = l.id)`,
+          where exists (select 1 from gm_listing_docs d where d.listing_id = l.id)`,
       );
       filter.incremental = true;
       filter.knownKeys = new Set(known.map((r) => r.k));

@@ -171,7 +171,7 @@ async function main() {
   const reanalyzeAll = process.argv.includes('--all');
   const limitArg = process.argv.find((a) => a.startsWith('--limit='));
   const limit = limitArg ? Math.max(1, parseInt(limitArg.split('=')[1] ?? '', 10)) : null;
-  let listings = await fetchListingsForAnalysis(2000, !reanalyzeAll);
+  let listings = await fetchListingsForAnalysis(6000, !reanalyzeAll); // 증분 스윕으로 재고 4천+ — 2000이면 --all이 절반을 놓침(활성 우선 정렬과 세트)
   if (limit) listings = listings.slice(0, limit); // 소규모 검증/점진 적재용
   const concurrency = Math.max(1, parseInt(process.env.ANALYZE_CONCURRENCY ?? '6', 10));
   console.log(`분석 대상 매물: ${listings.length}건 ${reanalyzeAll ? '(전체 재분석)' : '(신규만 — 전체는 --all)'}${limit ? ` [--limit ${limit}]` : ''} | 병렬 ${concurrency}`);

@@ -205,10 +205,12 @@ export async function fetchListingsForAnalysis(limit = 200, onlyNew = false): Pr
   const where = onlyNew
     ? 'where not exists (select 1 from gm_scores s where s.listing_id = gm_listings.id)'
     : '';
+  // 활성(미래 기일·기일미정) 우선 — 재고가 limit를 넘어도 지나간 물건이 활성 재분석을 밀어내지 않게.
   return query<ListingRow>(
     `select id, case_no, court, address, road_address, lat, lng, property_type, appraisal_value,
             min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url
-     from gm_listings ${where} order by crawled_at desc limit $1`,
+     from gm_listings ${where}
+     order by (sale_date is null or sale_date >= current_date) desc, crawled_at desc limit $1`,
     [limit],
   );
 }
