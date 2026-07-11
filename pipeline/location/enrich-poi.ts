@@ -8,7 +8,7 @@
  */
 import 'dotenv/config';
 import { query } from '../../shared/db.ts';
-import { geocodeNaver, fetchPoiCounts } from './osm.ts';
+import { geocodeSmart, fetchPoiCounts } from './osm.ts';
 import type { LandUseFlag } from '../../shared/types.ts';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -33,7 +33,7 @@ async function main() {
     try {
       let lat = r.lat, lng = r.lng;
       if (lat == null || lng == null) {
-        const g = await geocodeNaver(r.address);
+        const g = await geocodeSmart(r.address);
         if (g) { lat = g.lat; lng = g.lng; await query('update gm_listings set lat=$2, lng=$3 where id=$1', [r.id, lat, lng]); }
       }
       if (lat == null || lng == null) { done++; continue; }

@@ -15,16 +15,46 @@ const OVERPASS_MIRRORS = [
   'https://overpass.private.coffee/api/interpreter',
 ];
 
+let naverQuotaDown = false; // 쿼터 초과 감지 시 이번 실행 동안 추가 호출 중단 — 수천 건 무의미 호출로 한도만 더 태우는 것 방지
 export async function geocodeNaver(address: string): Promise<{ lat: number; lng: number } | null> {
-  if (!NAVER_ID || !NAVER_SECRET) return null;
+  if (!NAVER_ID || !NAVER_SECRET || naverQuotaDown) return null;
   try {
     const r = await fetch(`https://maps.apigw.ntruss.com/map-geocode/v2/geocode?query=${encodeURIComponent(address)}`,
       { headers: { 'x-ncp-apigw-api-key-id': NAVER_ID, 'x-ncp-apigw-api-key': NAVER_SECRET }, signal: AbortSignal.timeout(10000) });
-    if (!r.ok) return null;
+    if (!r.ok) {
+      const body = await r.text().catch(() => '');
+      if (r.status === 429 || body.includes('한도')) {
+        naverQuotaDown = true;
+        console.warn('[geocode] ⚠️ 네이버 지오코딩 사용량 한도 초과 — 이번 실행 동안 중단(한도 리셋 후 다음 분석에서 자동 재개)');
+      }
+      return null;
+    }
     const j = (await r.json()) as { addresses?: { x: string; y: string }[] };
     const a = j.addresses?.[0];
     return a ? { lat: +a.y, lng: +a.x } : null;
   } catch { return null; }
+}
+
+/** 경매 주소 꼬리(건물명·동·층호수) 제거 — "응암동 227-54 백련산파크타운 나동 2층203호" → "응암동 227-54".
+ *  지오코더는 지번/도로명+번지까지만 이해하는 경우가 많아 실패 시 이 형태로 재시도. 패턴 미매칭이면 원본 그대로. */
+export function stripToJibun(address: string): string {
+  const tokens = address.trim().split(/\s+/);
+  for (let i = 1; i < tokens.length; i++) {
+    if (/^\d+(-\d+)?(번지)?$/.test(tokens[i]!) && /(동|리|가|읍|면|로|길)$/.test(tokens[i - 1]!)) {
+      return tokens.slice(0, i + 1).join(' ');
+    }
+  }
+  return address;
+}
+
+/** 지오코딩(원본 → 실패 시 지번 정제 재시도). 쿼터 다운이면 즉시 null. */
+export async function geocodeSmart(address: string): Promise<{ lat: number; lng: number } | null> {
+  let g = await geocodeNaver(address);
+  if (!g) {
+    const stripped = stripToJibun(address);
+    if (stripped !== address) g = await geocodeNaver(stripped);
+  }
+  return g;
 }
 
 export interface PoiResult {

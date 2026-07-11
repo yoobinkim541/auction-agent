@@ -6,7 +6,7 @@
  */
 import 'dotenv/config';
 import { query } from '../shared/db.ts';
-import { geocodeNaver } from '../pipeline/location/osm.ts';
+import { geocodeSmart } from '../pipeline/location/osm.ts';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DELAY = parseInt(process.env.GEOCODE_DELAY_MS ?? '320', 10);
@@ -21,7 +21,7 @@ async function main() {
   let ok = 0, fail = 0;
   for (const r of rows) {
     try {
-      const geo = await geocodeNaver(r.address);
+      const geo = await geocodeSmart(r.address);
       if (geo) {
         await query('UPDATE gm_listings SET lat=$2, lng=$3 WHERE id=$1', [r.id, geo.lat, geo.lng]);
         ok++;
