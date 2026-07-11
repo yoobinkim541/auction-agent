@@ -75,7 +75,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position 
           <div className="fieldmode">
             <h2><span className="star" onClick={onFav}>{row.is_favorite ? '★' : '☆'}</span> {row.case_no}</h2>
             <p className="addr">{row.address} · {TYPE_LABEL[row.property_type]}</p>
-            {row.source_url && <p className="srclink"><a href={row.source_url} target="_blank" rel="noopener noreferrer">🔗 원본 상세페이지 ↗</a></p>}
+            {row.source_url && <p className="srclink"><a href={row.source_url} target="_blank" rel="noopener noreferrer">🔗 법원경매 원본(사건번호로 검색) ↗</a></p>}
             <FieldVisitChecklist listingId={row.id} items={fieldwork.fieldChecklist} big />
           </div>
         )}
@@ -88,7 +88,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position 
         </h2>
         <p className="addr">{row.address} · {TYPE_LABEL[row.property_type]} · {row.court}</p>
         {row.source_url && (
-          <p className="srclink"><a href={row.source_url} target="_blank" rel="noopener noreferrer">🔗 원본 상세페이지에서 더블체크 ↗</a> <span className="key-hint" title="단축키">o</span></p>
+          <p className="srclink"><a href={row.source_url} target="_blank" rel="noopener noreferrer">🔗 법원경매 원본에서 더블체크(사건번호 ⧉ 복사 후 검색) ↗</a> <span className="key-hint" title="단축키">o</span></p>
         )}
         {row.source === 'courtauction' && (
           (rights?.malso_basis || (rights?.classified && rights.classified.length > 0)) ? (
