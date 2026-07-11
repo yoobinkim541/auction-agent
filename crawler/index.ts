@@ -18,7 +18,7 @@ import type { PropertyType } from '../shared/types.ts';
 import type { Adapter, CrawlFilter } from './adapters/types.ts';
 import { DeonakchalAdapter, SiteBlockedError, inspectAndDump } from './adapters/deonakchal.ts';
 import { CourtAuctionAdapter, CourtAuctionBlockedError } from './adapters/courtauction.ts';
-import { upsertListing, upsertListingDoc, deleteListingDocs, startCrawlRun, finishCrawlRun, fetchListingDocs, recordDocChange } from '../shared/db.ts';
+import { upsertListing, upsertListingDoc, deleteListingDocs, startCrawlRun, finishCrawlRun, fetchListingDocs, recordDocChange, query } from '../shared/db.ts';
 import { changedDocTypes } from '../shared/doc-fingerprint.ts';
 
 const DEFAULT_FILTER: CrawlFilter = {
@@ -78,6 +78,20 @@ async function main() {
 
   // ── 법원경매 어댑터 직접 지정 ───────────────────────────────────────
   if (forcedSource === 'courtauction') {
+    // 증분 모드: 이미 권리분석된 물건은 상세를 건너뛰고 메타만 갱신 → 신규만 풀 파싱(정기 배치용).
+    if (args.includes('--incremental')) {
+      const known = await query<{ k: string }>(
+        `select case_no || '|' || coalesce(item_no,'1') as k from gm_listings l
+          where exists (select 1 from gm_rights_analysis r where r.listing_id = l.id)`,
+      );
+      filter.incremental = true;
+      filter.knownKeys = new Set(known.map((r) => r.k));
+      delete filter.perCourt; // 전 페이지 스윕(법원당 캡 없음) — maxItems만 안전상한
+      // 신규 상세 예산: 배치 실행시간 유계화(systemd 타임아웃·차단 예방). 초과분은 메타만 저장 → 다음 실행에서 이어감.
+      const maxNewArg = args.find((a) => a.startsWith('--max-new='));
+      filter.maxNewDetails = maxNewArg ? parseInt(maxNewArg.split('=')[1]!, 10) : 200;
+      console.log(`[courtauction] 증분 모드: 기존 권리분석 ${filter.knownKeys.size}건 → 상세 skip, 신규만 파싱(상세 예산 ${filter.maxNewDetails}건/회)`);
+    }
     const runId = await startCrawlRun('courtauction', filter.regions.join(','));
     try {
       const { nFound, nNew } = await runAdapter(new CourtAuctionAdapter(), filter);

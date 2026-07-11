@@ -64,6 +64,17 @@ export function filterCourts(regions: string[]): { code: string; name: string }[
   return METRO_COURTS.filter((c) => expanded.some((r) => c.name.includes(r) || c.code === r));
 }
 
+/** 증분 크롤에서 이 물건이 "이미 파싱됨"(상세 fetchDetail skip 대상)인지. incremental이 아니면 항상 false(전량 상세). */
+export function isKnownForIncremental(filter: Pick<CrawlFilter, 'incremental' | 'knownKeys'>, key: string): boolean {
+  return filter.incremental === true && filter.knownKeys?.has(key) === true;
+}
+
+/** 이번 실행에서 이 신규 물건의 상세를 지금 받을지 — 신규 상세 예산(maxNewDetails) 내에서만.
+ *  예산 소진 시 메타만 저장(권리분석 없음 → 다음 실행에서 다시 신규로 잡혀 이어짐). 미설정이면 무제한. */
+export function shouldFetchDetailNow(known: boolean, nNewDetail: number, maxNewDetails?: number): boolean {
+  return !known && (maxNewDetails == null || nNewDetail < maxNewDetails);
+}
+
 // ── 휴먼 페이싱 ─────────────────────────────────────────────────────────
 const rnd = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.round(ms)));
@@ -534,6 +545,9 @@ export class CourtAuctionAdapter implements Adapter {
     const results: ScrapedListing[] = [];
     const seen = new Set<string>();
     let blocked = false;
+    let nKnownSkip = 0; // 증분: 이미 권리분석 있어 상세 건너뛴 건수
+    let nNewDetail = 0; // 증분: 신규라 상세까지 받은 건수
+    let nDeferred = 0;  // 신규지만 상세 예산(maxNewDetails) 소진 — 메타만 저장, 다음 실행에서 이어감
 
     let nextBreakAt = Math.round(rnd(40, 60));
 
@@ -598,15 +612,25 @@ export class CourtAuctionAdapter implements Adapter {
           // 지역 키워드 필터
           if (filter.regions.length && !filter.regions.some((rg) => scraped.listing.address.includes(rg) || court.name.includes(rg))) continue;
 
-          // 상세 보강 (선택적)
-          if (fetchDetail_) {
+          // 상세 보강 (선택적). 증분 모드에서 이미 권리분석된 물건은 상세를 건너뛰고 검색 메타만 갱신(신선도 유지).
+          // 신규는 상세 예산(maxNewDetails) 내에서만 지금 파싱 — 초과분은 메타만 저장하고 다음 실행에서 이어감(배치 시간 유계화).
+          const known = isKnownForIncremental(filter, key);
+          if (fetchDetail_ && shouldFetchDetailNow(known, nNewDetail, filter.maxNewDetails)) {
             try {
               const detail = await fetchDetail(scraped.listing.caseNo, court.code, scraped.listing.itemNo ?? '1', srchInfo, cookies);
               applyDetail(scraped, detail);
+              nNewDetail++;
+              if (filter.maxNewDetails != null && nNewDetail === filter.maxNewDetails) {
+                console.log(`[courtauction] 신규 상세 예산 ${filter.maxNewDetails}건 소진 — 이후 신규는 메타만(다음 실행에서 이어감)`);
+              }
             } catch (e) {
               if (e instanceof CourtAuctionBlockedError) { blocked = true; break; }
             }
             await wait(humanDwellMs());
+          } else if (known) {
+            nKnownSkip++;
+          } else if (fetchDetail_) {
+            nDeferred++; // 신규인데 예산 소진 — 메타만
           }
 
           results.push(scraped);
@@ -615,12 +639,13 @@ export class CourtAuctionAdapter implements Adapter {
 
         if (newOnPage === 0) break; // 중복만 있으면 종료
 
-        // 중간 휴식 (사람처럼)
-        if (results.length >= nextBreakAt && results.length < maxItems) {
+        // 중간 휴식 (사람처럼) — 부하가 큰 상세(fetchDetail) 수집량 기준. 증분 스윕에서 대부분 메타만 갱신(상세 skip)이면
+        // nNewDetail이 잘 안 늘어 큰 휴식이 거의 안 뜸(불필요한 대기 방지). 비증분(전량 상세)에선 사실상 종전과 동일.
+        if (nNewDetail >= nextBreakAt && results.length < maxItems) {
           const br = rnd(60_000, 150_000);
           console.log(`[courtauction] ☕ 휴식 ${Math.round(br / 1000)}s...`);
           await wait(br);
-          nextBreakAt = results.length + Math.round(rnd(40, 60));
+          nextBreakAt = nNewDetail + Math.round(rnd(40, 60));
         } else {
           await wait(rnd(3_000, 7_000)); // 다음 페이지 전 텀
         }
@@ -630,7 +655,7 @@ export class CourtAuctionAdapter implements Adapter {
     if (blocked) {
       console.error('[courtauction] IP 차단 — 수집 중단. 로컬 PC/RPi에서 재시도 필요.');
     }
-    console.log(`[courtauction] 완료: ${results.length}건`);
+    console.log(`[courtauction] 완료: ${results.length}건${filter.incremental ? ` (증분: 신규 상세 ${nNewDetail} · 기존 메타갱신 ${nKnownSkip}${nDeferred ? ` · 상세 이월 ${nDeferred}` : ''})` : ''}`);
     return results;
   }
 }

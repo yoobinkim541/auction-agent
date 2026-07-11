@@ -38,13 +38,13 @@ export async function upsertListing(l: Listing): Promise<number> {
         inq_cnt,interest_cnt)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,$21,$22,$23)
      on conflict (case_no,item_no,source) do update set
-       court=excluded.court, address=excluded.address, road_address=excluded.road_address,
-       lat=excluded.lat, lng=excluded.lng, property_type=excluded.property_type,
+       court=excluded.court, address=excluded.address, road_address=coalesce(excluded.road_address, gm_listings.road_address),
+       lat=coalesce(excluded.lat, gm_listings.lat), lng=coalesce(excluded.lng, gm_listings.lng), property_type=excluded.property_type,
        appraisal_value=excluded.appraisal_value, min_bid_price=excluded.min_bid_price,
        min_bid_ratio=excluded.min_bid_ratio, fail_count=excluded.fail_count,
-       sale_date=excluded.sale_date, demand_deadline=excluded.demand_deadline,
-       area_m2=excluded.area_m2, building_area_m2=excluded.building_area_m2,
-       is_collective_building=excluded.is_collective_building, source_url=excluded.source_url,
+       sale_date=excluded.sale_date, demand_deadline=coalesce(excluded.demand_deadline, gm_listings.demand_deadline),
+       area_m2=coalesce(excluded.area_m2, gm_listings.area_m2), building_area_m2=coalesce(excluded.building_area_m2, gm_listings.building_area_m2),
+       is_collective_building=(gm_listings.is_collective_building or excluded.is_collective_building), source_url=excluded.source_url,
        raw_json=excluded.raw_json, crawled_at=excluded.crawled_at,
        inq_cnt=excluded.inq_cnt, interest_cnt=excluded.interest_cnt
      returning id`,

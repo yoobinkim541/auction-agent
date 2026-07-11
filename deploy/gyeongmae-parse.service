@@ -8,6 +8,7 @@ OnFailure=gyeongmae-alert@%n.service
 Type=oneshot
 User=ubuntu
 ExecStart=/home/ubuntu/projects/gyeongmae-agent/deploy/daily-parse.sh
-TimeoutStartSec=5400
+# 증분 크롤(신규 상세 200건/회 캡 ~50분) + analyze/의견서(~60분) 여유. 2026-07-11 06:00 배치가 5400s(90분) 타임아웃으로 SIGTERM.
+TimeoutStartSec=14400
 StandardOutput=append:/home/ubuntu/projects/gyeongmae-agent/parse.log
 StandardError=append:/home/ubuntu/projects/gyeongmae-agent/parse.log

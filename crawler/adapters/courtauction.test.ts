@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped, parseCourtDetail } from './courtauction.ts';
+import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped, parseCourtDetail, isKnownForIncremental, shouldFetchDetailNow } from './courtauction.ts';
 
 describe('filterCourts', () => {
   it('빈 regions → 수도권 전체(9개) 반환', () => {
@@ -182,5 +182,38 @@ describe('parseCourtDetail', () => {
     expect(d.registry).toEqual([]);
     expect(d.statementSeniorDate).toBeUndefined();
     expect(d.notes).toEqual([]);
+  });
+});
+
+describe('isKnownForIncremental (증분 상세 skip 판정)', () => {
+  const keys = new Set(['2024타경1|1', '2024타경2|1']);
+  it('비증분 모드 → 항상 false(전량 상세)', () => {
+    expect(isKnownForIncremental({ incremental: false, knownKeys: keys }, '2024타경1|1')).toBe(false);
+    expect(isKnownForIncremental({ knownKeys: keys }, '2024타경1|1')).toBe(false);
+  });
+  it('증분 + knownKeys에 있음 → true(상세 skip)', () => {
+    expect(isKnownForIncremental({ incremental: true, knownKeys: keys }, '2024타경1|1')).toBe(true);
+  });
+  it('증분 + knownKeys에 없음(신규) → false(상세 수집)', () => {
+    expect(isKnownForIncremental({ incremental: true, knownKeys: keys }, '2025타경999|1')).toBe(false);
+  });
+  it('증분이지만 knownKeys 미제공 → false', () => {
+    expect(isKnownForIncremental({ incremental: true }, '2024타경1|1')).toBe(false);
+  });
+});
+
+describe('shouldFetchDetailNow (신규 상세 예산)', () => {
+  it('known → 예산 무관 false(메타만)', () => {
+    expect(shouldFetchDetailNow(true, 0, 200)).toBe(false);
+    expect(shouldFetchDetailNow(true, 0, undefined)).toBe(false);
+  });
+  it('신규 + 예산 미설정 → 무제한 true', () => {
+    expect(shouldFetchDetailNow(false, 9999, undefined)).toBe(true);
+  });
+  it('신규 + 예산 내 → true', () => {
+    expect(shouldFetchDetailNow(false, 199, 200)).toBe(true);
+  });
+  it('신규 + 예산 소진 → false(메타만, 다음 실행 이월)', () => {
+    expect(shouldFetchDetailNow(false, 200, 200)).toBe(false);
   });
 });
