@@ -47,13 +47,44 @@ export function stripToJibun(address: string): string {
   return address;
 }
 
-/** 지오코딩(원본 → 실패 시 지번 정제 재시도). 쿼터 다운이면 즉시 null. */
-export async function geocodeSmart(address: string): Promise<{ lat: number; lng: number } | null> {
-  let g = await geocodeNaver(address);
-  if (!g) {
-    const stripped = stripToJibun(address);
-    if (stripped !== address) g = await geocodeNaver(stripped);
+// ── VWorld(국토부) 지오코딩 — 무료 일 40,000건, 지번(parcel)·도로명(road) 모두 지원 ──
+const VWORLD_KEY = process.env.VWORLD_KEY;
+let vworldDown = false; // 키 오류/한도 감지 시 이번 실행 동안 중단
+export async function geocodeVworld(address: string): Promise<{ lat: number; lng: number } | null> {
+  if (!VWORLD_KEY || vworldDown) return null;
+  for (const type of ['parcel', 'road'] as const) {
+    try {
+      const u = `https://api.vworld.kr/req/address?service=address&request=getcoord&version=2.0&crs=epsg:4326&format=json&type=${type}&key=${VWORLD_KEY}&address=${encodeURIComponent(address)}`;
+      const r = await fetch(u, { signal: AbortSignal.timeout(10000) });
+      if (!r.ok) continue;
+      const j = (await r.json()) as {
+        response?: { status?: string; result?: { point?: { x: string; y: string } }; error?: { code?: string; text?: string } };
+      };
+      const status = j.response?.status;
+      if (status === 'OK') {
+        const p = j.response?.result?.point;
+        if (p) return { lat: +p.y, lng: +p.x };
+      } else if (status === 'ERROR') {
+        const code = j.response?.error?.code ?? '';
+        if (/KEY|AUTH|LIMIT|QUOTA/i.test(code)) {
+          vworldDown = true;
+          console.warn(`[geocode] ⚠️ VWorld 오류(${code}: ${j.response?.error?.text ?? ''}) — 이번 실행 동안 중단`);
+          return null;
+        }
+      }
+      // NOT_FOUND → 다음 type(도로명) 시도
+    } catch { /* 다음 type */ }
   }
+  return null;
+}
+
+/** 지오코딩 체인: VWorld(키 있으면 1순위, 일 4만 무료) → 네이버. 각각 원본 실패 시 지번 정제 재시도. */
+export async function geocodeSmart(address: string): Promise<{ lat: number; lng: number } | null> {
+  const stripped = stripToJibun(address);
+  let g = await geocodeVworld(address);
+  if (!g && stripped !== address) g = await geocodeVworld(stripped);
+  if (!g) g = await geocodeNaver(address);
+  if (!g && stripped !== address) g = await geocodeNaver(stripped);
   return g;
 }
 
