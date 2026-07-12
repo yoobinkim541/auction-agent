@@ -1,0 +1,10 @@
+[Unit]
+Description=Gyeongmae 야간 교차보강 타이머 (새벽 02:00 KST, 자는 동안)
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 Asia/Seoul
+RandomizedDelaySec=1800
+Persistent=false
+
+[Install]
+WantedBy=timers.target

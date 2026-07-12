@@ -222,6 +222,54 @@ export async function fetchListingDocs(listingId: number): Promise<{ doc_type: s
   );
 }
 
+/** 특정 id들만 분석 대상으로 로드(교차보강 후 타겟 재분석용, analyze --ids=). */
+export async function fetchListingsByIds(ids: number[]): Promise<ListingRow[]> {
+  if (!ids.length) return [];
+  return query<ListingRow>(
+    `select id, case_no, court, address, road_address, lat, lng, property_type, appraisal_value,
+            min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url
+     from gm_listings where id = any($1::bigint[])`,
+    [ids],
+  );
+}
+
+// ── 교차 보강(courtauction ↔ deonakchal): 임차인 상세를 별도 테이블에 유지(courtauction 재크롤로 안 지워지게 + 시도 마커 겸용) ──
+export interface EnrichCandidate { id: number; case_no: string; court: string; item_no: string }
+/** 보강 후보: 통과 + courtauction + 점유관계 미상 + (미시도 or retryDays 경과). ★관심·고점수 우선. */
+export async function fetchEnrichmentCandidates(limit: number, retryDays = 14): Promise<EnrichCandidate[]> {
+  return query<EnrichCandidate>(
+    `select l.id, l.case_no, l.court, coalesce(l.item_no,'1') as item_no
+       from gm_listings l
+       join gm_scores s on s.listing_id = l.id
+       join gm_location_analysis loc on loc.listing_id = l.id
+       left join gm_deonak_tenants dt on dt.listing_id = l.id
+      where s.passed_filter = true and l.source = 'courtauction'
+        and loc.eviction->>'occupantLabel' = '점유관계 미상'
+        and (dt.listing_id is null or dt.fetched_at < now() - (($2)::text || ' days')::interval)
+      order by l.is_favorite desc, s.total_score desc nulls last
+      limit $1`,
+    [limit, retryDays],
+  );
+}
+/** deonakchal 조회 결과 저장(found=true면 tenants, false면 '없음' 마커). 반복 히트 방지 + analyze 소스. */
+export async function upsertDeonakTenants(listingId: number, caseNo: string, tenants: unknown, found: boolean): Promise<void> {
+  await query(
+    `insert into gm_deonak_tenants (listing_id, case_no, tenants, found, fetched_at)
+     values ($1,$2,$3::jsonb,$4,now())
+     on conflict (listing_id) do update set case_no=excluded.case_no, tenants=excluded.tenants, found=excluded.found, fetched_at=now()`,
+    [listingId, caseNo, j(tenants ?? []), found],
+  );
+}
+/** analyze용: 이 물건의 deonakchal 임차인(있으면). courtauction 임차인 미파싱을 보강. */
+export async function fetchDeonakTenants(listingId: number): Promise<any[] | null> {
+  const rows = await query<{ tenants: any; found: boolean }>(
+    `select tenants, found from gm_deonak_tenants where listing_id=$1 and found=true`,
+    [listingId],
+  );
+  const t = rows[0]?.tenants;
+  return Array.isArray(t) && t.length ? t : null;
+}
+
 export async function matchLegalChunks(
   embedding: number[], queryText: string, matchCount = 6,
 ): Promise<{ law_name: string; article: string; content: string }[]> {

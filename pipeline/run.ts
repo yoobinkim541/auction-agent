@@ -10,6 +10,7 @@ import 'dotenv/config';
 import {
   saveRightsAnalysis, saveLocationAnalysis, saveScore,
   fetchListingsForAnalysis, fetchListingDocs, type ListingRow, query, backfillFailCountFromSaleRounds,
+  fetchDeonakTenants, fetchListingsByIds,
 } from '../shared/db.ts';
 import type { Listing, RightsInput, RegistryEntry, Tenant, SiteMetrics } from '../shared/types.ts';
 import { analyzeRights } from './rights/engine.ts';
@@ -139,6 +140,10 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<{ 
     }
   }
 
+  // [교차보강] deonakchal 임차인이 있으면 최우선(courtauction은 임차인 표 미파싱). 별도 테이블이라 courtauction 재크롤로 안 지워짐.
+  const deonakTenants = await fetchDeonakTenants(listingId);
+  if (deonakTenants && deonakTenants.length) tenants = deonakTenants as Tenant[];
+
   return {
     input: {
       listing: {
@@ -171,10 +176,15 @@ async function main() {
   const reanalyzeAll = process.argv.includes('--all');
   const limitArg = process.argv.find((a) => a.startsWith('--limit='));
   const limit = limitArg ? Math.max(1, parseInt(limitArg.split('=')[1] ?? '', 10)) : null;
-  let listings = await fetchListingsForAnalysis(6000, !reanalyzeAll); // 증분 스윕으로 재고 4천+ — 2000이면 --all이 절반을 놓침(활성 우선 정렬과 세트)
+  // --ids=1,2,3 : 특정 물건만 재분석(교차보강 후 타겟 재분석용).
+  const idsArg = process.argv.find((a) => a.startsWith('--ids='));
+  const ids = idsArg ? idsArg.split('=')[1]!.split(',').map((x) => parseInt(x, 10)).filter(Number.isFinite) : null;
+  let listings = ids && ids.length
+    ? await fetchListingsByIds(ids)
+    : await fetchListingsForAnalysis(6000, !reanalyzeAll); // 증분 스윕으로 재고 4천+ — 2000이면 --all이 절반을 놓침(활성 우선 정렬과 세트)
   if (limit) listings = listings.slice(0, limit); // 소규모 검증/점진 적재용
   const concurrency = Math.max(1, parseInt(process.env.ANALYZE_CONCURRENCY ?? '6', 10));
-  console.log(`분석 대상 매물: ${listings.length}건 ${reanalyzeAll ? '(전체 재분석)' : '(신규만 — 전체는 --all)'}${limit ? ` [--limit ${limit}]` : ''} | 병렬 ${concurrency}`);
+  console.log(`분석 대상 매물: ${listings.length}건 ${ids ? `[--ids ${ids.length}건]` : reanalyzeAll ? '(전체 재분석)' : '(신규만 — 전체는 --all)'}${limit ? ` [--limit ${limit}]` : ''} | 병렬 ${concurrency}`);
 
   // 검증 모드 결정: claude CLI(Max 구독, 과금 0) 우선 → API 키 → 생략
   let verifyMode: 'cli' | 'api' | 'none' = 'none';

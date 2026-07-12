@@ -40,7 +40,7 @@ function intEnv(name: string, dflt: number, min: number): number {
 }
 const BLOCK_MARKER = path.join(AUTH_DIR, 'deonakchal-blocked.json');
 const BLOCK_COOLDOWN_MS = intEnv('CRAWL_BLOCK_COOLDOWN_MIN', 360, 0) * 60_000; // 기본 6h
-function recordBlock(reason: string): void {
+export function recordBlock(reason: string): void {
   try {
     fs.mkdirSync(AUTH_DIR, { recursive: true });
     const tmp = `${BLOCK_MARKER}.${process.pid}.tmp`;
@@ -219,8 +219,8 @@ async function newPage(browser: Browser): Promise<Page> {
 }
 
 /** 결과 행 텍스트를 정규식으로 파싱. 종결/취하 등 입찰불가 상태는 제외. (파싱은 parse-row.ts 순수함수) */
-async function parseListPage(page: Page): Promise<ParsedRow[]> {
-  const rows = page.locator(SEL.resultRow);
+async function parseListPage(page: Page, rowSelector: string = SEL.resultRow): Promise<ParsedRow[]> {
+  const rows = page.locator(rowSelector);
   const n = await rows.count();
   const out: ParsedRow[] = [];
   for (let i = 0; i < n; i++) {
@@ -702,4 +702,81 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
   if (photos.length) siteMetrics.photos = photos;
 
   return { registry, tenants, notes, siteAssumedAmount, appraisal, siteMetrics };
+}
+
+// ── 교차 보강: courtauction 사건 → deonakchal 임차인 상세 (courtauction은 임차인 표 미파싱) ──
+/** 수도권 법원명 → deonakchal search.html court1 값 (2026-07 확인). courtauction METRO_COURTS 이름과 동일. */
+export const DEONAK_COURT1: Record<string, string> = {
+  '서울중앙지방법원': 'A1', '서울동부지방법원': 'A2', '서울남부지방법원': 'A4', '서울북부지방법원': 'A5', '서울서부지방법원': 'A3',
+  '의정부지방법원': 'D1', '고양지원': 'D2', '남양주지원': 'D3',
+  '인천지방법원': 'C1', '부천지원': 'C2',
+  '수원지방법원': 'E1', '성남지원': 'E2', '여주지원': 'E3', '평택지원': 'E4', '안산지원': 'E5', '안양지원': 'E6',
+};
+
+/** courtauction 사건번호 "2023타경111644" → deonakchal mngno "2023-111644". 실패 시 null. (순수함수, 테스트) */
+export function caseNoToMngno(caseNo: string): string | null {
+  const m = String(caseNo).replace(/\s/g, '').match(/(\d{4})타경(\d+)/);
+  return m ? `${m[1]}-${m[2]}` : null;
+}
+
+/**
+ * [교차 보강] courtauction 물건을 deonakchal에서 사건번호로 찾아 상세(임차인 등) 조회.
+ *   page는 **로그인된 상태**여야 함(오케스트레이터가 ensureLogin 후 재사용). 조회 1건 = 검색 GET + 상세.
+ *   못 찾으면 null(그 사건이 deonakchal에 없거나 매칭 실패). 차단 시 SiteBlockedError 전파.
+ */
+export async function lookupCaseDetail(
+  page: Page, courtName: string, caseNo: string, itemNo: string,
+): Promise<{ productId: string; detail: DetailData } | null> {
+  const m = String(caseNo).replace(/\s/g, '').match(/(\d{4})타경(\d+)/);
+  const court1 = DEONAK_COURT1[courtName];
+  if (!m || !court1) return null; // 파싱 실패 or 수도권 외 법원(매핑 없음) → 스킵
+  const [, year, num] = m;
+  await rateGate();
+  // 경매(법원) 검색: frmSimple GET — list.html?court1=<법원>&syear=<연도>&sno=<사건번호>. (frm_top3 mngno는 공매라 오답.)
+  await page.goto(`${BASE}${SEL.listPath}?court1=${court1}&syear=${year}&sno=${num}`, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+  // 검색결과 행은 테마 목록과 다른 테이블에 있어 SEL.resultRow(테마 스코프)로 안 잡힘 → 넓은 셀렉터 사용.
+  // AJAX 렌더라 첫 결과행이 뜰 때까지 대기(최대 8s). 0건이면 타임아웃 후 진행(빈 배열).
+  const searchRowSel = 'tr[id^="tr_"]';
+  await page.locator(searchRowSel).first().waitFor({ state: 'attached', timeout: 8000 }).catch(() => {});
+  await wait(rnd(900, 1900));
+  if (await detectBlocked(page)) throw new SiteBlockedError();
+  const rows = await parseListPage(page, searchRowSel);
+  // deonakchal 행 사건번호는 "연도-번호"(예: 2025-103018) — courtauction "2025타경103018"과 형식이 달라
+  // normalizeCaseNo(공백제거만)로는 안 맞음. court1으로 이미 법원 필터되므로 연도-번호 일치 행을 고른다.
+  const wantDash = `${year}-${num}`;
+  const chosen = rows.find((r) => r.productId && r.listing.caseNo === wantDash);
+  if (!chosen) return null;
+  try {
+    return { productId: chosen.productId!, detail: await parseDetail(page, chosen.productId!) };
+  } catch (e) {
+    if (e instanceof SiteBlockedError) throw e; // 차단은 상위로 전파(즉시 중단·쿨다운)
+    if (e instanceof SessionExpiredError) {
+      // 밤샘 배치 중 세션 TTL 만료 대비: 재로그인 1회 후 재시도(scrapeOne과 동일 패턴). 없으면 배치 전체가 만료로 실패.
+      console.warn(`[deonakchal] lookup 세션 만료 — 재로그인 후 재시도 ${caseNo}`);
+      await ensureLogin(page); // SiteBlockedError는 그대로 전파
+      return { productId: chosen.productId!, detail: await parseDetail(page, chosen.productId!) };
+    }
+    throw e;
+  }
+}
+
+/**
+ * [교차 보강용] 로그인된 페이지 1개 열기(세션 재사용 — 재로그인 최소화). 오케스트레이터가 이걸로 **직렬** lookup 후 close().
+ *   서킷브레이커 쿨다운 중이면 null 반환(그날 건너뜀). 로그인 성공 시 쿨다운 해제.
+ *   ⚠️ egress(집 IP) 검증은 오케스트레이터 책임(warnIfDatacenterEgress는 경고만이므로 abort는 상위에서).
+ */
+export async function openLoggedInPage(): Promise<{ page: Page; close: () => Promise<void> } | null> {
+  const cd = blockCooldownRemainingMs();
+  if (cd > 0) { console.warn(`[deonakchal] 서킷브레이커 쿨다운 ${Math.round(cd / 60000)}분 남음 — 이번 실행 건너뜀`); return null; }
+  const browser = await launch();
+  try {
+    const page = await newPage(browser);
+    await ensureLogin(page);        // 세션 있으면 재로그인 안 함
+    clearBlock();                   // 로그인 성공 = 계정 정상
+    await page.context().storageState({ path: STORAGE }).catch(() => {}); // 갱신 세션 저장
+    return { page, close: async () => { await browser.close().catch(() => {}); } };
+  } catch (e) {
+    await browser.close().catch(() => {});
+    throw e;
+  }
 }
