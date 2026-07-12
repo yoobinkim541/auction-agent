@@ -1,7 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useDeferredValue, useCallback, memo } from 'react';
-import { MapView } from './MapView.tsx';
-import { CompareView } from './CompareView.tsx';
-import { ConfigPanel } from './ConfigPanel.tsx';
+import { useEffect, useMemo, useRef, useState, useDeferredValue, useCallback, memo, lazy, Suspense } from 'react';
 import { FLAG_LABEL, TYPE_LABEL, RISK, RECO } from './labels.ts';
 import { SkeletonList, Notice, ThSort, DDay, FieldProgress } from './ui.tsx';
 import {
@@ -10,11 +7,16 @@ import {
   type ListingItem,
 } from './api.ts';
 import { scoreClient, scoreBreakdown, type ScoreConfig, type ClientScore } from './scoring.ts';
-import { Legend } from './Legend.tsx';
+// 코드 스플릿 — 지도(leaflet)·비교·상세·설정·도움말은 열 때만 로드(초기 번들·첫 페인트 단축).
+const MapView = lazy(() => import('./MapView.tsx').then((m) => ({ default: m.MapView })));
+const CompareView = lazy(() => import('./CompareView.tsx').then((m) => ({ default: m.CompareView })));
+const ConfigPanel = lazy(() => import('./ConfigPanel.tsx').then((m) => ({ default: m.ConfigPanel })));
+const Legend = lazy(() => import('./Legend.tsx').then((m) => ({ default: m.Legend })));
+const Detail = lazy(() => import('./Detail.tsx').then((m) => ({ default: m.Detail })));
 import { applyListingFilters, sortRows, groupRowsByCase, type SortKey } from './filters.ts';
 import { resolveRound, saleDaysDiff, localDateISO } from './listing-utils.ts';
 import { useListings } from './useListings.ts';
-import { Detail } from './Detail.tsx';
+import { useIncrementalList } from './useIncremental.ts';
 import { exportCSV } from './export-csv.ts';
 import { loadConfig, saveConfig, loadUIState, saveUIState } from './persistence.ts';
 import { useMediaQuery } from './useMediaQuery.ts';
@@ -198,6 +200,10 @@ export default function App() {
   const caseGroups = useMemo(() => groupRowsByCase(viewFull), [viewFull]);
   const view = useMemo(() => (groupByCase ? caseGroups.map((g) => g.rows[0]!) : viewFull), [groupByCase, caseGroups, viewFull]);
   const caseSizes = useMemo(() => new Map(caseGroups.map((g) => [g.caseNo, g.rows.length] as const)), [caseGroups]);
+
+  // 점진 렌더 — 처음 60행만 마운트, 스크롤 시 60씩 추가(표·카드 공용).
+  // 필터/정렬/탭 변경은 view 참조가 바뀌어 자동으로 처음부터. (수천 행 일괄 마운트가 렌더링 병목이었음)
+  const { visible, sentinelRef, done: listDone, total: listTotal } = useIncrementalList(view, 60);
 
   // 지도용 포인트 — 전체(수집한 모든 매물=scored) 또는 현재 목록(필터). 통과 여부로 마커 스타일 구분.
   const mapPoints = useMemo(
@@ -450,8 +456,8 @@ export default function App() {
         <span className="count">{view.length}건</span>
       </div>
 
-      {showLegend && <Legend cfg={cfg} />}
-      {showCfg && <ConfigPanel cfg={cfg} setCfg={setCfg} />}
+      {showLegend && <Suspense fallback={null}><Legend cfg={cfg} /></Suspense>}
+      {showCfg && <Suspense fallback={null}><ConfigPanel cfg={cfg} setCfg={setCfg} /></Suspense>}
 
       {loading && <SkeletonList />}
       {err && <Notice>API 연결 오류: {err} <br />백엔드(<code>{apiBase}</code>) 실행 확인 (<code>server/run.sh</code>).</Notice>}
@@ -470,7 +476,9 @@ export default function App() {
       )}
 
       {viewMode === 'map' && (
-        <MapView items={mapPoints} onSelect={handleSelect} showAll={mapShowAll} onToggleShowAll={() => setMapShowAll((s) => !s)} />
+        <Suspense fallback={<div className="list-more">지도 불러오는 중…</div>}>
+          <MapView items={mapPoints} onSelect={handleSelect} showAll={mapShowAll} onToggleShowAll={() => setMapShowAll((s) => !s)} />
+        </Suspense>
       )}
 
       {viewMode === 'list' && view.length > 0 && !isMobile && (
@@ -488,7 +496,7 @@ export default function App() {
             </tr>
           </thead>
           <tbody>
-            {view.map(({ item, sc }) => (
+            {visible.map(({ item, sc }) => (
               <ListingRow key={item.id} item={item} sc={sc} onSelect={handleSelect} onFav={toggleFav}
                 today={TODAY} groupByCase={groupByCase} caseSize={caseSizes.get(item.case_no) ?? 1} />
             ))}
@@ -498,26 +506,32 @@ export default function App() {
 
       {viewMode === 'list' && view.length > 0 && isMobile && (
         <ul className="cards">
-          {view.map(({ item, sc }, i) => (
+          {visible.map(({ item, sc }, i) => (
             <ListingCard key={item.id} item={item} sc={sc} onSelect={handleSelect} onFav={toggleFav}
               groupByCase={groupByCase} caseSize={caseSizes.get(item.case_no) ?? 1} index={i} />
           ))}
         </ul>
       )}
 
-      {selected && <Detail
+      {viewMode === 'list' && !listDone && (
+        <div ref={sentinelRef} className="list-more">{visible.length}/{listTotal}건 표시 — 스크롤하면 더 불러옵니다</div>
+      )}
+
+      {selected && <Suspense fallback={null}><Detail
         row={selected} onClose={() => setSelected(null)} onFav={() => toggleFav(selected)}
         loading={detailLoading === selected.case_no}
         onPrev={selNavPrev} onNext={selNavNext} position={selNavPos}
-      />}
+      /></Suspense>}
 
       {showCompare && (
-        <CompareView
-          items={rows.filter((r) => r.is_favorite)}
-          cfg={cfg}
-          onClose={() => setShowCompare(false)}
-          onSelect={handleSelect}
-        />
+        <Suspense fallback={null}>
+          <CompareView
+            items={rows.filter((r) => r.is_favorite)}
+            cfg={cfg}
+            onClose={() => setShowCompare(false)}
+            onSelect={handleSelect}
+          />
+        </Suspense>
       )}
 
       {jobStatus && (
