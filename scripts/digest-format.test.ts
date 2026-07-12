@@ -36,6 +36,12 @@ describe('formatDigest', () => {
     expect(s).not.toContain('오래됨');
   });
 
+  it('낙찰가 예측 밴드 있으면 📈 라인 동봉, 없으면 생략', () => {
+    const s = formatDigest([row({ predicted_band: '예상낙찰 1.80억~2.10억 (유사 14건 · 낙찰가율 중앙 64%)' })], { today: '2026-06-27', totalPassed: 1 });
+    expect(s).toContain('📈 예상낙찰 1.80억~2.10억');
+    expect(formatDigest([row()], { today: '2026-06-27', totalPassed: 1 })).not.toContain('📈');
+  });
+
   it('극단마진(최저가<감정40%) → 경고 배지', () => {
     const s = formatDigest([row({ appraisal_value: 2.6e8, min_bid_price: 0.3e8 })], { today: '2026-06-27', totalPassed: 1 });
     expect(s).toContain('⚠️극단마진');

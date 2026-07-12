@@ -71,6 +71,14 @@ export async function upsertListingDoc(listingId: number, doc: ListingDoc): Prom
   );
 }
 
+/** 문서 내용 변경 이력 기록(발품절감 ⑤) — watch-favorites가 ★매물 것을 알림 후 notified 마킹. */
+export async function recordDocChange(listingId: number, caseNo: string, docTypes: string[]): Promise<void> {
+  await query(
+    `insert into gm_doc_changes (listing_id, case_no, doc_types) values ($1,$2,$3)`,
+    [listingId, caseNo, docTypes.join(',')],
+  );
+}
+
 export async function saveRightsAnalysis(
   listingId: number, r: RightsAnalysisResult, modelVersion?: string, citations?: unknown,
 ): Promise<void> {

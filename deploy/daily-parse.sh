@@ -31,6 +31,12 @@ echo "[$(date '+%F %T')] === parse done (analyze rc=$rc) ==="
 npm run snapshot 2>&1 || echo "[snapshot] 실패(무시)"
 npm run collect:results 2>&1 || echo "[collect:results] 실패(무시)"
 
+# 관심물건(★) 변동 알림(발품절감 ②·⑤) — 기일/유찰/최저가/문서갱신 diff. 변동 있을 때만 stdout → 발송.
+WATCH=$(npm run --silent watch:favs 2>/dev/null)
+if [ -n "$WATCH" ]; then
+  bash "$NOTIFY" "관심물건 변동" "완료" "${WATCH}" 2>/dev/null || true
+fi
+
 # 수집 헬스: status=ok·0건(굶음) 감지 → 비정상이면 텔레그램 알림. 분석 rc는 보존.
 HEALTH_OUT=$(npm run crawl:health 2>&1); HRC=$?
 echo "$HEALTH_OUT"

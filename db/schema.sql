@@ -213,6 +213,28 @@ create table if not exists gm_auction_results (
 );
 create index if not exists idx_gm_auction_results_date on gm_auction_results (dxdy_date);
 
+-- 관심물건(★) 변동 감시 상태(발품절감 ②) — watch-favorites가 직전 상태와 diff 후 갱신.
+create table if not exists gm_watch_state (
+  listing_id    bigint primary key references gm_listings(id) on delete cascade,
+  sale_date     date,
+  min_bid_price bigint,
+  fail_count    int,
+  sold          boolean not null default false,   -- 매각됨 알림 1회만
+  updated_at    timestamptz not null default now()
+);
+
+-- 문서(명세서·현황조사 등) 갱신 이력(발품절감 ⑤) — 크롤러가 재수집 시 내용 변화를 기록,
+-- watch-favorites가 ★매물 것을 알림에 태우고 notified 마킹(중복 발송 방지).
+create table if not exists gm_doc_changes (
+  id          bigint generated always as identity primary key,
+  listing_id  bigint references gm_listings(id) on delete cascade,
+  case_no     text not null,
+  doc_types   text,                               -- 변경된 문서 타입(쉼표 구분)
+  changed_at  timestamptz not null default now(),
+  notified    boolean not null default false
+);
+create index if not exists gm_doc_changes_pending_idx on gm_doc_changes (notified, listing_id);
+
 -- 예측 스냅샷(Phase 0) — analyze가 점수를 덮어쓰므로, 매각 직전 예측을 동결해 사후 결과와 비교.
 create table if not exists gm_prediction_snapshots (
   id             serial primary key,

@@ -5,6 +5,7 @@ export interface DigestRow {
   source_url: string | null; inq_cnt: number | null; interest_cnt: number | null; crawled_at: string | null;
   risk_grade: string | null; safety_margin: number | null; true_margin: number | null;
   total_score: number | null; memo: string | null;
+  predicted_band?: string | null; // 낙찰가 예측 밴드(comps) — daily-digest가 채움(선택)
 }
 
 /** 어제 기일 결과 회고용(gm_auction_results 조인). */
@@ -68,6 +69,7 @@ export function formatDigest(rows: DigestRow[], opts: DigestOpts): string {
       r.sale_date ? `매각 ${r.sale_date}` : '',
     ].filter(Boolean);
     out.push(`   ${tags.join(' · ')}`);
+    if (r.predicted_band) out.push(`   📈 ${r.predicted_band}`);
     if (r.memo) out.push(`   💬 ${firstSentence(r.memo)}`);
     const link = opts.dashboardBase ? `${opts.dashboardBase.replace(/\/+$/, '')}/#case=${encodeURIComponent(r.case_no)}` : r.source_url;
     if (link) out.push(`   ${link}`);

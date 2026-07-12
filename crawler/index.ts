@@ -18,7 +18,8 @@ import type { PropertyType } from '../shared/types.ts';
 import type { Adapter, CrawlFilter } from './adapters/types.ts';
 import { DeonakchalAdapter, SiteBlockedError, inspectAndDump } from './adapters/deonakchal.ts';
 import { CourtAuctionAdapter, CourtAuctionBlockedError } from './adapters/courtauction.ts';
-import { upsertListing, upsertListingDoc, deleteListingDocs, startCrawlRun, finishCrawlRun } from '../shared/db.ts';
+import { upsertListing, upsertListingDoc, deleteListingDocs, startCrawlRun, finishCrawlRun, fetchListingDocs, recordDocChange } from '../shared/db.ts';
+import { changedDocTypes } from '../shared/doc-fingerprint.ts';
 
 const DEFAULT_FILTER: CrawlFilter = {
   regions: ['서울', '경기', '인천'],
@@ -42,6 +43,14 @@ async function runAdapter(adapter: Adapter, filter: CrawlFilter) {
     const id = await upsertListing(s.listing);
     nNew++;
     if (s.docs?.length) {
+      // 문서 내용 변경 감지(발품절감 ⑤) — 기존 문서가 있고 내용이 달라졌으면 이력 기록(★알림용).
+      try {
+        const prev = (await fetchListingDocs(id)).map((d) => ({ docType: d.doc_type, parsedJson: d.parsed_json }));
+        const changed = prev.length ? changedDocTypes(prev, s.docs.map((d) => ({ docType: d.docType, parsedJson: d.parsedJson }))) : [];
+        if (changed.length) await recordDocChange(id, s.listing.caseNo, changed);
+      } catch (e) {
+        console.warn(`[docs] 변경 감지 실패(무시) ${s.listing.caseNo}:`, e instanceof Error ? e.message : e);
+      }
       await deleteListingDocs(id);
       for (const doc of s.docs) await upsertListingDoc(id, doc);
     }
