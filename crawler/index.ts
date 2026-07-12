@@ -93,7 +93,12 @@ async function main() {
       // 신규 상세 예산: 배치 실행시간 유계화(systemd 타임아웃·차단 예방). 초과분은 메타만 저장 → 다음 실행에서 이어감.
       const maxNewArg = args.find((a) => a.startsWith('--max-new='));
       filter.maxNewDetails = maxNewArg ? parseInt(maxNewArg.split('=')[1]!, 10) : 200;
-      console.log(`[courtauction] 증분 모드: 기존 권리분석 ${filter.knownKeys.size}건 → 상세 skip, 신규만 파싱(상세 예산 ${filter.maxNewDetails}건/회)`);
+      // 임박(기본 14일) 기존 물건 상세 재수집 — 명세서 갱신 감지(recordDocChange)용. 일일 상한(기본 250)으로 시간 유계화.
+      const refreshDaysArg = args.find((a) => a.startsWith('--refresh-days='));
+      const maxRefreshArg = args.find((a) => a.startsWith('--max-refresh='));
+      filter.refreshImminentDays = refreshDaysArg ? parseInt(refreshDaysArg.split('=')[1]!, 10) : 14;
+      filter.maxRefreshDetails = maxRefreshArg ? parseInt(maxRefreshArg.split('=')[1]!, 10) : 250;
+      console.log(`[courtauction] 증분 모드: 기존 문서보유 ${filter.knownKeys.size}건 → 상세 skip(임박 ${filter.refreshImminentDays}일 내는 재수집), 신규 파싱 예산 ${filter.maxNewDetails}건/회`);
     }
     const runId = await startCrawlRun('courtauction', filter.regions.join(','));
     try {

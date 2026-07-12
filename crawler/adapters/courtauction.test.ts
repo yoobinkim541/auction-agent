@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped, parseCourtDetail, isKnownForIncremental, shouldFetchDetailNow } from './courtauction.ts';
+import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped, parseCourtDetail, isKnownForIncremental, shouldFetchDetailNow, detailDecision } from './courtauction.ts';
 
 describe('filterCourts', () => {
   it('빈 regions → 수도권 전체(9개) 반환', () => {
@@ -215,5 +215,32 @@ describe('shouldFetchDetailNow (신규 상세 예산)', () => {
   });
   it('신규 + 예산 소진 → false(메타만, 다음 실행 이월)', () => {
     expect(shouldFetchDetailNow(false, 200, 200)).toBe(false);
+  });
+});
+
+describe('detailDecision (증분 상세 수집 판정)', () => {
+  const caps = { maxNew: 200, maxRefresh: 250, refreshDays: 14 };
+  const cnt = { nNew: 0, nRefresh: 0 };
+  const today = '2026-07-12', thr = '2026-07-26';
+  it('신규(예산 내) → new', () => {
+    expect(detailDecision(false, '2026-08-01', today, thr, cnt, caps)).toBe('new');
+  });
+  it('신규 + 예산 소진 → skip', () => {
+    expect(detailDecision(false, null, today, thr, { nNew: 200, nRefresh: 0 }, caps)).toBe('skip');
+  });
+  it('기존 + 매각 임박(창 내) → refresh(명세서 변경감지)', () => {
+    expect(detailDecision(true, '2026-07-20', today, thr, cnt, caps)).toBe('refresh');
+    expect(detailDecision(true, today, today, thr, cnt, caps)).toBe('refresh'); // 당일도 임박
+  });
+  it('기존 + 임박 아님(창 밖/과거) → skip', () => {
+    expect(detailDecision(true, '2026-08-15', today, thr, cnt, caps)).toBe('skip'); // 창 밖
+    expect(detailDecision(true, '2026-07-01', today, thr, cnt, caps)).toBe('skip'); // 과거(D+)
+    expect(detailDecision(true, null, today, thr, cnt, caps)).toBe('skip');         // 기일미정
+  });
+  it('기존 + 임박이지만 재수집 예산 소진 → skip', () => {
+    expect(detailDecision(true, '2026-07-20', today, thr, { nNew: 0, nRefresh: 250 }, caps)).toBe('skip');
+  });
+  it('refreshDays=0 → 기존은 임박이어도 재수집 안 함(순수 skip)', () => {
+    expect(detailDecision(true, '2026-07-13', today, thr, cnt, { ...caps, refreshDays: 0 })).toBe('skip');
   });
 });

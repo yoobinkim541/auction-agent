@@ -75,6 +75,26 @@ export function shouldFetchDetailNow(known: boolean, nNewDetail: number, maxNewD
   return !known && (maxNewDetails == null || nNewDetail < maxNewDetails);
 }
 
+/** 증분 모드 상세 수집 판정:
+ *   'new'     — 신규 물건(문서 없음), 신규 예산 내 → 풀 파싱
+ *   'refresh' — 기존 물건이지만 매각 임박(오늘~thresholdDate) → 명세서 변경감지 위해 재수집(재수집 예산 내)
+ *   'skip'    — 그 외(기존·비임박, 또는 예산 소진) → 메타만
+ * 순수 함수(테스트 가능). saleDate/today/thresholdDate는 'YYYY-MM-DD'. */
+export function detailDecision(
+  known: boolean,
+  saleDate: string | null,
+  today: string,
+  thresholdDate: string,
+  counts: { nNew: number; nRefresh: number },
+  caps: { maxNew?: number; maxRefresh: number; refreshDays: number },
+): 'new' | 'refresh' | 'skip' {
+  if (!known) return caps.maxNew == null || counts.nNew < caps.maxNew ? 'new' : 'skip';
+  if (caps.refreshDays <= 0) return 'skip';
+  const imminent = saleDate != null && saleDate >= today && saleDate <= thresholdDate;
+  if (imminent && counts.nRefresh < caps.maxRefresh) return 'refresh';
+  return 'skip';
+}
+
 // ── 휴먼 페이싱 ─────────────────────────────────────────────────────────
 const rnd = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.round(ms)));
@@ -545,9 +565,17 @@ export class CourtAuctionAdapter implements Adapter {
     const results: ScrapedListing[] = [];
     const seen = new Set<string>();
     let blocked = false;
-    let nKnownSkip = 0; // 증분: 이미 권리분석 있어 상세 건너뛴 건수
-    let nNewDetail = 0; // 증분: 신규라 상세까지 받은 건수
-    let nDeferred = 0;  // 신규지만 상세 예산(maxNewDetails) 소진 — 메타만 저장, 다음 실행에서 이어감
+    let nKnownSkip = 0;    // 증분: 기존 물건 상세 건너뛰고 메타만
+    let nNewDetail = 0;    // 증분: 신규라 상세까지 받은 건수
+    let nRefreshDetail = 0; // 증분: 임박 기존 물건 상세 재수집(명세서 변경감지용)
+    let nDeferred = 0;     // 신규지만 상세 예산(maxNewDetails) 소진 — 메타만 저장, 다음 실행에서 이어감
+
+    // 임박 기존 물건 상세 재수집 창(명세서 변경감지). KST 기준 오늘 ~ 오늘+refreshDays.
+    const refreshDays = filter.refreshImminentDays ?? 14;
+    const maxRefresh = filter.maxRefreshDetails ?? 250;
+    const nowKst = new Date(Date.now() + 9 * 3_600_000);
+    const todayStr = nowKst.toISOString().slice(0, 10);
+    const thresholdStr = new Date(nowKst.getTime() + refreshDays * 86_400_000).toISOString().slice(0, 10);
 
     let nextBreakAt = Math.round(rnd(40, 60));
 
@@ -612,16 +640,27 @@ export class CourtAuctionAdapter implements Adapter {
           // 지역 키워드 필터
           if (filter.regions.length && !filter.regions.some((rg) => scraped.listing.address.includes(rg) || court.name.includes(rg))) continue;
 
-          // 상세 보강 (선택적). 증분 모드에서 이미 권리분석된 물건은 상세를 건너뛰고 검색 메타만 갱신(신선도 유지).
-          // 신규는 상세 예산(maxNewDetails) 내에서만 지금 파싱 — 초과분은 메타만 저장하고 다음 실행에서 이어감(배치 시간 유계화).
+          // 상세 보강 판정. 증분: 신규=풀파싱(예산 내), 임박 기존=명세서 변경감지 위해 재수집(예산 내), 그 외=메타만.
+          // 비증분: 전량 상세(기존 동작).
           const known = isKnownForIncremental(filter, key);
-          if (fetchDetail_ && shouldFetchDetailNow(known, nNewDetail, filter.maxNewDetails)) {
+          const decision: 'new' | 'refresh' | 'skip' = !fetchDetail_
+            ? 'skip'
+            : !filter.incremental
+              ? 'new'
+              : detailDecision(known, scraped.listing.saleDate ?? null, todayStr, thresholdStr,
+                  { nNew: nNewDetail, nRefresh: nRefreshDetail },
+                  { maxNew: filter.maxNewDetails, maxRefresh, refreshDays });
+          if (decision !== 'skip') {
             try {
               const detail = await fetchDetail(scraped.listing.caseNo, court.code, scraped.listing.itemNo ?? '1', srchInfo, cookies);
-              applyDetail(scraped, detail);
-              nNewDetail++;
-              if (filter.maxNewDetails != null && nNewDetail === filter.maxNewDetails) {
-                console.log(`[courtauction] 신규 상세 예산 ${filter.maxNewDetails}건 소진 — 이후 신규는 메타만(다음 실행에서 이어감)`);
+              applyDetail(scraped, detail); // scraped.docs 채움 → runAdapter가 이전 문서와 비교해 명세서 변경 감지
+              if (decision === 'new') {
+                nNewDetail++;
+                if (filter.maxNewDetails != null && nNewDetail === filter.maxNewDetails) {
+                  console.log(`[courtauction] 신규 상세 예산 ${filter.maxNewDetails}건 소진 — 이후 신규는 메타만(다음 실행에서 이어감)`);
+                }
+              } else {
+                nRefreshDetail++;
               }
             } catch (e) {
               if (e instanceof CourtAuctionBlockedError) { blocked = true; break; }
@@ -639,13 +678,14 @@ export class CourtAuctionAdapter implements Adapter {
 
         if (newOnPage === 0) break; // 중복만 있으면 종료
 
-        // 중간 휴식 (사람처럼) — 부하가 큰 상세(fetchDetail) 수집량 기준. 증분 스윕에서 대부분 메타만 갱신(상세 skip)이면
-        // nNewDetail이 잘 안 늘어 큰 휴식이 거의 안 뜸(불필요한 대기 방지). 비증분(전량 상세)에선 사실상 종전과 동일.
-        if (nNewDetail >= nextBreakAt && results.length < maxItems) {
+        // 중간 휴식 (사람처럼) — 부하가 큰 상세(fetchDetail) 총 수집량(신규+임박재수집) 기준. 증분 스윕에서 대부분 메타만
+        // 갱신(상세 skip)이면 잘 안 늘어 큰 휴식이 거의 안 뜸(불필요한 대기 방지). 비증분(전량 상세)에선 사실상 종전과 동일.
+        const nDetail = nNewDetail + nRefreshDetail;
+        if (nDetail >= nextBreakAt && results.length < maxItems) {
           const br = rnd(60_000, 150_000);
           console.log(`[courtauction] ☕ 휴식 ${Math.round(br / 1000)}s...`);
           await wait(br);
-          nextBreakAt = nNewDetail + Math.round(rnd(40, 60));
+          nextBreakAt = nDetail + Math.round(rnd(40, 60));
         } else {
           await wait(rnd(3_000, 7_000)); // 다음 페이지 전 텀
         }
@@ -655,7 +695,7 @@ export class CourtAuctionAdapter implements Adapter {
     if (blocked) {
       console.error('[courtauction] IP 차단 — 수집 중단. 로컬 PC/RPi에서 재시도 필요.');
     }
-    console.log(`[courtauction] 완료: ${results.length}건${filter.incremental ? ` (증분: 신규 상세 ${nNewDetail} · 기존 메타갱신 ${nKnownSkip}${nDeferred ? ` · 상세 이월 ${nDeferred}` : ''})` : ''}`);
+    console.log(`[courtauction] 완료: ${results.length}건${filter.incremental ? ` (증분: 신규 상세 ${nNewDetail} · 임박 재수집 ${nRefreshDetail} · 기존 메타갱신 ${nKnownSkip}${nDeferred ? ` · 상세 이월 ${nDeferred}` : ''})` : ''}`);
     return results;
   }
 }

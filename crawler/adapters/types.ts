@@ -16,6 +16,11 @@ export interface CrawlFilter {
   /** 이번 실행에서 상세(fetchDetail)까지 받을 신규 물건 상한 — 배치 실행시간 유계화(systemd 타임아웃 예방).
    *  초과분은 메타만 저장되고 권리분석이 없어 다음 실행에서 자동으로 다시 "신규"로 잡혀 이어서 파싱된다. */
   maxNewDetails?: number;
+  /** 증분 모드에서 기존(문서 보유) 물건도 상세를 재수집할 "매각 임박" 창(일) — 명세서 갱신 감지(recordDocChange)용.
+   *  0이면 재수집 안 함(순수 skip). 미설정 시 기본 14일. */
+  refreshImminentDays?: number;
+  /** 임박 기존 물건 상세 재수집 일일 상한 — 시간 유계화. 미설정 시 기본 250. */
+  maxRefreshDetails?: number;
 }
 
 /** 한 매물 수집 결과: 마스터 + (가능하면) 권리분석 입력 + 문서 */
