@@ -248,7 +248,9 @@ export function rowToScraped(row: any, courtCode: string): ScrapedListing | null
     inquiryCount: Number.isFinite(inq) ? inq : undefined,
     interestCount: Number.isFinite(interest) ? interest : undefined,
     source: 'courtauction',
-    sourceUrl: `${BASE}/pgj/index.on?w2xPath=/pgj/ui/pgj100/PGJ15BM01.xml`,
+    // 법원경매 신규 사이트(WebSquare SPA)는 사건별 딥링크 미지원 — 상세화면(PGJ15BM01) URL 직접 진입은
+    // 부모 화면 컨텍스트가 없어 '부모 객체' 오류로 빈 화면이 된다. 단독으로 열리는 메인만 걸고 사건번호로 검색.
+    sourceUrl: `${BASE}/pgj/index.on`,
     rawJson: row,
     crawledAt: new Date().toISOString(),
   };
