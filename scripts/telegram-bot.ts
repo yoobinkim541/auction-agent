@@ -83,8 +83,9 @@ async function handle(text: string): Promise<string> {
   switch ((cmd ?? '').toLowerCase()) {
     case '/case': return arg ? cmdCase(arg) : '사용법: /case 2023타경111644';
     case '/digest': return runScript('digest');
+    case '/route': case '/임장': return runScript('route');
     case '/status': return cmdStatus();
-    default: return '경매 봇 명령:\n/case <사건번호> — 사건 실시간 조회\n/digest — 지금 추천\n/status — 크롤·건수 상태';
+    default: return '경매 봇 명령:\n/case <사건번호> — 사건 실시간 조회\n/digest — 지금 추천\n/route — 이번 주 임장 코스\n/status — 크롤·건수 상태';
   }
 }
 

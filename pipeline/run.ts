@@ -17,6 +17,7 @@ import { analyzeLocation } from './location/index.ts';
 import { scoreListing, maxSafeBid, DEFAULT_SCORE_CONFIG } from './select/score.ts';
 import { computeAcquisitionCost, expectedBid, marketFromSiteComps, classifyLandUseFlags, decideBidForCost } from './cost/acquisition.ts';
 import { buildReport } from './report/build.ts';
+import { bandLine, compsStats, fetchCompsWithFallback, regionKey, recentSalesLines, type CompSale } from './predict/comps.ts';
 import { attachGlossary } from './report/glossary.ts';
 import { assessLegalRisk } from './legal/risk.ts';
 import { addressToLawdCd } from './location/lawd-codes.ts';
@@ -201,6 +202,9 @@ async function main() {
     if (row.memo) prevMemo.set(row.listing_id, { memo: row.memo, memoHash: row.memohash ?? undefined, memoModel: row.memomodel ?? undefined });
   }
 
+  // 유사 낙찰 사례(comps) 캐시 — 같은 시군구·유형은 배치 내 1회만 조회.
+  const compsCache = new Map<string, { region: string; sales: CompSale[] }>();
+
   let cursor = 0;
   let done = 0;
   const worker = async (): Promise<void> => {
@@ -322,6 +326,17 @@ async function main() {
       // 등기 미수집(빈 배열 = 사이트 접속차단/로드실패)이면 분석 보류 처리
       const dataComplete = input.registry.length > 0 || siteAssumed != null || input.tenants.length > 0;
       loc.report = buildReport({ rights, loc, listing, notes: scanNotes, scanText, dataComplete });
+      // 3-b-2) 유사 낙찰 사례 — 같은 시군구·유형 실제 낙찰가율 밴드 + 최근 3건(입찰가 감각, 발품 대체)
+      try {
+        const ck = `${listing.propertyType}|${regionKey(listing.address)}`;
+        let cc = compsCache.get(ck);
+        if (!cc) { cc = await fetchCompsWithFallback(listing.propertyType, listing.address); compsCache.set(ck, cc); }
+        const band = bandLine(listing.appraisalValue ?? null, compsStats(cc.sales));
+        if (band) {
+          loc.report.summary.push(`📈 ${band} — ${cc.region} 유사 낙찰:`);
+          for (const line of recentSalesLines(cc.sales)) loc.report.summary.push(`· ${line}`);
+        }
+      } catch { /* comps 실패는 리포트 생략(치명 아님) */ }
       // 직전 LLM 의견서 보존 — report를 새로 만들면 memo가 사라져 2차 패스가 매번 전건 재생성하게 됨.
       // 입력이 그대로면 memoHash가 일치해 2차 패스가 캐시 적중(재생성 생략)한다.
       const pm = prevMemo.get(r.id);

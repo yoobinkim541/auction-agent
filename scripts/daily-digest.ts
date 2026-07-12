@@ -6,6 +6,7 @@
 import 'dotenv/config';
 import { query, pool } from '../shared/db.ts';
 import { formatDigest, formatResultsRecap, formatUpcoming, type DigestRow, type DigestResult } from './digest-format.ts';
+import { bandLine, compsStats, fetchCompsWithFallback, regionKey, type CompsStats } from '../pipeline/predict/comps.ts';
 
 async function main(): Promise<void> {
   const N = Number(process.env.DIGEST_TOP_N) || 5;
@@ -28,6 +29,17 @@ async function main(): Promise<void> {
     [N],
   );
   const totalPassed = (await query<{ c: number }>(`select count(*)::int as c from gm_scores where passed_filter = true`))[0]?.c ?? rows.length;
+
+  // 낙찰가 예측 밴드(comps) — 같은 시군구·유형의 실제 낙찰가율 분포. 지역+유형별 1회만 조회(캐시).
+  const statsCache = new Map<string, CompsStats | null>();
+  for (const r of rows) {
+    const key = `${r.property_type}|${regionKey(r.address)}`;
+    if (!statsCache.has(key)) {
+      const { sales } = await fetchCompsWithFallback(r.property_type, r.address).catch(() => ({ sales: [] }));
+      statsCache.set(key, compsStats(sales));
+    }
+    r.predicted_band = bandLine(r.appraisal_value, statsCache.get(key) ?? null);
+  }
 
   // 데이터 신선도: 마지막으로 실제 수집(n_found>0)한 날 (침묵 방지)
   const harvest = await query<{ d: string | null; age: number | null }>(
