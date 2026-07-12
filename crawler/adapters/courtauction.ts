@@ -37,7 +37,11 @@ function ymdKST(offsetDays: number): string {
 }
 
 // ── 수도권 법원 코드 (selectCortOfcLst.on 응답 확인 완료) ──────────────
-const METRO_COURTS: { code: string; name: string }[] = [
+// 검증된 수도권 법원 코드(cortOfcCd) — 본원 + 성남지원. courtauction.go.kr 라이브로 확인된 것만.
+// ⚠️ 경기 지원(고양·남양주·부천·안양·안산·평택·여주 등)은 여기 없음 → 그 관할 물건은 미수집.
+//    지원 코드는 사이트에서 검증 후 COURT_EXTRA(.env)로 추가한다(추측 코드 하드코딩 금지).
+//    검증 도구: npm run discover:courts  (VM에서 집-IP 프록시 경유로 실제 코드→지역 확인).
+const BASE_METRO_COURTS: { code: string; name: string }[] = [
   { code: 'B000210', name: '서울중앙지방법원' },
   { code: 'B000211', name: '서울동부지방법원' },
   { code: 'B000212', name: '서울남부지방법원' },
@@ -49,6 +53,28 @@ const METRO_COURTS: { code: string; name: string }[] = [
   { code: 'B000251', name: '성남지원' },
 ];
 
+/** COURT_EXTRA 파싱 — "B000252:여주지원,B000253:평택지원" → [{code,name}]. 잘못된 형식은 무시(순수·테스트 대상). */
+export function parseCourtExtra(raw: string | undefined): { code: string; name: string }[] {
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((pair) => {
+      const idx = pair.indexOf(':');
+      if (idx < 0) return null;
+      const code = pair.slice(0, idx).trim();
+      const name = pair.slice(idx + 1).trim();
+      return /^B\d{6}$/.test(code) && name ? { code, name } : null;
+    })
+    .filter((c): c is { code: string; name: string } => c != null);
+}
+
+/** 검증된 본원 9곳 + COURT_EXTRA로 추가된 지원(중복 코드 제거). 매 호출 env 반영(운영 중 추가 가능). */
+export function allCourts(): { code: string; name: string }[] {
+  const seen = new Set(BASE_METRO_COURTS.map((c) => c.code));
+  const extra = parseCourtExtra(process.env.COURT_EXTRA).filter((c) => !seen.has(c.code));
+  return [...BASE_METRO_COURTS, ...extra];
+}
+
 // '경기' → '의정부'+'수원'+'성남' 처럼 광역 지역명 → 세부 매칭 키워드 확장
 const REGION_EXPAND: Record<string, string[]> = {
   경기: ['의정부', '수원', '성남'],
@@ -56,12 +82,16 @@ const REGION_EXPAND: Record<string, string[]> = {
 };
 
 /** 필터 regions 키워드로 대상 법원 추린다.
- *  '서울' → 서울 5개, '경기' → 의정부·수원·성남, '인천' → 인천.
- *  DEFAULT_FILTER의 ['서울','경기','인천'] → 수도권 9개 전부 포함. */
-export function filterCourts(regions: string[]): { code: string; name: string }[] {
-  if (!regions.length) return [...METRO_COURTS];
+ *  '서울' → 서울 5개, '경기' → 의정부·수원·성남(+COURT_EXTRA 지원 전부), '인천' → 인천.
+ *  DEFAULT_FILTER의 ['서울','경기','인천'] → 본원 9개(+추가 지원) 전부 포함. */
+export function filterCourts(regions: string[], courts: { code: string; name: string }[] = allCourts()): { code: string; name: string }[] {
+  if (!regions.length) return [...courts];
+  const baseCodes = new Set(BASE_METRO_COURTS.map((c) => c.code));
+  const wantGyeonggi = regions.some((r) => r === '경기' || r === '수도권');
   const expanded = regions.flatMap((r) => [r, ...(REGION_EXPAND[r] ?? [])]);
-  return METRO_COURTS.filter((c) => expanded.some((r) => c.name.includes(r) || c.code === r));
+  return courts.filter(
+    (c) => expanded.some((r) => c.name.includes(r) || c.code === r) || (wantGyeonggi && !baseCodes.has(c.code)),
+  );
 }
 
 // ── 휴먼 페이싱 ─────────────────────────────────────────────────────────
@@ -205,7 +235,7 @@ export function parseMoney(s: string | undefined): number {
 
 /** 법원코드 → 법원명 */
 function courtName(code: string): string {
-  return METRO_COURTS.find((c) => c.code === code)?.name ?? code;
+  return allCourts().find((c) => c.code === code)?.name ?? code;
 }
 
 // ── 검색 결과 행 → ScrapedListing ───────────────────────────────────
@@ -278,6 +308,36 @@ function buildSrchInfo(courtCode: string): Record<string, unknown> {
   };
 }
 
+/** 법원 코드 발견/검증(discover:courts용) — 코드 하나로 1페이지 검색 후 결과 건수·주소 시군구 요약 반환.
+ *  차단이면 CourtAuctionBlockedError. 실제 사이트가 응답해야 하므로 VM(집-IP 프록시)에서만 유효. */
+export interface CourtProbe { code: string; count: number; regions: string[]; sampleAddress: string | null }
+export async function probeCourt(cortOfcCd: string): Promise<CourtProbe> {
+  const cookies = new CookieJar();
+  await initSession(cookies);
+  const body = {
+    dma_pageInfo: { pageNo: 1, pageSize: COURT_PAGE_SIZE, bfPageNo: '', startRowNo: '', totalCnt: '', totalYn: 'Y', groupTotalCount: '' },
+    dma_srchGdsDtlSrchInfo: buildSrchInfo(cortOfcCd),
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const resp = (await post('/pgj/pgjsearch/searchControllerMain.on', {
+    body, cookies,
+    referer: `${BASE}/pgj/index.on?w2xPath=/pgj/ui/pgj100/PGJ151F00.xml`,
+    headers: { submissionid: 'mf_wfm_mainFrame_sbm_selectGdsDtlSrch', 'sc-userid': 'SYSTEM' },
+  })) as any;
+  const data = resp?.data;
+  if (data?.ipcheck === false) throw new CourtAuctionBlockedError();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows: any[] = Array.isArray(data?.dlt_srchResult) ? data.dlt_srchResult : [];
+  const addrs = rows.map((r) => String(r.realSt ?? r.printSt ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const cnt = new Map<string, number>();
+  for (const a of addrs) {
+    const k = a.split(/\s+/).slice(0, 2).join(' ');
+    cnt.set(k, (cnt.get(k) ?? 0) + 1);
+  }
+  const regions = [...cnt.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, n]) => `${k}(${n})`);
+  return { code: cortOfcCd, count: rows.length, regions, sampleAddress: addrs[0] ?? null };
+}
+
 // ── 상세 API: 매각물건명세서 기반 권리 데이터(최선순위설정·비고·배당종기) ──
 /** 상세 조회 — selectAuctnCsSrchRslt.on (dma_srchGdsDtlSrch 본문 + submissionid 헤더). dma_result 반환(라이브 캡처로 확정). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -310,12 +370,12 @@ export interface SaleResultRound {
 
 /** 법원명 → 법원코드(cortOfcCd). 결과 폴러가 DB의 court명으로 상세 조회 시 필요. */
 export function courtCodeByName(name: string): string | null {
-  return METRO_COURTS.find((c) => c.name === name)?.code ?? null;
+  return allCourts().find((c) => c.name === name)?.code ?? null;
 }
 
 /** 상세 조회 가능한(코드 매핑 보유) 법원명 목록 — 결과 폴러 SQL 필터용(미매핑 법원에 슬롯 낭비 방지). */
 export function queryableCourtNames(): string[] {
-  return METRO_COURTS.map((c) => c.name);
+  return allCourts().map((c) => c.name);
 }
 
 /** 상세 dma_result → 회차별 기일결과. 응찰자수는 이 엔드포인트에 없음(추후 별도 캡처). */
@@ -524,7 +584,7 @@ export class CourtAuctionAdapter implements Adapter {
 
     if (!courts.length) {
       console.warn('[courtauction] 해당 지역 법원이 없음 — 수도권 전체로 확대');
-      courts.push(...METRO_COURTS);
+      courts.push(...allCourts());
     }
 
     const cookies = new CookieJar();

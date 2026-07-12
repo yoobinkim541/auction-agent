@@ -13,6 +13,7 @@
     "watch:favs": "tsx scripts/watch-favorites.ts",
     "bid:prep": "tsx scripts/bid-prep.ts",
     "route": "tsx scripts/field-route.ts",
+    "discover:courts": "tsx scripts/discover-courts.ts",
     "eval:report": "tsx scripts/eval-report.ts",
     "analyze": "tsx pipeline/run.ts",
     "ingest:legal": "tsx pipeline/legal/ingest.ts",
