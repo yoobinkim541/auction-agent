@@ -84,7 +84,7 @@ const SEL = {
   loginId: '#id',
   loginPw: '#pw',
   loginSubmit: '#frmLogin input[type=submit]',
-  loggedInMarker: 'text=로그아웃', // 로그인 성공 판별
+  loggedInMarker: 'text=마이페이지', // 로그인 성공 판별 (2026-07 사이트 개편으로 '로그아웃'→'마이페이지'. 로그인 시 헤더에 노출)
   searchPath: '/auction/search.html',
   listPath: '/auction/list.html',     // 전체 결과(종결 우선 정렬)
   themePath: '/auction/thema.html',   // 테마 = 진행 매물 (실시간, 권장 소스)
@@ -544,10 +544,10 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
     await wait(rnd(900, 1900)); // 페이지 훑어보는 텀
     const probe = await page.evaluate((blkSrc) => {
       const html = document.documentElement.innerHTML;
-      return { blocked: new RegExp(blkSrc, 'i').test(html), tables: document.querySelectorAll('table').length, logged: html.includes('로그아웃') };
+      return { blocked: new RegExp(blkSrc, 'i').test(html), tables: document.querySelectorAll('table').length, logged: html.includes('마이페이지') };
     }, BLOCK_RE.source).catch(() => ({ blocked: false, tables: 0, logged: true }));
     if (probe.blocked) throw new SiteBlockedError();
-    // 로그아웃 마커 없음 = 세션 만료(로그인 폼 리다이렉트) — 더 기다려도 의미 없음
+    // 로그인 마커(마이페이지) 없음 = 세션 만료(로그인 폼 리다이렉트) — 더 기다려도 의미 없음
     if (!probe.logged) throw new SessionExpiredError();
     if (probe.tables > 0) { loaded = true; break; }
     // 표 미로딩: 사람처럼 잠깐 더 기다렸다 확인(최대 ~6초)
@@ -555,7 +555,7 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
       await wait(500);
       const r2 = await page.evaluate((src) => {
         const html = document.documentElement.innerHTML;
-        return { blk: new RegExp(src, 'i').test(html), n: document.querySelectorAll('table').length, logged: html.includes('로그아웃') };
+        return { blk: new RegExp(src, 'i').test(html), n: document.querySelectorAll('table').length, logged: html.includes('마이페이지') };
       }, BLOCK_RE.source).catch(() => ({ blk: false, n: 0, logged: true }));
       if (r2.blk) throw new SiteBlockedError();
       if (!r2.logged) throw new SessionExpiredError(); // 초기 probe와 일치: 테이블 유무 무관
