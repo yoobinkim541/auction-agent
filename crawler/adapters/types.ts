@@ -3,8 +3,10 @@ import type { Listing, ListingDoc, RightsInput, PropertyType } from '../../share
 export interface CrawlFilter {
   /** 관심 지역 키워드(예: ['서울','경기','인천']) */
   regions: string[];
-  /** 물건 종류 */
+  /** 물건 종류(전역 필터). 빈 배열 = 전종류 수집. */
   propertyTypes: PropertyType[];
+  /** 이 법원코드들은 propertyTypes 필터를 무시하고 전종류 수집(예: 집 근처 남양주 일대 = 의정부 B000214). */
+  allTypesCourts?: string[];
   /** 최대 수집 건수(폴라이트) */
   maxItems?: number;
   /** 법원당 최대 수집 건수 — 설정 시 서울중앙이 전역 예산을 독식하지 않고 수도권 법원에 고르게 분배(경기·인천 포함). 미설정 시 maxItems와 동일. */

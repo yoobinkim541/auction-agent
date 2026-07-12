@@ -72,6 +72,12 @@ async function main() {
     ...DEFAULT_FILTER,
     maxItems: maxArg ? parseInt(maxArg.split('=')[1]!, 10) : DEFAULT_FILTER.maxItems,
     ...(perCourtArg ? { perCourt: parseInt(perCourtArg.split('=')[1]!, 10) } : {}),
+    // --all-types: 물건종류 필터 해제(토지·상가·단독·기타 포함) — 전 지역 "하나도 빠짐없이" 수집용
+    ...(args.includes('--all-types') ? { propertyTypes: [] } : {}),
+    // --all-types-courts=B000214,...: 지정 법원만 전종류(집 근처 남양주 일대=의정부만 완전 수집, 나머지는 주거용 유지)
+    ...(() => { const a = args.find((x) => x.startsWith('--all-types-courts=')); return a ? { allTypesCourts: a.split('=')[1]!.split(',').filter(Boolean) } : {}; })(),
+    // --region=의정부,수원: 특정 지역/법원만 크롤(타겟 캐치업용). 미지정 시 DEFAULT_FILTER(수도권 전역).
+    ...(() => { const a = args.find((x) => x.startsWith('--region=')); return a ? { regions: a.split('=')[1]!.split(',').filter(Boolean) } : {}; })(),
   };
 
   const forcedSource = args.find((a) => a.startsWith('--source='))?.split('=')[1];

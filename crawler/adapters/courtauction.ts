@@ -639,8 +639,9 @@ export class CourtAuctionAdapter implements Adapter {
           seen.add(key);
           newOnPage++;
 
-          // 물건 종류 필터 (클라이언트 사이드)
-          if (filter.propertyTypes.length && !filter.propertyTypes.includes(scraped.listing.propertyType)) continue;
+          // 물건 종류 필터 (클라이언트 사이드). allTypesCourts에 속한 법원은 전종류 수집(집 근처 완전 수집용).
+          const typeExempt = filter.allTypesCourts?.includes(court.code) ?? false;
+          if (!typeExempt && filter.propertyTypes.length && !filter.propertyTypes.includes(scraped.listing.propertyType)) continue;
           // 지역 키워드 필터
           if (filter.regions.length && !filter.regions.some((rg) => scraped.listing.address.includes(rg) || court.name.includes(rg))) continue;
 
