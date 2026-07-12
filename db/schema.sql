@@ -235,6 +235,17 @@ create table if not exists gm_doc_changes (
 );
 create index if not exists gm_doc_changes_pending_idx on gm_doc_changes (notified, listing_id);
 
+-- 경쟁 열기 시계열 — 크롤 시 일별 관심수/조회수 스냅샷(현재값만 덮어쓰던 gm_listings 보완).
+-- ★매물 관심 급증 알림(watch-favorites)·저경쟁 추세 신호용.
+create table if not exists gm_competition_history (
+  case_no       text not null,
+  item_no       text not null default '1',
+  captured_date date not null default current_date,
+  inq_cnt       int,
+  interest_cnt  int,
+  primary key (case_no, item_no, captured_date)
+);
+
 -- 예측 스냅샷(Phase 0) — analyze가 점수를 덮어쓰므로, 매각 직전 예측을 동결해 사후 결과와 비교.
 create table if not exists gm_prediction_snapshots (
   id             serial primary key,

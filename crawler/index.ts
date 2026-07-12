@@ -18,7 +18,7 @@ import type { PropertyType } from '../shared/types.ts';
 import type { Adapter, CrawlFilter } from './adapters/types.ts';
 import { DeonakchalAdapter, SiteBlockedError, inspectAndDump } from './adapters/deonakchal.ts';
 import { CourtAuctionAdapter, CourtAuctionBlockedError } from './adapters/courtauction.ts';
-import { upsertListing, upsertListingDoc, deleteListingDocs, startCrawlRun, finishCrawlRun, fetchListingDocs, recordDocChange } from '../shared/db.ts';
+import { upsertListing, upsertListingDoc, deleteListingDocs, startCrawlRun, finishCrawlRun, fetchListingDocs, recordDocChange, recordCompetitionSnapshot } from '../shared/db.ts';
 import { changedDocTypes } from '../shared/doc-fingerprint.ts';
 
 const DEFAULT_FILTER: CrawlFilter = {
@@ -42,6 +42,8 @@ async function runAdapter(adapter: Adapter, filter: CrawlFilter) {
   for (const s of scraped) {
     const id = await upsertListing(s.listing);
     nNew++;
+    // 경쟁 열기 시계열 — 일별 관심수/조회수 스냅샷(★급증 알림·추세 신호용). 실패는 치명 아님.
+    await recordCompetitionSnapshot(s.listing).catch(() => {});
     if (s.docs?.length) {
       // 문서 내용 변경 감지(발품절감 ⑤) — 기존 문서가 있고 내용이 달라졌으면 이력 기록(★알림용).
       try {

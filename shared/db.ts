@@ -71,6 +71,18 @@ export async function upsertListingDoc(listingId: number, doc: ListingDoc): Prom
   );
 }
 
+/** 경쟁 열기 일별 스냅샷 — gm_listings는 현재값만 덮어쓰므로 추세(급증 감지)용 시계열을 별도 적재. */
+export async function recordCompetitionSnapshot(l: Listing): Promise<void> {
+  if (l.inquiryCount == null && l.interestCount == null) return;
+  await query(
+    `insert into gm_competition_history (case_no, item_no, captured_date, inq_cnt, interest_cnt)
+     values ($1, $2, current_date, $3, $4)
+     on conflict (case_no, item_no, captured_date) do update set
+       inq_cnt = excluded.inq_cnt, interest_cnt = excluded.interest_cnt`,
+    [l.caseNo, l.itemNo || '1', l.inquiryCount ?? null, l.interestCount ?? null],
+  );
+}
+
 /** 문서 내용 변경 이력 기록(발품절감 ⑤) — watch-favorites가 ★매물 것을 알림 후 notified 마킹. */
 export async function recordDocChange(listingId: number, caseNo: string, docTypes: string[]): Promise<void> {
   await query(

@@ -17,7 +17,7 @@ import { analyzeLocation } from './location/index.ts';
 import { scoreListing, maxSafeBid, DEFAULT_SCORE_CONFIG } from './select/score.ts';
 import { computeAcquisitionCost, expectedBid, marketFromSiteComps, classifyLandUseFlags, decideBidForCost } from './cost/acquisition.ts';
 import { buildReport } from './report/build.ts';
-import { bandLine, compsStats, fetchCompsWithFallback, regionKey, recentSalesLines, type CompSale } from './predict/comps.ts';
+import { bandLine, compsStats, fetchCompsWithFallback, regionKey, recentSalesLines, winRateGuide, type CompSale } from './predict/comps.ts';
 import { attachGlossary } from './report/glossary.ts';
 import { assessLegalRisk } from './legal/risk.ts';
 import { addressToLawdCd } from './location/lawd-codes.ts';
@@ -336,6 +336,8 @@ async function main() {
           loc.report.summary.push(`📈 ${band} — ${cc.region} 유사 낙찰:`);
           for (const line of recentSalesLines(cc.sales)) loc.report.summary.push(`· ${line}`);
         }
+        const guide = winRateGuide(listing.appraisalValue ?? null, cc.sales);
+        if (guide) loc.report.summary.push(`🎯 ${guide}`);
       } catch { /* comps 실패는 리포트 생략(치명 아님) */ }
       // 직전 LLM 의견서 보존 — report를 새로 만들면 memo가 사라져 2차 패스가 매번 전건 재생성하게 됨.
       // 입력이 그대로면 memoHash가 일치해 2차 패스가 캐시 적중(재생성 생략)한다.

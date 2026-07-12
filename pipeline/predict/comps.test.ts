@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bandLine, compsStats, recentSalesLines, regionKey, sidoKey } from './comps.ts';
+import { bandLine, compsStats, recentSalesLines, regionKey, sidoKey, winRateGuide } from './comps.ts';
 
 describe('regionKey/sidoKey', () => {
   it('시군구 키(앞 두 토큰)를 만든다', () => {
@@ -44,6 +44,20 @@ describe('bandLine', () => {
   it('감정가 없음·표본 부족이면 null', () => {
     expect(bandLine(null, stats)).toBeNull();
     expect(bandLine(3_0000_0000, null)).toBeNull();
+  });
+});
+
+describe('winRateGuide', () => {
+  const sales = [0.5, 0.55, 0.6, 0.64, 0.7, 0.75, 0.8, 0.85, 0.9, 1.0].map((r) => ({ soldAmount: r * 100, appraisal: 100 }));
+  it('분위수 기반 승률 가격 3점을 만든다', () => {
+    const s = winRateGuide(3_0000_0000, sales)!;
+    expect(s).toContain('승률');
+    expect(s).toBe('입찰가 가이드(승률): 50% 2.25억 · 70% 2.55억 · 90% 3.00억 — 유사 10건 낙찰가 분포 기준');
+    expect(s).toContain('유사 10건');
+  });
+  it('감정가 없음·표본<5면 null', () => {
+    expect(winRateGuide(null, sales)).toBeNull();
+    expect(winRateGuide(3_0000_0000, sales.slice(0, 4))).toBeNull();
   });
 });
 

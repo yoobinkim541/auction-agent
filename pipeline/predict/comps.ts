@@ -50,6 +50,22 @@ export function bandLine(appraisal: number | null | undefined, stats: CompsStats
   return `예상낙찰 ${eok(appraisal * stats.p25)}~${eok(appraisal * stats.p75)} (유사 ${stats.n}건 · 낙찰가율 중앙 ${Math.round(stats.medianRatio * 100)}%)`;
 }
 
+/**
+ * 입찰가 가이드(승률) — 유사 낙찰가율 분포의 분위수로 "이 가격이면 과거 낙찰가의 q%를 이겼다"를 제시.
+ * 표본 5건 미만이면 null(분위수 신뢰 불가). 예: "입찰가 가이드: 승률50% 1.92억 · 70% 2.10억 · 90% 2.40억".
+ */
+export function winRateGuide(appraisal: number | null | undefined, sales: { soldAmount: number; appraisal: number }[]): string | null {
+  if (!appraisal) return null;
+  const ratios = sales
+    .filter((s) => s.appraisal > 0 && s.soldAmount > 0)
+    .map((s) => s.soldAmount / s.appraisal)
+    .sort((a, b) => a - b);
+  if (ratios.length < 5) return null;
+  const q = (p: number): number => ratios[Math.min(ratios.length - 1, Math.floor(ratios.length * p))]!;
+  const at = (p: number): string => eok(appraisal * q(p));
+  return `입찰가 가이드(승률): 50% ${at(0.5)} · 70% ${at(0.7)} · 90% ${at(0.9)} — 유사 ${ratios.length}건 낙찰가 분포 기준`;
+}
+
 /** 상세 리포트용 "유사 낙찰 사례" 라인들(최근순 최대 max건). */
 export function recentSalesLines(sales: CompSale[], max = 3): string[] {
   return sales.slice(0, max).map(
