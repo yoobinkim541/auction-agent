@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped, parseCourtDetail, isKnownForIncremental, shouldFetchDetailNow, detailDecision } from './courtauction.ts';
 
 describe('filterCourts', () => {
-  it('빈 regions → 수도권 전체(9개) 반환', () => {
-    expect(filterCourts([])).toHaveLength(9);
+  it('빈 regions → 수도권 전체(13개) 반환', () => {
+    expect(filterCourts([])).toHaveLength(13);
   });
   it('서울 → 서울 법원 5개', () => {
     const res = filterCourts(['서울']);
@@ -15,17 +15,17 @@ describe('filterCourts', () => {
     expect(res).toHaveLength(1);
     expect(res[0]!.code).toBe('B000240');
   });
-  it('경기 → 수원+성남+의정부 3개 (광역 키워드 확장)', () => {
+  it('경기 → 의정부·수원·성남·부천·여주·평택·안양 7개 (광역 키워드 확장)', () => {
     const res = filterCourts(['경기']);
     expect(res.map((c) => c.name)).toEqual(
-      expect.arrayContaining(['수원지방법원', '성남지원', '의정부지방법원']),
+      expect.arrayContaining(['수원지방법원', '성남지원', '의정부지방법원', '부천지원', '여주지원', '평택지원', '안양지원']),
     );
-    expect(res).toHaveLength(3);
+    expect(res).toHaveLength(7);
   });
-  it('DEFAULT_FILTER 서울+경기+인천 → 수도권 9개 전부', () => {
+  it('DEFAULT_FILTER 서울+경기+인천 → 수도권 13개 전부', () => {
     // 이 조합이 수도권 모든 법원을 커버해야 함 — 회귀 방지
     const res = filterCourts(['서울', '경기', '인천']);
-    expect(res).toHaveLength(9);
+    expect(res).toHaveLength(13);
   });
   it('법원코드 직접 입력', () => {
     const res = filterCourts(['B000210']);
@@ -38,7 +38,7 @@ describe('filterCourts', () => {
   it('반환값 변형이 METRO_COURTS 원본에 영향 없음', () => {
     const r = filterCourts([]);
     r.push({ code: 'ZZZ', name: '테스트법원' });
-    expect(filterCourts([])).toHaveLength(9); // 원본 불변
+    expect(filterCourts([])).toHaveLength(13); // 원본 불변
   });
 });
 
