@@ -21,7 +21,7 @@
  *  면적, 건물 표제부 (상세 호출 시)
  *  등기·임차인·매각효력·실거래 없음 (deonakchal만 제공)
  */
-import type { Adapter, CrawlFilter, ScrapedListing } from './types.ts';
+import type { Adapter, CrawlFilter, CrawlSink, ScrapedListing } from './types.ts';
 import type { Listing, RegistryEntry, Tenant, ListingDoc } from '../../shared/types.ts';
 import { parseKoreanDate, normalizeCaseNo, mapRightKind } from '../normalize.ts';
 import { crawlFetch } from '../proxy.ts'; // CRAWL_PROXY(SSH SOCKS) egress — VM IP 차단 우회
@@ -566,7 +566,7 @@ function applyDetail(scraped: ScrapedListing, detail: any): void {
 export class CourtAuctionAdapter implements Adapter {
   name = 'courtauction' as const;
 
-  async crawl(filter: CrawlFilter): Promise<ScrapedListing[]> {
+  async crawl(filter: CrawlFilter, sink?: CrawlSink): Promise<ScrapedListing[]> {
     const maxItems = filter.maxItems ?? 200;
     const perCourt = filter.perCourt ?? maxItems; // 법원당 상한 — 미설정 시 전역과 동일(기존 동작). 설정 시 서울·경기 균형 수집(서울중앙이 예산 독식 방지).
     const fetchDetail_ = process.env.COURT_FETCH_DETAIL !== 'false'; // 권리분석 위해 기본 ON(상세=명세서 권리데이터). 끄려면 false.
@@ -581,6 +581,7 @@ export class CourtAuctionAdapter implements Adapter {
     await initSession(cookies);
 
     const results: ScrapedListing[] = [];
+    let nResults = 0;
     const seen = new Set<string>();
     let blocked = false;
     let nKnownSkip = 0;    // 증분: 기존 물건 상세 건너뛰고 메타만
@@ -598,13 +599,13 @@ export class CourtAuctionAdapter implements Adapter {
     let nextBreakAt = Math.round(rnd(BREAK_EVERY_MIN, BREAK_EVERY_MAX));
 
     for (const court of courts) {
-      if (blocked || results.length >= maxItems) break;
-      const courtStart = results.length; // 이 법원 수집량 = results.length - courtStart (perCourt 상한 판정용)
+      if (blocked || nResults >= maxItems) break;
+      const courtStart = nResults; // 이 법원 수집량 = nResults - courtStart (perCourt 상한 판정용)
       console.log(`[courtauction] 검색: ${court.name} (${court.code})`);
       const srchInfo = buildSrchInfo(court.code); // 검색·상세 공용
 
       for (let page = 1; ; page++) {
-        if (blocked || results.length >= maxItems || results.length - courtStart >= perCourt) break;
+        if (blocked || nResults >= maxItems || nResults - courtStart >= perCourt) break;
 
         // 실제 사이트(WebSquare) 검색 포맷 — dma_ 맵 본문 + submissionid 헤더. srchInfo는 상세 조회와 공용.
         const body = {
@@ -691,8 +692,10 @@ export class CourtAuctionAdapter implements Adapter {
             nDeferred++; // 신규인데 예산 소진 — 메타만
           }
 
-          results.push(scraped);
-          if (results.length >= maxItems || results.length - courtStart >= perCourt) break;
+          if (sink) await sink.onListing(scraped);
+          else results.push(scraped);
+          nResults++;
+          if (nResults >= maxItems || nResults - courtStart >= perCourt) break;
         }
 
         if (newOnPage === 0) break; // 중복만 있으면 종료
@@ -700,7 +703,7 @@ export class CourtAuctionAdapter implements Adapter {
         // 중간 휴식 (사람처럼) — 부하가 큰 상세(fetchDetail) 총 수집량(신규+임박재수집) 기준. 증분 스윕에서 대부분 메타만
         // 갱신(상세 skip)이면 잘 안 늘어 큰 휴식이 거의 안 뜸(불필요한 대기 방지). 비증분(전량 상세)에선 사실상 종전과 동일.
         const nDetail = nNewDetail + nRefreshDetail;
-        if (nDetail >= nextBreakAt && results.length < maxItems) {
+        if (nDetail >= nextBreakAt && nResults < maxItems) {
           const br = rnd(BREAK_DWELL_MIN_MS, BREAK_DWELL_MAX_MS);
           console.log(`[courtauction] ☕ 휴식 ${Math.round(br / 1000)}s...`);
           await wait(br);
@@ -714,7 +717,7 @@ export class CourtAuctionAdapter implements Adapter {
     if (blocked) {
       console.error('[courtauction] IP 차단 — 수집 중단. 로컬 PC/RPi에서 재시도 필요.');
     }
-    console.log(`[courtauction] 완료: ${results.length}건${filter.incremental ? ` (증분: 신규 상세 ${nNewDetail} · 임박 재수집 ${nRefreshDetail} · 기존 메타갱신 ${nKnownSkip}${nDeferred ? ` · 상세 이월 ${nDeferred}` : ''})` : ''}`);
+    console.log(`[courtauction] 완료: ${nResults}건${filter.incremental ? ` (증분: 신규 상세 ${nNewDetail} · 임박 재수집 ${nRefreshDetail} · 기존 메타갱신 ${nKnownSkip}${nDeferred ? ` · 상세 이월 ${nDeferred}` : ''})` : ''}`);
     return results;
   }
 }
