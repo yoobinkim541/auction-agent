@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { parseSaleResults, nextSaleDate, failedRoundCount, parseCaseResult, type SaleResultRound } from './courtauction.ts';
+import { parseSaleResults, nextSaleDate, failedRoundCount, parseCaseResult, courtCodeByName, type SaleResultRound } from './courtauction.ts';
+
+describe('courtCodeByName', () => {
+  it('담당계가 붙은 DB 법원명도 본원/지원 코드로 매핑', () => {
+    expect(courtCodeByName('인천8계')).toBe('B000240');
+    expect(courtCodeByName('고양3계')).toBe('B214807');
+    expect(courtCodeByName('서울북부1계')).toBe('B000213');
+    expect(courtCodeByName('성남9계')).toBe('B000251');
+  });
+});
 
 describe('parseSaleResults', () => {
   it('gdsDspslDxdyLst → 회차별 결과(유찰/매각) 파싱', () => {

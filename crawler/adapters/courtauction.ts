@@ -359,7 +359,15 @@ export interface SaleResultRound {
 
 /** 법원명 → 법원코드(cortOfcCd). 결과 폴러가 DB의 court명으로 상세 조회 시 필요. */
 export function courtCodeByName(name: string): string | null {
-  return METRO_COURTS.find((c) => c.name === name)?.code ?? null;
+  const raw = name.trim();
+  const exact = METRO_COURTS.find((c) => c.name === raw);
+  if (exact) return exact.code;
+  const key = raw
+    .replace(/\s+/g, '')
+    .replace(/(지방법원|지원)/g, '')
+    .replace(/\d+계.*$/, '');
+  if (!key) return null;
+  return METRO_COURTS.find((c) => c.name.replace(/\s+/g, '').includes(key))?.code ?? null;
 }
 
 /** 상세 조회 가능한(코드 매핑 보유) 법원명 목록 — 결과 폴러 SQL 필터용(미매핑 법원에 슬롯 낭비 방지). */
