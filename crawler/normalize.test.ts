@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseKoreanMoney, parseKoreanDate, mapPropertyType, mapRightKind, parseAreaToM2, extractAmountFromText } from './normalize.ts';
+import { parseKoreanMoney, parseKoreanDate, mapPropertyType, mapRightKind, parseAreaToM2, extractAmountFromText, extractLabeledKoreanMoney } from './normalize.ts';
 
 describe('parseKoreanMoney', () => {
   it('콤마 숫자', () => expect(parseKoreanMoney('530,000,000원')).toBe(530_000_000));
@@ -22,6 +22,15 @@ describe('extractAmountFromText (등기 한 줄에서 금액만)', () => {
     expect(extractAmountFromText('3 2020.01.01 가압류 서울중앙지법')).toBeNull());
   it('여러 금액이면 최댓값(채권최고액)', () =>
     expect(extractAmountFromText('근저당 채권최고액 660,000,000 (원금 550,000,000)')).toBe(660_000_000));
+});
+
+describe('extractLabeledKoreanMoney', () => {
+  it('임차인 보증금 억/만원 단위', () =>
+    expect(extractLabeledKoreanMoney('보증금 : 1억2,000만원 전입일자 : 2024-01-02', '보증금', ['전입일자'])).toBe(120_000_000));
+  it('임차권등기 노트의 임대차보증금 단위', () =>
+    expect(extractLabeledKoreanMoney('임대차보증금 금 3억5천만원, 주민등록일자 2020.01.01', '(?:임차보증금|임대차보증금)', ['주민등록일자'])).toBe(350_000_000));
+  it('다음 날짜 숫자를 금액에 섞지 않음', () =>
+    expect(extractLabeledKoreanMoney('보증금 120,000,000 전입일자 2024-01-02', '보증금', ['전입일자'])).toBe(120_000_000));
 });
 
 describe('parseKoreanDate', () => {

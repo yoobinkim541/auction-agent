@@ -71,6 +71,12 @@ export async function upsertListingDoc(listingId: number, doc: ListingDoc): Prom
   );
 }
 
+export async function replaceListingDocs(listingId: number, docs: ListingDoc[], docTypes: string[]): Promise<void> {
+  if (!docTypes.length) return;
+  await query(`delete from gm_listing_docs where listing_id=$1 and doc_type = any($2::text[])`, [listingId, docTypes]);
+  for (const doc of docs) await upsertListingDoc(listingId, doc);
+}
+
 /** 문서 내용 변경 이력 기록(발품절감 ⑤) — watch-favorites가 ★매물 것을 알림 후 notified 마킹. */
 export async function recordDocChange(listingId: number, caseNo: string, docTypes: string[]): Promise<void> {
   await query(
@@ -235,6 +241,33 @@ export async function fetchListingsByIds(ids: number[]): Promise<ListingRow[]> {
 
 // ── 교차 보강(courtauction ↔ deonakchal): 임차인 상세를 별도 테이블에 유지(courtauction 재크롤로 안 지워지게 + 시도 마커 겸용) ──
 export interface EnrichCandidate { id: number; case_no: string; court: string; item_no: string }
+const TARGET_DEONAK_DETAIL_ADDRESS_SQL = `
+  l.address like '%남양주%' and (
+    l.address like '%화도%' or l.address like '%묵현%' or l.address like '%마석%' or
+    l.address like '%창현%' or l.address like '%월산%'
+  )`;
+
+export async function fetchTargetDeonakDetailCandidates(limit: number, retryDays = 1): Promise<EnrichCandidate[]> {
+  return query<EnrichCandidate>(
+    `select l.id, l.case_no, l.court, coalesce(l.item_no,'1') as item_no
+       from gm_listings l
+       left join gm_deonak_tenants dt on dt.listing_id = l.id
+      where l.source = 'courtauction'
+        and (l.sale_date is null or l.sale_date >= current_date - 2)
+        and (${TARGET_DEONAK_DETAIL_ADDRESS_SQL})
+        and (
+          dt.listing_id is null
+          or dt.fetched_at < now() - (($2)::text || ' days')::interval
+          or not exists (
+            select 1 from gm_listing_docs d
+             where d.listing_id = l.id and d.parsed_json->>'source' = 'deonakchal'
+          )
+        )
+      order by l.sale_date nulls last, l.crawled_at desc
+      limit $1`,
+    [limit, retryDays],
+  );
+}
 /** 보강 후보: 통과 + courtauction + 점유관계 미상 + (미시도 or retryDays 경과). ★관심·고점수 우선. */
 export async function fetchEnrichmentCandidates(limit: number, retryDays = 14): Promise<EnrichCandidate[]> {
   return query<EnrichCandidate>(

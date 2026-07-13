@@ -106,6 +106,7 @@ export interface ReportObj {
 export interface ListingItem {
   id: number;
   case_no: string;
+  item_no?: string | null;
   court: string;
   address: string;
   property_type: string;
@@ -116,6 +117,8 @@ export interface ListingItem {
   area_m2: number | null;
   source: string;
   source_url: string | null;
+  court_check_url?: string | null;
+  deonakchal_check_url?: string | null;
   is_favorite: boolean | null;
   crawled_at: string | null;
   lat: number | null;
@@ -151,8 +154,46 @@ export async function fetchDetail(caseNo: string): Promise<ListingItem> {
 }
 
 export async function triggerJob(job: 'crawl' | 'analyze' | 'eval' | 'ingest-legal'): Promise<void> {
-  const res = await fetch(`${BASE}/api/jobs/${job}`, { method: 'POST' });
-  if (!res.ok) throw new Error(`잡 실행 실패 (${res.status})`);
+  const initialToken = adminToken() || promptAdminToken();
+  let res = await postJob(job, initialToken);
+  if (res.status === 401 && typeof window !== 'undefined') {
+    localStorage.removeItem(ADMIN_TOKEN_KEY);
+    const token = window.prompt('관리자 토큰이 틀렸습니다. 다시 입력하세요');
+    if (token?.trim()) {
+      localStorage.setItem(ADMIN_TOKEN_KEY, token.trim());
+      res = await postJob(job, token.trim());
+    }
+  }
+  if (res.status === 409) return; // 이미 실행 중이면 실패로 보지 않고 상태 polling에 맡긴다.
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const body = (await res.json()) as { error?: string };
+      detail = body.error ? `: ${body.error}` : '';
+    } catch { /* ignore */ }
+    throw new Error(`잡 실행 실패 (${res.status})${detail}`);
+  }
+}
+
+const ADMIN_TOKEN_KEY = 'gyeongmae.adminToken';
+function adminToken(): string {
+  const envToken = import.meta.env.VITE_ADMIN_TOKEN as string | undefined;
+  if (envToken?.trim()) return envToken.trim();
+  if (typeof localStorage === 'undefined') return '';
+  return localStorage.getItem(ADMIN_TOKEN_KEY)?.trim() ?? '';
+}
+
+function promptAdminToken(): string {
+  if (typeof window === 'undefined') return '';
+  const token = window.prompt('관리자 토큰을 입력하세요');
+  const trimmed = token?.trim() ?? '';
+  if (trimmed) localStorage.setItem(ADMIN_TOKEN_KEY, trimmed);
+  return trimmed;
+}
+
+function postJob(job: 'crawl' | 'analyze' | 'eval' | 'ingest-legal', token: string): Promise<Response> {
+  const headers = token ? { 'X-Admin-Token': token } : undefined;
+  return fetch(`${BASE}/api/jobs/${job}`, { method: 'POST', headers });
 }
 
 export interface JobStatus { state: 'idle' | 'running' | 'ok' | 'error'; startedAt?: string; finishedAt?: string; exitCode?: number; error?: string; }
@@ -207,9 +248,10 @@ export async function fetchLastCrawl(): Promise<CrawlStatus | null> {
     }
     const date = lastOk.started_at.slice(0, 10);
     const daysAgo = Math.max(0, Math.floor((Date.now() - new Date(date).getTime()) / 86_400_000));
-    // 차단 = 가장 최근 실행이 실패(error/blocked)거나, status는 ok지만 0건(법원경매 IP 차단 신호).
-    const latest = court[0];
-    const blocked = latest != null && (latest.status !== 'ok' || (latest.n_found ?? 0) === 0);
+    // 차단 = 가장 최근에 "종료된" 실행이 실패(error/blocked)거나, status는 ok지만 0건.
+    // 실행 중(running)은 시작 직후 n_found=0으로 기록되므로 차단으로 보면 오탐이다.
+    const latestFinished = court.find((r) => r.status !== 'running');
+    const blocked = latestFinished != null && (latestFinished.status !== 'ok' || (latestFinished.n_found ?? 0) === 0);
     return { date, daysAgo, stale: daysAgo > 3, source: 'courtauction', blocked };
   } catch { return null; }
 }

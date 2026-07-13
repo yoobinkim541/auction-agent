@@ -25,12 +25,12 @@ public class JobRunner {
   private final ExecutorService exec = Executors.newSingleThreadExecutor();
   private final Map<String, Object> status = new ConcurrentHashMap<>();
 
-  /** 허용 잡 → npm 스크립트 */
+  /** 허용 잡 → 실행 명령 */
   private static final Map<String, String> SCRIPTS = Map.of(
-      "crawl", "crawl",
-      "analyze", "analyze",
-      "eval", "eval",
-      "ingest-legal", "ingest:legal");
+      "crawl", "COURT_BID_DAYS=\"${COURT_BID_DAYS:-180}\" npm run crawl -- --source=courtauction --incremental --max=10000 --max-new=500 --all-types --region=서울,경기",
+      "analyze", "npm run analyze",
+      "eval", "npm run eval",
+      "ingest-legal", "npm run ingest:legal");
 
   public synchronized boolean trigger(String job) {
     String script = SCRIPTS.get(job);
@@ -44,8 +44,8 @@ public class JobRunner {
   private void run(String job, String script) {
     File dir = new File(pipelineDir).getAbsoluteFile();
     try {
-      log.info("[job:{}] start: npm run {} (dir={})", job, script, dir);
-      Process p = new ProcessBuilder("bash", "-lc", "npm run " + script)
+      log.info("[job:{}] start: {} (dir={})", job, script, dir);
+      Process p = new ProcessBuilder("bash", "-lc", script)
           .directory(dir)
           .redirectErrorStream(true)
           .inheritIO()

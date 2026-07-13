@@ -25,7 +25,7 @@ import { addressToLawdCd } from './location/lawd-codes.ts';
 import { fetchRentDeals, estimateRent, estimateRentFromSalePrice } from './income/rent.ts';
 import { analyzeIncome } from './income/yield.ts';
 import { analyzeEviction } from './eviction/index.ts';
-import { parseKoreanMoney, parseKoreanDate } from '../crawler/normalize.ts';
+import { parseKoreanDate, extractLabeledKoreanMoney } from '../crawler/normalize.ts';
 
 /** 사용자 취득세 가정(개인 1주택 기본). 다주택/법인이면 여기 또는 향후 설정에서 조정. */
 const TAX_ASSUMPTION = { homeCountAfter: 1 } as const;
@@ -52,15 +52,15 @@ function extractTenantsFromNotes(notes: string[]): Tenant[] {
     const blocks = note.split(/(?=매수인에게\s*대항할|대항할\s*수\s*있는\s*임차인)/);
     for (const block of blocks) {
       if (!/대항할\s*수\s*있는/.test(block)) continue;
-      const depositM = block.match(/(?:임차보증금|임대차보증금)\s*금?\s*([\d,]+)/);
+      const deposit = extractLabeledKoreanMoney(block, '(?:임차보증금|임대차보증금)', ['전입일자', '주민등록일자', '확정일자', '배당요구', '점유']);
       const moveInM = block.match(/(?:전입일자|주민등록일자)\s*(\d{4}[.년-]\d{1,2}[.월-]\d{1,2})/);
       const fixedM = block.match(/확정일자\s*(?:\(\s*1차\s*\))?\s*(\d{4}[.년-]\d{1,2}[.월-]\d{1,2})/);
-      if (!depositM && !moveInM) continue; // 최소 하나 이상의 정량 정보 필요
+      if (deposit == null && !moveInM) continue; // 최소 하나 이상의 정량 정보 필요
       tenants.push({
         moveInDate: moveInM ? parseKoreanDate(moveInM[1]) : undefined,
         occupancyDate: moveInM ? parseKoreanDate(moveInM[1]) : undefined,
         fixedDate: fixedM ? parseKoreanDate(fixedM[1]) : undefined,
-        deposit: depositM ? (parseKoreanMoney(depositM[1]) ?? 0) : 0,
+        deposit: deposit ?? 0,
         demandedDistribution: false, // 임차권등기는 별도 배당요구 없이 우선변제
         occupied: true,
         raw: `(매각효력노트추출) ${block.slice(0, 300)}`,

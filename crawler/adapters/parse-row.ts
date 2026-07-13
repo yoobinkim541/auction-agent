@@ -12,6 +12,17 @@ export const TERMINAL = /(배당종결|취하|기각|각하|낙찰|대금납부|
 
 export const FLAG_TOKENS = ['유치권', '법정지상권', '분묘', '대지권미등기', '토지별도등기', '임금채권', '대항력있는임차인', '선순위', '지분', '농지', '제시외'];
 
+export function normalizeItemNo(itemNo: string | null | undefined): string {
+  const n = parseInt(String(itemNo ?? '').trim(), 10);
+  return Number.isFinite(n) && n > 0 ? String(n) : '1';
+}
+
+export function splitDeonakCaseNo(caseNo: string): { baseCaseNo: string; itemNo: string } {
+  const normalized = normalizeCaseNo(caseNo);
+  const m = normalized.match(/^(20\d\d-\d+)(?:-(\d+))?$/);
+  return m ? { baseCaseNo: m[1]!, itemNo: normalizeItemNo(m[2]) } : { baseCaseNo: normalized, itemNo: '1' };
+}
+
 /** 라벨(예: '감정가') 뒤 ~ 다음 라벨 전까지 구간에서 금액만 추출 */
 function amountBetween(label: string, text: string, stops: string[]): number | null {
   const idx = text.indexOf(label);
@@ -37,6 +48,7 @@ export function parseResultRowText(text: string, opts: { productId?: string; sou
 
   const failCountM = text.match(/(?:유찰|재진행)\s*(\d+)회/);
   const failCount = failCountM ? parseInt(failCountM[1]!, 10) : 0;
+  const { baseCaseNo, itemNo } = splitDeonakCaseNo(caseNo!);
 
   // 감정가/최저가 — 억·만·천 표기와 라벨 사이 토큰 변형에 견디도록 구간 추출(과거: 인접 정규식 실패 시 0 → 안전마진 100% 오탐)
   const appraisalValue = amountBetween('감정가', text, ['최저가']) ?? 0;
@@ -51,7 +63,8 @@ export function parseResultRowText(text: string, opts: { productId?: string; sou
 
   return {
     listing: {
-      caseNo: normalizeCaseNo(caseNo),
+      caseNo: baseCaseNo,
+      itemNo,
       court: court!,
       address: addrM ? addrM[1]!.trim() : '(소재지 미상)',
       propertyType: mapPropertyType(typeLabel),
