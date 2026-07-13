@@ -5,7 +5,7 @@
 import type { Listing, LocationAnalysis, Comparable, PropertyType } from '../../shared/types.ts';
 import { addressToLawdCd } from './lawd-codes.ts';
 import { fetchMolitRaw, molitQuotaHit } from '../../shared/molit-cache.ts';
-import { geocodeNaver } from './osm.ts';
+import { geocodeSmart, stripToJibun } from './osm.ts';
 import {
   parseMolitDealAmount, extractDong, extractBuildingName, estimateMarketPrice,
 } from './comps.ts';
@@ -121,11 +121,15 @@ export async function analyzeLocation(listing: Listing, opts: LocationOptions = 
   if (listing.lat && listing.lng) {
     geo = { lat: listing.lat, lng: listing.lng, lawdCd: addressToLawdCd(listing.address) };
   } else {
-    // 카카오(키 있을 때) → 네이버(fallback) 순으로 지오코딩 시도
+    // 카카오(키 있을 때) → 네이버(fallback, 지번 정제 재시도 포함) 순으로 지오코딩 시도
     const addr = listing.roadAddress || listing.address;
     geo = await kakaoGeocode(addr);
     if (!geo) {
-      const n = await geocodeNaver(addr);
+      const stripped = stripToJibun(addr);
+      if (stripped !== addr) geo = await kakaoGeocode(stripped);
+    }
+    if (!geo) {
+      const n = await geocodeSmart(addr);
       if (n) geo = { lat: n.lat, lng: n.lng, lawdCd: addressToLawdCd(listing.address) };
     }
   }

@@ -235,6 +235,17 @@ create table if not exists gm_doc_changes (
 );
 create index if not exists gm_doc_changes_pending_idx on gm_doc_changes (notified, listing_id);
 
+-- 교차 보강(courtauction ↔ deonakchal): courtauction은 임차인 표를 못 파싱(명세서 PDF) → 명도판정 '점유관계 미상'.
+-- deonakchal에서 사건번호로 조회한 임차인(대항력·확정일자·배당요구)을 여기 저장. analyze가 최우선으로 읽고(pipeline/run.ts),
+-- courtauction 재크롤(gm_listing_docs 삭제)로 안 지워짐. found=false = 조회했으나 deonakchal에 없음(재시도 마커).
+create table if not exists gm_deonak_tenants (
+  listing_id  bigint primary key references gm_listings(id) on delete cascade,
+  case_no     text not null,
+  tenants     jsonb not null default '[]'::jsonb,     -- Tenant[] (found=true일 때 채워짐)
+  found       boolean not null default false,
+  fetched_at  timestamptz not null default now()
+);
+
 -- 예측 스냅샷(Phase 0) — analyze가 점수를 덮어쓰므로, 매각 직전 예측을 동결해 사후 결과와 비교.
 create table if not exists gm_prediction_snapshots (
   id             serial primary key,

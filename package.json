@@ -22,7 +22,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "enrich:poi": "tsx pipeline/location/enrich-poi.ts",
-    "geocode:bulk": "tsx scripts/geocode-bulk.ts"
+    "geocode:bulk": "tsx scripts/geocode-bulk.ts",
+    "enrich:deonakchal": "tsx scripts/enrich-deonakchal.ts"
   },
   "engines": {
     "node": ">=22"

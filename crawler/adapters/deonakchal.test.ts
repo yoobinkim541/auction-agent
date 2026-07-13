@@ -1,5 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { extractRegistryRowsFromText, extractSiteMetrics } from './deonakchal.ts';
+import { extractRegistryRowsFromText, extractSiteMetrics, caseNoToMngno, DEONAK_COURT1 } from './deonakchal.ts';
+
+describe('caseNoToMngno (courtauction 사건번호 → deonakchal mngno)', () => {
+  it('타경 사건번호 → 연도-번호', () => {
+    expect(caseNoToMngno('2023타경111644')).toBe('2023-111644');
+    expect(caseNoToMngno('2023 타경 111644')).toBe('2023-111644'); // 공백 허용
+  });
+  it('포맷 아니면 null', () => {
+    expect(caseNoToMngno('그냥문자')).toBeNull();
+    expect(caseNoToMngno('')).toBeNull();
+  });
+});
+
+describe('DEONAK_COURT1 (수도권 법원 매핑)', () => {
+  it('courtauction METRO_COURTS 이름과 매칭', () => {
+    expect(DEONAK_COURT1['서울중앙지방법원']).toBe('A1');
+    expect(DEONAK_COURT1['남양주지원']).toBe('D3');
+    expect(DEONAK_COURT1['안산지원']).toBe('E5');
+    expect(DEONAK_COURT1['수원지방법원']).toBe('E1');
+  });
+});
 
 describe('extractRegistryRowsFromText', () => {
   it('근저당·가압류 행을 종류/접수일/금액으로 파싱', () => {

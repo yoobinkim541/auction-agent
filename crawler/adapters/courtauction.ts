@@ -43,16 +43,23 @@ const METRO_COURTS: { code: string; name: string }[] = [
   { code: 'B000212', name: '서울남부지방법원' },
   { code: 'B000213', name: '서울북부지방법원' },
   { code: 'B000215', name: '서울서부지방법원' },
-  { code: 'B000214', name: '의정부지방법원' }, // 경기북부
+  { code: 'B000214', name: '의정부지방법원' }, // 경기북부(의정부·양주·포천·동두천·연천·가평 일부)
+  { code: 'B214804', name: '남양주지원' },      // 남양주·구리·가평 (집 근처 — 코드가 부모 214 기반이라 별도)
+  { code: 'B214807', name: '고양지원' },        // 고양·파주
   { code: 'B000240', name: '인천지방법원' },
+  { code: 'B000241', name: '부천지원' },        // 인천 관할(부천·김포)
   { code: 'B000250', name: '수원지방법원' },   // 경기남부
-  { code: 'B000251', name: '성남지원' },
+  { code: 'B000251', name: '성남지원' },        // 성남·광주·하남
+  { code: 'B000252', name: '여주지원' },        // 여주·이천·양평
+  { code: 'B000253', name: '평택지원' },        // 평택·안성
+  { code: 'B250826', name: '안산지원' },        // 안산·광명·시흥 (코드가 부모 250 기반)
+  { code: 'B000254', name: '안양지원' },        // 안양·과천·의왕·군포
 ];
 
 // '경기' → '의정부'+'수원'+'성남' 처럼 광역 지역명 → 세부 매칭 키워드 확장
 const REGION_EXPAND: Record<string, string[]> = {
-  경기: ['의정부', '수원', '성남'],
-  수도권: ['서울', '의정부', '인천', '수원', '성남'],
+  경기: ['의정부', '남양주', '고양', '수원', '성남', '부천', '여주', '평택', '안산', '안양'],
+  수도권: ['서울', '의정부', '남양주', '고양', '인천', '수원', '성남', '부천', '여주', '평택', '안산', '안양'],
 };
 
 /** 필터 regions 키워드로 대상 법원 추린다.
@@ -62,6 +69,37 @@ export function filterCourts(regions: string[]): { code: string; name: string }[
   if (!regions.length) return [...METRO_COURTS];
   const expanded = regions.flatMap((r) => [r, ...(REGION_EXPAND[r] ?? [])]);
   return METRO_COURTS.filter((c) => expanded.some((r) => c.name.includes(r) || c.code === r));
+}
+
+/** 증분 크롤에서 이 물건이 "이미 파싱됨"(상세 fetchDetail skip 대상)인지. incremental이 아니면 항상 false(전량 상세). */
+export function isKnownForIncremental(filter: Pick<CrawlFilter, 'incremental' | 'knownKeys'>, key: string): boolean {
+  return filter.incremental === true && filter.knownKeys?.has(key) === true;
+}
+
+/** 이번 실행에서 이 신규 물건의 상세를 지금 받을지 — 신규 상세 예산(maxNewDetails) 내에서만.
+ *  예산 소진 시 메타만 저장(권리분석 없음 → 다음 실행에서 다시 신규로 잡혀 이어짐). 미설정이면 무제한. */
+export function shouldFetchDetailNow(known: boolean, nNewDetail: number, maxNewDetails?: number): boolean {
+  return !known && (maxNewDetails == null || nNewDetail < maxNewDetails);
+}
+
+/** 증분 모드 상세 수집 판정:
+ *   'new'     — 신규 물건(문서 없음), 신규 예산 내 → 풀 파싱
+ *   'refresh' — 기존 물건이지만 매각 임박(오늘~thresholdDate) → 명세서 변경감지 위해 재수집(재수집 예산 내)
+ *   'skip'    — 그 외(기존·비임박, 또는 예산 소진) → 메타만
+ * 순수 함수(테스트 가능). saleDate/today/thresholdDate는 'YYYY-MM-DD'. */
+export function detailDecision(
+  known: boolean,
+  saleDate: string | null,
+  today: string,
+  thresholdDate: string,
+  counts: { nNew: number; nRefresh: number },
+  caps: { maxNew?: number; maxRefresh: number; refreshDays: number },
+): 'new' | 'refresh' | 'skip' {
+  if (!known) return caps.maxNew == null || counts.nNew < caps.maxNew ? 'new' : 'skip';
+  if (caps.refreshDays <= 0) return 'skip';
+  const imminent = saleDate != null && saleDate >= today && saleDate <= thresholdDate;
+  if (imminent && counts.nRefresh < caps.maxRefresh) return 'refresh';
+  return 'skip';
 }
 
 // ── 휴먼 페이싱 ─────────────────────────────────────────────────────────
@@ -519,6 +557,7 @@ export class CourtAuctionAdapter implements Adapter {
 
   async crawl(filter: CrawlFilter): Promise<ScrapedListing[]> {
     const maxItems = filter.maxItems ?? 200;
+    const perCourt = filter.perCourt ?? maxItems; // 법원당 상한 — 미설정 시 전역과 동일(기존 동작). 설정 시 서울·경기 균형 수집(서울중앙이 예산 독식 방지).
     const fetchDetail_ = process.env.COURT_FETCH_DETAIL !== 'false'; // 권리분석 위해 기본 ON(상세=명세서 권리데이터). 끄려면 false.
     const courts = filterCourts(filter.regions);
 
@@ -533,16 +572,28 @@ export class CourtAuctionAdapter implements Adapter {
     const results: ScrapedListing[] = [];
     const seen = new Set<string>();
     let blocked = false;
+    let nKnownSkip = 0;    // 증분: 기존 물건 상세 건너뛰고 메타만
+    let nNewDetail = 0;    // 증분: 신규라 상세까지 받은 건수
+    let nRefreshDetail = 0; // 증분: 임박 기존 물건 상세 재수집(명세서 변경감지용)
+    let nDeferred = 0;     // 신규지만 상세 예산(maxNewDetails) 소진 — 메타만 저장, 다음 실행에서 이어감
+
+    // 임박 기존 물건 상세 재수집 창(명세서 변경감지). KST 기준 오늘 ~ 오늘+refreshDays.
+    const refreshDays = filter.refreshImminentDays ?? 14;
+    const maxRefresh = filter.maxRefreshDetails ?? 250;
+    const nowKst = new Date(Date.now() + 9 * 3_600_000);
+    const todayStr = nowKst.toISOString().slice(0, 10);
+    const thresholdStr = new Date(nowKst.getTime() + refreshDays * 86_400_000).toISOString().slice(0, 10);
 
     let nextBreakAt = Math.round(rnd(40, 60));
 
     for (const court of courts) {
       if (blocked || results.length >= maxItems) break;
+      const courtStart = results.length; // 이 법원 수집량 = results.length - courtStart (perCourt 상한 판정용)
       console.log(`[courtauction] 검색: ${court.name} (${court.code})`);
       const srchInfo = buildSrchInfo(court.code); // 검색·상세 공용
 
       for (let page = 1; ; page++) {
-        if (blocked || results.length >= maxItems) break;
+        if (blocked || results.length >= maxItems || results.length - courtStart >= perCourt) break;
 
         // 실제 사이트(WebSquare) 검색 포맷 — dma_ 맵 본문 + submissionid 헤더. srchInfo는 상세 조회와 공용.
         const body = {
@@ -591,34 +642,58 @@ export class CourtAuctionAdapter implements Adapter {
           seen.add(key);
           newOnPage++;
 
-          // 물건 종류 필터 (클라이언트 사이드)
-          if (filter.propertyTypes.length && !filter.propertyTypes.includes(scraped.listing.propertyType)) continue;
+          // 물건 종류 필터 (클라이언트 사이드). allTypesCourts에 속한 법원은 전종류 수집(집 근처 완전 수집용).
+          const typeExempt = filter.allTypesCourts?.includes(court.code) ?? false;
+          if (!typeExempt && filter.propertyTypes.length && !filter.propertyTypes.includes(scraped.listing.propertyType)) continue;
           // 지역 키워드 필터
           if (filter.regions.length && !filter.regions.some((rg) => scraped.listing.address.includes(rg) || court.name.includes(rg))) continue;
 
-          // 상세 보강 (선택적)
-          if (fetchDetail_) {
+          // 상세 보강 판정. 증분: 신규=풀파싱(예산 내), 임박 기존=명세서 변경감지 위해 재수집(예산 내), 그 외=메타만.
+          // 비증분: 전량 상세(기존 동작).
+          const known = isKnownForIncremental(filter, key);
+          const decision: 'new' | 'refresh' | 'skip' = !fetchDetail_
+            ? 'skip'
+            : !filter.incremental
+              ? 'new'
+              : detailDecision(known, scraped.listing.saleDate ?? null, todayStr, thresholdStr,
+                  { nNew: nNewDetail, nRefresh: nRefreshDetail },
+                  { maxNew: filter.maxNewDetails, maxRefresh, refreshDays });
+          if (decision !== 'skip') {
             try {
               const detail = await fetchDetail(scraped.listing.caseNo, court.code, scraped.listing.itemNo ?? '1', srchInfo, cookies);
-              applyDetail(scraped, detail);
+              applyDetail(scraped, detail); // scraped.docs 채움 → runAdapter가 이전 문서와 비교해 명세서 변경 감지
+              if (decision === 'new') {
+                nNewDetail++;
+                if (filter.maxNewDetails != null && nNewDetail === filter.maxNewDetails) {
+                  console.log(`[courtauction] 신규 상세 예산 ${filter.maxNewDetails}건 소진 — 이후 신규는 메타만(다음 실행에서 이어감)`);
+                }
+              } else {
+                nRefreshDetail++;
+              }
             } catch (e) {
               if (e instanceof CourtAuctionBlockedError) { blocked = true; break; }
             }
             await wait(humanDwellMs());
+          } else if (known) {
+            nKnownSkip++;
+          } else if (fetchDetail_) {
+            nDeferred++; // 신규인데 예산 소진 — 메타만
           }
 
           results.push(scraped);
-          if (results.length >= maxItems) break;
+          if (results.length >= maxItems || results.length - courtStart >= perCourt) break;
         }
 
         if (newOnPage === 0) break; // 중복만 있으면 종료
 
-        // 중간 휴식 (사람처럼)
-        if (results.length >= nextBreakAt && results.length < maxItems) {
+        // 중간 휴식 (사람처럼) — 부하가 큰 상세(fetchDetail) 총 수집량(신규+임박재수집) 기준. 증분 스윕에서 대부분 메타만
+        // 갱신(상세 skip)이면 잘 안 늘어 큰 휴식이 거의 안 뜸(불필요한 대기 방지). 비증분(전량 상세)에선 사실상 종전과 동일.
+        const nDetail = nNewDetail + nRefreshDetail;
+        if (nDetail >= nextBreakAt && results.length < maxItems) {
           const br = rnd(60_000, 150_000);
           console.log(`[courtauction] ☕ 휴식 ${Math.round(br / 1000)}s...`);
           await wait(br);
-          nextBreakAt = results.length + Math.round(rnd(40, 60));
+          nextBreakAt = nDetail + Math.round(rnd(40, 60));
         } else {
           await wait(rnd(3_000, 7_000)); // 다음 페이지 전 텀
         }
@@ -628,7 +703,7 @@ export class CourtAuctionAdapter implements Adapter {
     if (blocked) {
       console.error('[courtauction] IP 차단 — 수집 중단. 로컬 PC/RPi에서 재시도 필요.');
     }
-    console.log(`[courtauction] 완료: ${results.length}건`);
+    console.log(`[courtauction] 완료: ${results.length}건${filter.incremental ? ` (증분: 신규 상세 ${nNewDetail} · 임박 재수집 ${nRefreshDetail} · 기존 메타갱신 ${nKnownSkip}${nDeferred ? ` · 상세 이월 ${nDeferred}` : ''})` : ''}`);
     return results;
   }
 }

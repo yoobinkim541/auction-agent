@@ -11,7 +11,7 @@ export PATH="/home/ubuntu/.local/bin:$PATH"
 NOTIFY="scripts/notify-telegram.sh"   # 경매 전용 봇(GM_TELEGRAM_*) — 스톡봇(.hermes) 공용 스크립트 대체
 echo "[$(date '+%F %T')] === parse start ==="
 
-if npm run crawl -- --source=courtauction; then
+if npm run crawl -- --source=courtauction --incremental --max=6000 --max-new=200 --all-types-courts=B000214,B214804; then
   echo "[$(date '+%F %T')] crawl ok"
 else
   CRC=$?
