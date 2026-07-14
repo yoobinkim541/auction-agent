@@ -59,6 +59,25 @@ export interface Estimate {
  * 대상 면적이 없으면 면적 검증이 불가능하므로 '동일건물/법정동' 매칭이라도 high 로 올리지 않고
  * medium 으로 표기(면적 미검증 상태를 confidence 에 정직하게 반영).
  */
+/**
+ * 시세 sanity 상한(순수) — 저신뢰 실거래 추정이 감정가를 크게 넘으면 이질 평형·건물 매칭 오류일 공산이 큼.
+ *   빌라·단독은 시세>감정이 드물어 감정가 상한, 아파트·오피스텔은 실제 상승 여지 있어 감정가×1.3까지 허용.
+ *   동일건물·면적 매칭 high 신뢰는 예외(진짜 상승 반영). 백테스트: 시세 과대추정이 '고점수→유찰'의 최대 원인.
+ */
+export function capMarketPrice(
+  marketPrice: number | null, confidence: Estimate['confidence'], appraisalValue: number | undefined, propertyType: string,
+): { marketPrice: number | null; confidence: Estimate['confidence']; capped: boolean; overPct: number | null; thinType: boolean } {
+  const thinType = propertyType === 'villa' || propertyType === 'house';
+  if (!marketPrice || confidence === 'high' || !appraisalValue || appraisalValue <= 0) {
+    return { marketPrice, confidence, capped: false, overPct: null, thinType };
+  }
+  const cap = Math.round(appraisalValue * (thinType ? 1.0 : 1.3));
+  if (marketPrice > cap) {
+    return { marketPrice: cap, confidence: 'low', capped: true, overPct: Math.round((marketPrice / appraisalValue) * 100), thinType };
+  }
+  return { marketPrice, confidence, capped: false, overPct: null, thinType };
+}
+
 export function estimateMarketPrice(
   comps: Comparable[],
   opts: { areaM2?: number; dong?: string; buildingName?: string },

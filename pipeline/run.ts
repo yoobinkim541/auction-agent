@@ -17,6 +17,7 @@ import { analyzeRights } from './rights/engine.ts';
 import { analyzeLocation } from './location/index.ts';
 import { scoreListing, maxSafeBid, DEFAULT_SCORE_CONFIG } from './select/score.ts';
 import { computeAcquisitionCost, expectedBid, marketFromSiteComps, classifyLandUseFlags, decideBidForCost } from './cost/acquisition.ts';
+import { loadSaleRatioTable } from './cost/sale-ratio-table.ts';
 import { buildReport } from './report/build.ts';
 import { bandLine, compsStats, fetchCompsWithFallback, regionKey, recentSalesLines, type CompSale } from './predict/comps.ts';
 import { attachGlossary } from './report/glossary.ts';
@@ -195,6 +196,14 @@ async function main() {
     console.log(`[verify] 모드: ${verifyMode}${verifyMode === 'cli' ? ' (Claude Max 구독, 추가 과금 없음)' : ''}`);
   }
 
+  // 실증 낙찰가율 테이블(우리 낙찰결과 기반) — 실거래 낙찰사례 없는 물건의 예상낙찰가 폴백 근거.
+  //   배치 시작 시 1회 로드 → 워커가 재사용(prevMarket과 동일 패턴).
+  const saleRatioTable = await loadSaleRatioTable(query as (sql: string, params?: unknown[]) => Promise<{ property_type: string; address: string; ratio: number }[]>);
+  {
+    const top = saleRatioTable.summary().slice(0, 6).map((s) => `${s.key}:${s.medianPct}%(${s.n})`).join(' · ');
+    console.log(`[analyze] 실증 낙찰가율 테이블 로드 — ${top}`);
+  }
+
   // 마지막 정상 시세 캐시 — MOLIT 쿼터/차단으로 이번 분석이 시세를 못 낼 때 회귀 방지 + 임대 fallback 가동.
   // (query는 상단에서 정적 import — 이전의 중복 동적 import 제거)
   const prevMarket = new Map<number, { price: number; conf: string | null; basis: string | null }>();
@@ -284,8 +293,9 @@ async function main() {
         }
       }
 
-      // 예상낙찰가(감정가×낙찰가율)
-      const eb = expectedBid(listing.appraisalValue, siteMetrics.sameBuildingSaleRatios, siteMetrics.nearbySaleRatios, listing.minBidPrice);
+      // 예상낙찰가(감정가×낙찰가율) — 실거래 낙찰사례 없으면 실증 낙찰가율(종류×지역) 폴백
+      const empRatio = saleRatioTable.lookup(listing.propertyType, listing.address);
+      const eb = expectedBid(listing.appraisalValue, siteMetrics.sameBuildingSaleRatios, siteMetrics.nearbySaleRatios, listing.minBidPrice, empRatio);
       loc.expectedBidPrice = eb.price;
       loc.expectedBidBasis = eb.basis;
 
@@ -328,8 +338,10 @@ async function main() {
       // 2-d) 명도 난이도 엔진 (점유유형·인도명령·비용/기간·협상 브리프)
       loc.eviction = analyzeEviction(rights, listing.areaM2, scanNotes);
 
-      // 3) 최대 안전 입찰가
-      rights.maxSafeBid = maxSafeBid(loc.marketPrice, rights.assumedAmount, 0.1);
+      // 3) 최대 안전 입찰가 — 취득세·명도비·채권 부대비용까지 포함해 목표 마진이 남는 상한
+      const ac = loc.acquisitionCost;
+      rights.maxSafeBid = maxSafeBid(loc.marketPrice, rights.assumedAmount, 0.1,
+        ac ? { taxRatePct: ac.acqTaxRatePct, fixedCosts: ac.moveOutCost + ac.bondCost } : undefined);
 
       // 3-b) 매물별 보고서 + 입찰 전 필수 확인사항(법률문서 스캔)
       const scanText = `${appraisalText} ${siteMetrics.landUseText ?? ''} ${appraisalHighlights.join(' ')}`;

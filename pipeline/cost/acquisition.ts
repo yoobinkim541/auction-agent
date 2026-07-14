@@ -140,18 +140,41 @@ export function marketFromSiteComps(comps: SiteComparable[] | undefined, subject
  * 단, 유찰이 많아 최저가가 크게 낮아진 물건(최저가 > 감정가×비율×1.5 → 과대 추정)은
  * 최저가 × 1.3 으로 대체(현실적 경쟁 오버비드 추정).
  */
-export function expectedBid(appraisalValue: number, sameBuilding?: number[], nearby?: number[], minBidPrice?: number): { price: number | null; ratioPct: number | null; basis: string } {
-  const ratios = (sameBuilding && sameBuilding.length) ? sameBuilding : (nearby && nearby.length ? nearby : []);
+export function expectedBid(
+  appraisalValue: number, sameBuilding?: number[], nearby?: number[], minBidPrice?: number,
+  empirical?: { ratioPct: number; basis: string } | null,
+): { price: number | null; ratioPct: number | null; basis: string } {
+  // 우선순위: 동일건물 실거래 낙찰율 > 인근 실거래 > 실증 낙찰가율(종류×지역 폴백)
+  let ratios: number[];
+  let which: string;
+  let isEmpirical = false;
+  if (sameBuilding && sameBuilding.length) { ratios = sameBuilding; which = `동일건물 낙찰가율 ${sameBuilding.length}건 중앙값`; }
+  else if (nearby && nearby.length) { ratios = nearby; which = `인근 낙찰가율 ${nearby.length}건 중앙값`; }
+  else if (empirical && empirical.ratioPct > 0) { ratios = [empirical.ratioPct]; which = empirical.basis; isEmpirical = true; }
+  else { ratios = []; which = ''; }
   if (!appraisalValue || !ratios.length) return { price: null, ratioPct: null, basis: '' };
   const r = median(ratios)!;
+  const pct = Math.round(r);
   const ratioPrice = Math.round(appraisalValue * r / 100);
-  const which = (sameBuilding && sameBuilding.length) ? `동일건물 낙찰가율 ${ratios.length}건` : `인근 낙찰가율 ${ratios.length}건`;
-  // 최저가가 이미 낮아 비율 기반 예상가가 현실을 벗어난 경우(최저가 × 1.5 이하로 cap)
-  if (minBidPrice && minBidPrice > 0 && ratioPrice > minBidPrice * 1.5) {
-    const cappedPrice = Math.round(minBidPrice * 1.3);
-    return { price: cappedPrice, ratioPct: Math.round(r), basis: `${which} 중앙값 ${Math.round(r)}%(최저가 기준 1.3배로 조정)` };
+
+  // 실증 폴백: 예상낙찰가 = max(최저가, 감정가×실증율). 바닥권 최저가로 끌어내리지 않는다
+  //   (극단적 유찰로 최저가가 감정가 대비 몇%까지 떨어진 물건을 최저가 근처로 추정하면 '가짜 안전마진'이 부활).
+  if (isEmpirical) {
+    const floored = minBidPrice && minBidPrice > ratioPrice;
+    return {
+      price: Math.max(minBidPrice ?? 0, ratioPrice),
+      ratioPct: pct,
+      basis: floored ? `${which} ${pct}%(현 최저가 하한)` : `${which} ${pct}%`,
+    };
   }
-  return { price: ratioPrice, ratioPct: Math.round(r), basis: `${which} 중앙값 ${Math.round(r)}%` };
+
+  // 실거래 comp 기반: 최저가가 이미 낮아 비율 기반 예상가가 현실을 벗어난 경우(최저가 × 1.5 초과 → 최저가×1.3으로 cap)
+  const capped = !!(minBidPrice && minBidPrice > 0 && ratioPrice > minBidPrice * 1.5);
+  return {
+    price: capped ? Math.round(minBidPrice! * 1.3) : ratioPrice,
+    ratioPct: pct,
+    basis: capped ? `${which} ${pct}%(최저가 기준 1.3배로 조정)` : `${which} ${pct}%`,
+  };
 }
 
 /**

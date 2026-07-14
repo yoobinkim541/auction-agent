@@ -132,8 +132,19 @@ export function scoreListing(
   };
 }
 
-/** 최대 안전 입찰가 = 시세 − 인수금액 − 여유마진(시세의 marginPct) */
-export function maxSafeBid(marketPrice: number | null, assumedAmount: number, marginPct = 0.1): number | null {
+/**
+ * 최대 안전 입찰가 — 이 값 이하로 낙찰하면 취득비용까지 포함해도 목표 마진(marginPct)이 남는 상한.
+ *   총취득비용 = 입찰가 + 취득세(입찰가×세율) + 명도비 + 채권 + 인수금액 이므로,
+ *   시세×(1−마진) = B×(1+세율) + 고정비 + 인수금액 을 B에 대해 푼다.
+ *   costs 미제공 시(이전 호출부 호환) 취득세·부대비 무시한 종전 근사식.
+ */
+export function maxSafeBid(
+  marketPrice: number | null, assumedAmount: number, marginPct = 0.1,
+  costs?: { taxRatePct: number; fixedCosts: number },
+): number | null {
   if (marketPrice === null) return null;
-  return Math.max(0, Math.round(marketPrice * (1 - marginPct) - assumedAmount));
+  const target = marketPrice * (1 - marginPct) - assumedAmount;
+  if (!costs) return Math.max(0, Math.round(target));
+  const bid = (target - costs.fixedCosts) / (1 + costs.taxRatePct / 100);
+  return Math.max(0, Math.round(bid));
 }
