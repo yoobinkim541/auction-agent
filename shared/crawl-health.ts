@@ -46,13 +46,14 @@ const toIso = (d: string | Date | null): string | null => {
  */
 export function evaluateCrawlHealth(rows: CrawlRunRow[], nowMs: number, maxAgeHours = 48): CrawlHealth {
   const sorted = [...rows].sort((a, b) => (toMs(b.started_at) ?? 0) - (toMs(a.started_at) ?? 0));
+  const finished = sorted.filter((r) => r.status !== 'running' && r.finished_at != null);
 
-  const lastHarvest = sorted.find((r) => (r.n_found ?? 0) > 0) ?? null;
+  const lastHarvest = finished.find((r) => (r.n_found ?? 0) > 0) ?? null;
   const lastHarvestMs = lastHarvest ? toMs(lastHarvest.started_at) : null;
   const hoursSinceHarvest = lastHarvestMs == null ? null : (nowMs - lastHarvestMs) / 3_600_000;
 
   let recentEmptyStreak = 0;
-  for (const r of sorted) {
+  for (const r of finished) {
     if ((r.n_found ?? 0) > 0) break;
     recentEmptyStreak++;
   }
@@ -67,8 +68,9 @@ export function evaluateCrawlHealth(rows: CrawlRunRow[], nowMs: number, maxAgeHo
 
   const reasons: string[] = [];
   if (sorted.length === 0) reasons.push('크롤런 기록 없음');
+  else if (finished.length === 0) reasons.push('완료된 크롤런 기록 없음');
   if (hoursSinceHarvest == null) {
-    if (sorted.length) reasons.push('실수집(n_found>0) 기록이 전혀 없음');
+    if (finished.length) reasons.push('실수집(n_found>0) 기록이 전혀 없음');
   } else if (hoursSinceHarvest > maxAgeHours) {
     reasons.push(`마지막 실수집 후 ${Math.round(hoursSinceHarvest)}h 경과(>${maxAgeHours}h)`);
   }

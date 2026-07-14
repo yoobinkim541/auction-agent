@@ -12,24 +12,32 @@
 import 'dotenv/config';
 import { spawnSync } from 'node:child_process';
 import { pool } from '../shared/db.ts';
-import { fetchEnrichmentCandidates, upsertDeonakTenants } from '../shared/db.ts';
-import { openLoggedInPage, lookupCaseDetail, recordBlock, SiteBlockedError, SessionExpiredError } from '../crawler/adapters/deonakchal.ts';
+import { fetchEnrichmentCandidates, fetchTargetDeonakDetailCandidates, replaceListingDocs, upsertDeonakTenants } from '../shared/db.ts';
+import { DEONAKCHAL_BASE_URL, docsFromDetail, openLoggedInPage, lookupCaseDetail, recordBlock, SiteBlockedError, SessionExpiredError } from '../crawler/adapters/deonakchal.ts';
 import { crawlFetch } from '../crawler/proxy.ts';
+import { classifyEgress } from '../crawler/egress.ts';
 
 const rnd = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.round(ms)));
 
-/** egress가 집 IP(≠ VM 직접, 터널 경유)인지 검증. 프록시 미설정/터널 다운이면 false. */
+/** egress가 등록 집 IP 또는 주거용 ISP인지 검증. 프록시 미설정/터널 다운/데이터센터면 false. */
 async function verifyHomeEgress(): Promise<boolean> {
   if (!process.env.CRAWL_PROXY) { console.error('[enrich] ⛔ CRAWL_PROXY 미설정 — 집 IP 프록시 필수. 중단.'); return false; }
   try {
-    const egress = (await (await crawlFetch('https://api.ipify.org', {})).text()).trim();
+    const profile = (await (await crawlFetch('https://ipinfo.io/json', {})).json()) as { ip?: string; org?: string };
+    const egress = (profile.ip ?? '').trim();
     const direct = (await (await fetch('https://api.ipify.org', { signal: AbortSignal.timeout(8000) })).text()).trim();
     if (!egress || egress === direct) {
       console.error(`[enrich] ⛔ egress(${egress || '실패'})가 VM 직접(${direct})과 동일 = 터널 미동작. 중단.`);
       return false;
     }
-    console.log(`[enrich] ✅ egress=집 IP(${egress}), VM직접(${direct}) — 안전.`);
+    const kind = classifyEgress(profile);
+    if (kind !== 'home') {
+      console.error(`[enrich] ⛔ egress(${egress} · ${profile.org ?? 'org 미상'})가 등록 집 IP/주거용 ISP로 확인되지 않음(${kind}). 중단.`);
+      console.error('[enrich] CRAWL_HOME_IPS에 실제 집 회선 IP를 등록하면 정확 검증합니다. 데이터센터 프록시는 허용하지 않습니다.');
+      return false;
+    }
+    console.log(`[enrich] ✅ egress=집/주거용 IP(${egress} · ${profile.org ?? 'org 미상'}), VM직접(${direct}) — 안전.`);
     return true;
   } catch (e) { console.error('[enrich] ⛔ egress 검증 실패 — 중단:', e instanceof Error ? e.message : e); return false; }
 }
@@ -37,11 +45,22 @@ async function verifyHomeEgress(): Promise<boolean> {
 async function main(): Promise<void> {
   const limitArg = process.argv.find((a) => a.startsWith('--limit='));
   const limit = Math.max(1, Math.min(200, limitArg ? parseInt(limitArg.split('=')[1] ?? '', 10) || 30 : 30));
+  const targetLimitArg = process.argv.find((a) => a.startsWith('--target-limit='));
+  const targetLimit = Math.max(0, Math.min(500, targetLimitArg ? parseInt(targetLimitArg.split('=')[1] ?? '', 10) || 200 : 200));
 
   if (!(await verifyHomeEgress())) { await pool().end(); process.exitCode = 1; return; }
 
-  const candidates = await fetchEnrichmentCandidates(limit);
-  console.log(`[enrich] 보강 후보 ${candidates.length}건 (통과+courtauction+점유미상, ★관심·고점수 우선)`);
+  const targetCandidates = targetLimit > 0 ? await fetchTargetDeonakDetailCandidates(targetLimit) : [];
+  const regularCandidates = await fetchEnrichmentCandidates(limit);
+  const seen = new Set<string>();
+  const candidates = [...targetCandidates, ...regularCandidates].filter((c) => {
+    const key = `${c.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const targetIds = new Set(targetCandidates.map((c) => c.id));
+  console.log(`[enrich] 보강 후보 ${candidates.length}건 (타겟 상세 ${targetCandidates.length} + 일반 ${regularCandidates.length})`);
   if (!candidates.length) { await pool().end(); return; }
 
   const session = await openLoggedInPage(); // 쿨다운 중이면 null
@@ -61,13 +80,22 @@ async function main(): Promise<void> {
           console.log(`[enrich] · ${c.case_no} (${c.court}) — deonakchal 미발견`);
         } else if (res.detail.tenants.length) {
           await upsertDeonakTenants(c.id, c.case_no, res.detail.tenants, true);
+          if (targetIds.has(c.id)) {
+            const sourceUrl = `${DEONAKCHAL_BASE_URL}/auction/view.html?product_id=${res.productId}`;
+            await replaceListingDocs(c.id, docsFromDetail(c.case_no, c.item_no, res.detail, [], sourceUrl), ['registry_summary', 'sale_statement', 'appraisal_report', 'site_metrics']);
+          }
           enrichedIds.push(c.id);
           found++;
-          console.log(`[enrich] ✓ ${c.case_no} (${c.court}) 임차인 ${res.detail.tenants.length}명 보강 (product ${res.productId})`);
+          console.log(`[enrich] ✓ ${c.case_no} (${c.court}) ${targetIds.has(c.id) ? '타겟 상세+' : ''}임차인 ${res.detail.tenants.length}명 보강 (product ${res.productId})`);
         } else {
           await upsertDeonakTenants(c.id, c.case_no, [], true); // 찾았으나 임차인 없음(소유자점유/공실) — 재시도 불필요
+          if (targetIds.has(c.id)) {
+            const sourceUrl = `${DEONAKCHAL_BASE_URL}/auction/view.html?product_id=${res.productId}`;
+            await replaceListingDocs(c.id, docsFromDetail(c.case_no, c.item_no, res.detail, [], sourceUrl), ['registry_summary', 'sale_statement', 'appraisal_report', 'site_metrics']);
+            enrichedIds.push(c.id);
+          }
           noTenant++;
-          console.log(`[enrich] ○ ${c.case_no} (${c.court}) — 찾음, 임차인 없음(소유자점유/공실)`);
+          console.log(`[enrich] ○ ${c.case_no} (${c.court}) — 찾음, ${targetIds.has(c.id) ? '타겟 상세 저장 · ' : ''}임차인 없음(소유자점유/공실)`);
         }
       } catch (e) {
         if (e instanceof SiteBlockedError) {

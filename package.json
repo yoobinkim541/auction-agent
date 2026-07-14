@@ -14,6 +14,7 @@
     "bid:prep": "tsx scripts/bid-prep.ts",
     "route": "tsx scripts/field-route.ts",
     "eval:report": "tsx scripts/eval-report.ts",
+    "eval:calibrate": "tsx scripts/eval-report.ts",
     "analyze": "tsx pipeline/run.ts",
     "ingest:legal": "tsx pipeline/legal/ingest.ts",
     "eval": "tsx pipeline/eval/run.ts",

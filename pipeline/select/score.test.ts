@@ -108,6 +108,16 @@ describe('maxSafeBid', () => {
   it('시세 없으면 null', () => {
     expect(maxSafeBid(null, 0)).toBeNull();
   });
+  it('취득비용 반영 시 상한이 낮아짐(과다응찰 방지)', () => {
+    // 목표 9억 = B×(1+0.046) + 고정비 500만 → B = (9억-500만)/1.046 ≈ 8.55억 < 9억
+    const withCost = maxSafeBid(10 * 억, 0, 0.1, { taxRatePct: 4.6, fixedCosts: 5_000_000 })!;
+    expect(withCost).toBeLessThan(9 * 억);
+    expect(withCost).toBe(Math.round((9 * 억 - 5_000_000) / 1.046));
+  });
+  it('취득비용 반영 + 인수금액 동시 차감', () => {
+    const v = maxSafeBid(10 * 억, 2 * 억, 0.1, { taxRatePct: 4.6, fixedCosts: 5_000_000 })!;
+    expect(v).toBe(Math.round((9 * 억 - 2 * 억 - 5_000_000) / 1.046));
+  });
 });
 
 it('기본 설정 sanity', () => {

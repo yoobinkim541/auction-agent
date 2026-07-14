@@ -564,6 +564,8 @@ table.mini td.num { text-align: right; font-family: var(--mono); }
 .srclink { margin: 4px 0 0; font-size: 12.5px; }
 .srclink a { color: #6ea8fe; text-decoration: none; }
 .srclink a:hover { text-decoration: underline; }
+.srclinks { margin: 4px 0 0; display: grid; gap: 2px; }
+.srclinks .srclink { margin: 0; }
 .court-notice { margin: 8px 0; padding: 8px 10px; background: rgba(255,180,0,0.1); border: 1px solid #b8860b; border-radius: 6px; font-size: 12.5px; line-height: 1.5; color: #e8c840; }
 .court-notice a { color: #e8c840; text-decoration: underline; }
 .court-notice-soft { background: rgba(90,160,255,0.1); border-color: #3a6ea5; color: #9fc4f0; }

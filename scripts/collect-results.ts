@@ -3,16 +3,31 @@
  *  1차(활성/예정): 진행물건 상세(pgj15B) gdsDspslDxdyLst — 유찰이력·진행 차기기일.
  *  2차(과거/종결 소급): 경매사건검색(pgj15A) — 종결 후에도 낙찰가·결과(현 D+ 등 미수집분). docs/courtauction-result-endpoint.md.
  * 매각된 사건은 진행물건 상세에서 곧 사라지므로 매일 폴링 + 2차 소급으로 보완. (응찰자수 미제공 — 관심수 proxy.)
- * 사용: npm run collect:results   (RESULT_DAYS_BACK 5 · RESULT_DAYS_FWD 21 · RESULT_LIMIT 300 · RESULT_BACKFILL_LIMIT 60)
+ * 3차(Phase2): gm_outcome_eval 미매칭 스냅샷을 직접 겨냥해 복기 데이터 missRate를 낮춘다.
+ *             진행물건 상세를 먼저 보고, 종결/미노출 사건은 경매사건검색으로 보완한다.
+ * 사용: npm run collect:results   (RESULT_DAYS_BACK 5 · RESULT_DAYS_FWD 21 · RESULT_LIMIT 300 · RESULT_BACKFILL_LIMIT 60 · RESULT_EVAL_BACKFILL_LIMIT 300)
  */
 import 'dotenv/config';
 import { query, pool } from '../shared/db.ts';
 import {
-  collectSaleResults, collectCaseResults, courtCodeByName, queryableCourtNames,
+  collectSaleResults, collectCaseResults, courtCodeByName,
   nextSaleDate, failedRoundCount, type SaleResultRound,
 } from '../crawler/adapters/courtauction.ts';
+import { normalizeCaseNo } from '../crawler/normalize.ts';
 
 interface Counters { upserted: number; sold: number; refreshed: number }
+interface DbKey { caseNo: string; itemNo: string }
+
+function toCourtCaseNo(caseNo: string): string {
+  const normalized = normalizeCaseNo(caseNo);
+  const m = normalized.match(/^(20\d\d)-(\d+)$/);
+  return m ? `${m[1]}타경${m[2]}` : normalized;
+}
+
+function toCourtItemNo(itemNo: string | null | undefined): string {
+  const n = parseInt(String(itemNo ?? '').trim(), 10);
+  return Number.isFinite(n) && n > 0 ? String(n) : '1';
+}
 
 /** 회차 결과 upsert + 유찰 차기기일 sale_date 백필(변경 있을 때만). 1·2차 공용. */
 async function recordRounds(caseNo: string, itemNo: string, court: string | null, rounds: SaleResultRound[], today: string, ctr: Counters): Promise<void> {
@@ -42,12 +57,20 @@ async function recordRounds(caseNo: string, itemNo: string, court: string | null
 
 async function main(): Promise<void> {
   const today = new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10); // KST
-  const courts = queryableCourtNames();
   type Row = { case_no: string; item_no: string; court: string; sale_date: string };
-  const toCases = (rows: Row[]) => ({
-    courtOf: new Map<string, string>(rows.map((r) => [`${r.case_no}|${r.item_no}`, r.court])),
-    cases: rows.map((r) => ({ caseNo: r.case_no, cortOfcCd: courtCodeByName(r.court) ?? '', itemNo: r.item_no })).filter((c) => c.cortOfcCd),
-  });
+  const toCases = (rows: Row[]) => {
+    const courtOf = new Map<string, string>();
+    const dbKeyOf = new Map<string, DbKey>();
+    const cases = rows.map((r) => {
+      const caseNo = toCourtCaseNo(r.case_no);
+      const itemNo = toCourtItemNo(r.item_no);
+      const key = `${caseNo}|${itemNo}`;
+      courtOf.set(key, r.court);
+      dbKeyOf.set(key, { caseNo: r.case_no, itemNo: r.item_no });
+      return { caseNo, cortOfcCd: courtCodeByName(r.court) ?? '', itemNo };
+    }).filter((c) => c.cortOfcCd);
+    return { courtOf, dbKeyOf, cases };
+  };
 
   // ── 1차: 활성/예정 (진행물건 상세 pgj15B) ──
   const daysBack = Number(process.env.RESULT_DAYS_BACK) || 5;
@@ -56,16 +79,17 @@ async function main(): Promise<void> {
   const a = toCases(await query<Row>(
     `select distinct l.case_no, coalesce(l.item_no,'1') item_no, l.court, l.sale_date
        from gm_listings l
-      where l.court = any($1::text[]) and l.sale_date >= current_date - $2::int and l.sale_date <= current_date + $3::int
+      where l.sale_date >= current_date - $1::int and l.sale_date <= current_date + $2::int
         and not exists (select 1 from gm_auction_results r where r.case_no=l.case_no and r.item_no=coalesce(l.item_no,'1') and r.sold)
-      order by l.sale_date limit $4`,
-    [courts, daysBack, daysFwd, limit],
+      order by l.sale_date limit $3`,
+    [daysBack, daysFwd, limit],
   ));
   console.log(`[collect-results] 1차(활성) 대상 ${a.cases.length}건…`);
   const c1: Counters = { upserted: 0, sold: 0, refreshed: 0 };
   await collectSaleResults(a.cases, (key, rounds) => {
     const [caseNo, itemNo] = key.split('|');
-    return recordRounds(caseNo!, itemNo!, a.courtOf.get(key) ?? null, rounds, today, c1);
+    const dbKey = a.dbKeyOf.get(key) ?? { caseNo: caseNo!, itemNo: itemNo! };
+    return recordRounds(dbKey.caseNo, dbKey.itemNo, a.courtOf.get(key) ?? null, rounds, today, c1);
   });
   console.log(`[collect-results] 1차: upsert ${c1.upserted} · 매각 ${c1.sold} · 기일갱신 ${c1.refreshed}`);
 
@@ -74,20 +98,47 @@ async function main(): Promise<void> {
   const b = toCases(await query<Row>(
     `select distinct l.case_no, coalesce(l.item_no,'1') item_no, l.court, l.sale_date
        from gm_listings l
-      where l.court = any($1::text[]) and l.source='courtauction' and l.sale_date < current_date
+      where l.source='courtauction' and l.sale_date < current_date
         and not exists (select 1 from gm_auction_results r
            where r.case_no=l.case_no and r.item_no=coalesce(l.item_no,'1')
              and (r.sold or r.captured_at > now() - interval '6 days'))
-      order by l.sale_date desc limit $2`,
-    [courts, backfillLimit],
+      order by l.sale_date desc limit $1`,
+    [backfillLimit],
   ));
   console.log(`[collect-results] 2차(소급 pgj15A) 대상 ${b.cases.length}건…`);
   const c2: Counters = { upserted: 0, sold: 0, refreshed: 0 };
   await collectCaseResults(b.cases, (key, rounds) => {
     const [caseNo, itemNo] = key.split('|');
-    return recordRounds(caseNo!, itemNo!, b.courtOf.get(key) ?? null, rounds, today, c2);
+    const dbKey = b.dbKeyOf.get(key) ?? { caseNo: caseNo!, itemNo: itemNo! };
+    return recordRounds(dbKey.caseNo, dbKey.itemNo, b.courtOf.get(key) ?? null, rounds, today, c2);
   });
   console.log(`[collect-results] 2차: upsert ${c2.upserted} · 매각 ${c2.sold} · 기일갱신 ${c2.refreshed}`);
+
+  // ── 3차: Phase2 복기 미매칭 스냅샷 직접 소급 ──
+  const evalBackfillLimit = Number(process.env.RESULT_EVAL_BACKFILL_LIMIT) || 300;
+  const e = toCases(await query<Row>(
+    `select distinct case_no, item_no, court, sale_date
+       from gm_outcome_eval
+      where sale_date < current_date and matched = false
+      order by sale_date desc limit $1`,
+    [evalBackfillLimit],
+  ));
+  console.log(`[collect-results] 3차(Phase2 미매칭) 대상 ${e.cases.length}건…`);
+  const c3: Counters = { upserted: 0, sold: 0, refreshed: 0 };
+  const activeRounds = await collectSaleResults(e.cases, (key, rounds) => {
+    const [caseNo, itemNo] = key.split('|');
+    const dbKey = e.dbKeyOf.get(key) ?? { caseNo: caseNo!, itemNo: itemNo! };
+    return recordRounds(dbKey.caseNo, dbKey.itemNo, e.courtOf.get(key) ?? null, rounds, today, c3);
+  });
+  const closedCases = e.cases.filter((c) => (activeRounds.get(`${c.caseNo}|${c.itemNo}`)?.length ?? 0) === 0);
+  if (closedCases.length) {
+    await collectCaseResults(closedCases, (key, rounds) => {
+      const [caseNo, itemNo] = key.split('|');
+      const dbKey = e.dbKeyOf.get(key) ?? { caseNo: caseNo!, itemNo: itemNo! };
+      return recordRounds(dbKey.caseNo, dbKey.itemNo, e.courtOf.get(key) ?? null, rounds, today, c3);
+    });
+  }
+  console.log(`[collect-results] 3차: active ${activeRounds.size} · closed ${closedCases.length} · upsert ${c3.upserted} · 매각 ${c3.sold} · 기일갱신 ${c3.refreshed}`);
   await pool().end();
 }
 

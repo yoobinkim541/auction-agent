@@ -32,9 +32,13 @@ export interface ScrapedListing {
   docs?: ListingDoc[];
 }
 
+export interface CrawlSink {
+  onListing(scraped: ScrapedListing): Promise<void> | void;
+}
+
 export interface Adapter {
   name: Listing['source'];
-  crawl(filter: CrawlFilter): Promise<ScrapedListing[]>;
+  crawl(filter: CrawlFilter, sink?: CrawlSink): Promise<ScrapedListing[]>;
 }
 
 export function sleep(ms: number): Promise<void> {

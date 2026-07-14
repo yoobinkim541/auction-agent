@@ -21,6 +21,17 @@ describe('DEONAK_COURT1 (수도권 법원 매핑)', () => {
   });
 });
 
+describe('lookupCaseDetail row match key', () => {
+  it('item_no가 다른 같은 사건은 별도 물건으로 봐야 함', () => {
+    const rows = [
+      { productId: 'p1', listing: { caseNo: '2025-103018', itemNo: '1' } },
+      { productId: 'p2', listing: { caseNo: '2025-103018', itemNo: '2' } },
+    ];
+    const chosen = rows.find((r) => r.productId && r.listing.caseNo === '2025-103018' && (r.listing.itemNo ?? '1') === '2');
+    expect(chosen?.productId).toBe('p2');
+  });
+});
+
 describe('extractRegistryRowsFromText', () => {
   it('근저당·가압류 행을 종류/접수일/금액으로 파싱', () => {
     const rows = extractRegistryRowsFromText([

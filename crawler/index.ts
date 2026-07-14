@@ -15,15 +15,15 @@
  */
 import 'dotenv/config';
 import type { PropertyType } from '../shared/types.ts';
-import type { Adapter, CrawlFilter } from './adapters/types.ts';
+import type { Adapter, CrawlFilter, ScrapedListing } from './adapters/types.ts';
 import { DeonakchalAdapter, SiteBlockedError, inspectAndDump } from './adapters/deonakchal.ts';
 import { CourtAuctionAdapter, CourtAuctionBlockedError } from './adapters/courtauction.ts';
 import { upsertListing, upsertListingDoc, deleteListingDocs, startCrawlRun, finishCrawlRun, fetchListingDocs, recordDocChange, query } from '../shared/db.ts';
 import { changedDocTypes } from '../shared/doc-fingerprint.ts';
 
 const DEFAULT_FILTER: CrawlFilter = {
-  regions: ['서울', '경기', '인천'],
-  propertyTypes: ['apartment', 'villa', 'officetel'] as PropertyType[],
+  regions: ['서울', '경기'],
+  propertyTypes: [] as PropertyType[],
   maxItems: 1000,
 };
 
@@ -36,26 +36,43 @@ function resolveProxies(): (string | undefined)[] {
   return [undefined]; // 프록시 없이 직접 연결
 }
 
+async function saveScrapedListing(s: ScrapedListing): Promise<void> {
+  const id = await upsertListing(s.listing);
+  if (s.docs?.length) {
+    // 문서 내용 변경 감지(발품절감 ⑤) — 기존 문서가 있고 내용이 달라졌으면 이력 기록(★알림용).
+    try {
+      const prev = (await fetchListingDocs(id)).map((d) => ({ docType: d.doc_type, parsedJson: d.parsed_json }));
+      const changed = prev.length ? changedDocTypes(prev, s.docs.map((d) => ({ docType: d.docType, parsedJson: d.parsedJson }))) : [];
+      if (changed.length) await recordDocChange(id, s.listing.caseNo, changed);
+    } catch (e) {
+      console.warn(`[docs] 변경 감지 실패(무시) ${s.listing.caseNo}:`, e instanceof Error ? e.message : e);
+    }
+    await deleteListingDocs(id);
+    for (const doc of s.docs) await upsertListingDoc(id, doc);
+  }
+}
+
 async function runAdapter(adapter: Adapter, filter: CrawlFilter) {
-  const scraped = await adapter.crawl(filter);
+  let streamed = false;
+  let nFound = 0;
   let nNew = 0;
-  for (const s of scraped) {
-    const id = await upsertListing(s.listing);
-    nNew++;
-    if (s.docs?.length) {
-      // 문서 내용 변경 감지(발품절감 ⑤) — 기존 문서가 있고 내용이 달라졌으면 이력 기록(★알림용).
-      try {
-        const prev = (await fetchListingDocs(id)).map((d) => ({ docType: d.doc_type, parsedJson: d.parsed_json }));
-        const changed = prev.length ? changedDocTypes(prev, s.docs.map((d) => ({ docType: d.docType, parsedJson: d.parsedJson }))) : [];
-        if (changed.length) await recordDocChange(id, s.listing.caseNo, changed);
-      } catch (e) {
-        console.warn(`[docs] 변경 감지 실패(무시) ${s.listing.caseNo}:`, e instanceof Error ? e.message : e);
-      }
-      await deleteListingDocs(id);
-      for (const doc of s.docs) await upsertListingDoc(id, doc);
+  const scraped = await adapter.crawl(filter, {
+    onListing: async (s) => {
+      streamed = true;
+      await saveScrapedListing(s);
+      nFound++;
+      nNew++;
+      if (nFound % 100 === 0) console.log(`[crawl] 중간 저장 ${nFound}건`);
+    },
+  });
+  if (!streamed) {
+    for (const s of scraped) {
+      await saveScrapedListing(s);
+      nFound++;
+      nNew++;
     }
   }
-  return { nFound: scraped.length, nNew };
+  return { nFound, nNew };
 }
 
 async function main() {

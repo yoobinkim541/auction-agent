@@ -5,7 +5,7 @@ const H = 3_600_000;
 const NOW = Date.parse('2026-06-25T12:00:00Z');
 const run = (over: Partial<CrawlRunRow>): CrawlRunRow => ({
   id: 1, source: 'deonakchal', status: 'ok', n_found: 0, n_new: 0,
-  started_at: new Date(NOW).toISOString(), finished_at: null, ...over,
+  started_at: new Date(NOW).toISOString(), finished_at: new Date(NOW).toISOString(), ...over,
 });
 
 describe('evaluateCrawlHealth', () => {
@@ -47,6 +47,17 @@ describe('evaluateCrawlHealth', () => {
     const dn = h.bySource.find((s) => s.source === 'deonakchal')!;
     expect(dn.lastStatus).toBe('blocked'); // 최신 런 기준
     expect(h.bySource.find((s) => s.source === 'courtauction')!.lastFound).toBe(0);
+  });
+
+  it('진행 중인 running 0건은 연속 0건 실패로 세지 않음', () => {
+    const rows = [
+      run({ id: 9, source: 'courtauction', status: 'running', n_found: 0, started_at: new Date(NOW).toISOString(), finished_at: null }),
+      run({ id: 1, source: 'courtauction', status: 'ok', n_found: 380, started_at: new Date(NOW - 1 * H).toISOString() }),
+    ];
+    const h = evaluateCrawlHealth(rows, NOW, 48);
+    expect(h.healthy).toBe(true);
+    expect(h.recentEmptyStreak).toBe(0);
+    expect(h.bySource.find((s) => s.source === 'courtauction')!.lastStatus).toBe('running');
   });
 
   it('기록 없음 → 비정상', () => {

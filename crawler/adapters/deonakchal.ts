@@ -19,12 +19,14 @@ import type {
 import type { Adapter, CrawlFilter, ScrapedListing } from './types.ts';
 import { sleep } from './types.ts';
 import {
-  parseKoreanMoney, parseKoreanDate, mapPropertyType, mapRightKind,
+  parseKoreanMoney, parseKoreanDate, mapPropertyType, mapRightKind, extractLabeledKoreanMoney,
   normalizeCaseNo, extractAmountFromText,
 } from '../normalize.ts';
-import { parseResultRowText, type ParsedRow } from './parse-row.ts';
+import { parseResultRowText, normalizeItemNo, type ParsedRow } from './parse-row.ts';
+import { classifyEgress } from '../egress.ts';
 
 const BASE = 'https://www.xn--b20bu5cuwtpue8ui.com'; // 더낙찰옥션.com (punycode)
+export const DEONAKCHAL_BASE_URL = BASE;
 const AUTH_DIR = '.auth';
 const STORAGE = path.join(AUTH_DIR, 'deonakchal.json');
 const UA = 'gyeongmae-agent/0.1 (personal research; contact: owner)';
@@ -70,8 +72,8 @@ async function warnIfDatacenterEgress(): Promise<void> {
     const res = await fetch('https://ipinfo.io/json', { signal: AbortSignal.timeout(4000) });
     if (!res.ok) return;
     const j = (await res.json()) as { ip?: string; org?: string };
-    if (/oracle|amazon|aws|google|gcp|microsoft|azure|ovh|hetzner|digitalocean|linode|vultr|cloud|hosting|datacenter|data center/i.test(j.org ?? '')) {
-      console.warn(`[deonakchal] ⚠️ egress IP(${j.ip ?? '?'} · ${j.org})가 데이터센터/클라우드망입니다.`);
+    if (classifyEgress(j) !== 'home') {
+      console.warn(`[deonakchal] ⚠️ egress IP(${j.ip ?? '?'} · ${j.org})가 등록 집 IP/주거용 ISP로 확인되지 않습니다.`);
       console.warn('[deonakchal] ⚠️ 개인 구독 계정을 클라우드 IP로 로그인하면 비정상 로그인으로 계정이 플래그될 수 있습니다 — 주거용 회선 권장. (무시: CRAWL_ALLOW_DATACENTER=true)');
     }
   } catch { /* 네트워크 실패 무시 */ }
@@ -249,15 +251,8 @@ async function scrapeOne(page: Page, c: ParsedRow): Promise<ScrapedListing> {
   if (c.productId) {
     // 상세 데이터를 docs·listing에 적용하는 헬퍼 — 세션만료 재시도 시 중복 방지
     const applyDetail = (d: DetailData) => {
-      const allNotes = [...c.notes, ...d.notes];
       listing = { ...listing, sourceUrl: `${BASE}/auction/view.html?product_id=${c.productId}` };
-      docs.push({
-        caseNo: listing.caseNo, docType: 'registry_summary',
-        parsedJson: { registry: d.registry, siteAssumedAmount: d.siteAssumedAmount, statementSeniorDate: extractSeniorDate(allNotes) },
-      });
-      docs.push({ caseNo: listing.caseNo, docType: 'sale_statement', parsedJson: { tenants: d.tenants, notes: allNotes } });
-      if (d.appraisal) docs.push({ caseNo: listing.caseNo, docType: 'appraisal_report', parsedJson: d.appraisal });
-      if (d.siteMetrics && Object.keys(d.siteMetrics).length) docs.push({ caseNo: listing.caseNo, docType: 'site_metrics', parsedJson: d.siteMetrics });
+      docs.push(...docsFromDetail(listing.caseNo, listing.itemNo, d, c.notes, listing.sourceUrl));
     };
     try {
       applyDetail(await parseDetail(page, c.productId));
@@ -325,8 +320,9 @@ export class DeonakchalAdapter implements Adapter {
           if (rows.length === 0) break;
           let newOnPage = 0;
           for (const r of rows) {
-            if (seen.has(r.listing.caseNo)) continue;
-            seen.add(r.listing.caseNo);
+            const rowKey = `${r.listing.caseNo}|${r.listing.itemNo ?? '1'}`;
+            if (seen.has(rowKey)) continue;
+            seen.add(rowKey);
             newOnPage++;
             if (filter.propertyTypes.length && !filter.propertyTypes.includes(r.listing.propertyType)) continue;
             if (filter.regions.length && !filter.regions.some((rg) => r.listing.address.includes(rg))) continue;
@@ -411,6 +407,21 @@ export interface DetailData {
   siteAssumedAmount: number | null; // 사이트 예상배당의 '낙찰자인수' 합계(미배당금액)
   appraisal: { text: string; highlights: string[]; zoning?: string; gongPrice?: number; landPrice?: number } | null; // 감정평가요항 + 공시가격
   siteMetrics: SiteMetrics; // 역세권·매각기일·동일건물 실거래·매각가율·표제부·명도비·토지규제·행정기관
+}
+
+export function docsFromDetail(caseNo: string, itemNo: string | undefined, detail: DetailData, extraNotes: string[] = [], sourceUrl?: string): ListingDoc[] {
+  const allNotes = [...extraNotes, ...detail.notes];
+  const sourceMeta = sourceUrl ? { sourceUrl } : {};
+  const docs: ListingDoc[] = [
+    {
+      caseNo, itemNo, docType: 'registry_summary',
+      parsedJson: { source: 'deonakchal', ...sourceMeta, registry: detail.registry, siteAssumedAmount: detail.siteAssumedAmount, statementSeniorDate: extractSeniorDate(allNotes) },
+    },
+    { caseNo, itemNo, docType: 'sale_statement', parsedJson: { source: 'deonakchal', ...sourceMeta, tenants: detail.tenants, notes: allNotes } },
+  ];
+  if (detail.appraisal) docs.push({ caseNo, itemNo, docType: 'appraisal_report', parsedJson: { source: 'deonakchal', ...sourceMeta, ...detail.appraisal } });
+  if (detail.siteMetrics && Object.keys(detail.siteMetrics).length) docs.push({ caseNo, itemNo, docType: 'site_metrics', parsedJson: { source: 'deonakchal', ...sourceMeta, ...detail.siteMetrics } });
+  return docs;
 }
 
 const KMONEY = (s?: string | null): number | undefined => parseKoreanMoney(s ?? undefined) ?? undefined;
@@ -629,7 +640,7 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
     tenants.push({
       name: row[1],
       moveInDate: moveIn, occupancyDate: moveIn, fixedDate: fixed,
-      deposit: parseKoreanMoney(joined.match(/보증금\s*:?\s*([\d,]+)/)?.[1]) ?? 0,
+      deposit: extractLabeledKoreanMoney(joined, '보증금', ['월차임', '차임', '전입일자', '확정일자', '배당요구', '점유', '대항력']) ?? 0,
       demandedDistribution: !!demand, demandDate: demand, occupied: true,
       raw: joined,
     });
@@ -744,7 +755,8 @@ export async function lookupCaseDetail(
   // deonakchal 행 사건번호는 "연도-번호"(예: 2025-103018) — courtauction "2025타경103018"과 형식이 달라
   // normalizeCaseNo(공백제거만)로는 안 맞음. court1으로 이미 법원 필터되므로 연도-번호 일치 행을 고른다.
   const wantDash = `${year}-${num}`;
-  const chosen = rows.find((r) => r.productId && r.listing.caseNo === wantDash);
+  const wantItemNo = normalizeItemNo(itemNo);
+  const chosen = rows.find((r) => r.productId && r.listing.caseNo === wantDash && (r.listing.itemNo ?? '1') === wantItemNo);
   if (!chosen) return null;
   try {
     return { productId: chosen.productId!, detail: await parseDetail(page, chosen.productId!) };

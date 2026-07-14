@@ -61,7 +61,7 @@ const SORT_DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
 
 export default function App() {
   const { rows, setRows, loading, err, lastCrawl, load } = useListings();
-  const [onlyPassed, setOnlyPassed] = useState<boolean>(() => loadUIState().onlyPassed ?? true);
+  const [onlyPassed, setOnlyPassed] = useState<boolean>(() => loadUIState().onlyPassed ?? false);
   const [onlyFavorite, setOnlyFavorite] = useState(false);
   const [onlyMultiRound, setOnlyMultiRound] = useState<boolean>(() => loadUIState().onlyMultiRound ?? false);
   const [onlyZeroPi, setOnlyZeroPi] = useState(false);
@@ -514,7 +514,7 @@ export default function App() {
       )}
 
       {viewMode === 'list' && !listDone && (
-        <div ref={sentinelRef} className="list-more">{visible.length}/{listTotal}건 표시 — 스크롤하면 더 불러옵니다</div>
+        <div ref={sentinelRef} className="list-more">{visible.length}/{listTotal}건 렌더링 중 — 아래로 스크롤하면 더 붙입니다</div>
       )}
 
       {selected && <Suspense fallback={null}><Detail
@@ -687,4 +687,3 @@ const ListingCard = memo(function ListingCard({ item: r, sc, onSelect, onFav, gr
 // ConfigPanel은 ./ConfigPanel.tsx로 분리
 
 // exportCSV/buildCsv는 ./export-csv.ts로 분리
-
