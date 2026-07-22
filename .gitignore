@@ -30,3 +30,4 @@ web/.vercel/
 # Generated analysis artifacts
 artifacts/ml/
 .venv-ml/
+.vercel
