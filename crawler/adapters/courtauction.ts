@@ -24,7 +24,7 @@
 import type { Adapter, CrawlFilter, CrawlSink, ScrapedListing } from './types.ts';
 import type { Listing, RegistryEntry, Tenant, ListingDoc } from '../../shared/types.ts';
 import { parseKoreanDate, normalizeCaseNo, mapRightKind } from '../normalize.ts';
-import { crawlFetch } from '../proxy.ts'; // CRAWL_PROXY(SSH SOCKS) egress — VM IP 차단 우회
+import { courtAuctionFetch } from '../proxy.ts'; // COURTAUCTION_PROXY 전용 egress — 더낙찰 CRAWL_PROXY와 분리
 
 const BASE = 'https://www.courtauction.go.kr';
 const UA = 'gyeongmae-agent/0.1 (personal research; contact: owner)';
@@ -132,13 +132,13 @@ async function rateGate(): Promise<void> {
  *  HTTP 상태·차단(ipcheck) 오류는 여기까지 오지 않음(호출부에서 처리) → 재시도 대상 아님. */
 async function crawlFetchRetry(
   url: string,
-  init: Parameters<typeof crawlFetch>[1],
+  init: Parameters<typeof courtAuctionFetch>[1],
   tries = 3,
-): Promise<Awaited<ReturnType<typeof crawlFetch>>> {
+): Promise<Awaited<ReturnType<typeof courtAuctionFetch>>> {
   let lastErr: unknown;
   for (let i = 0; i < tries; i++) {
     try {
-      return await crawlFetch(url, init);
+      return await courtAuctionFetch(url, init);
     } catch (e) {
       lastErr = e;
       if (i < tries - 1) {

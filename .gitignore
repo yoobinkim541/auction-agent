@@ -26,3 +26,7 @@ playwright-report/
 # Vercel
 .vercel/
 web/.vercel/
+
+# Generated analysis artifacts
+artifacts/ml/
+.venv-ml/

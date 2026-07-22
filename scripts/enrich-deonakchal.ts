@@ -20,7 +20,7 @@ import { classifyEgress } from '../crawler/egress.ts';
 const rnd = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.round(ms)));
 
-/** egress가 등록 집 IP 또는 주거용 ISP인지 검증. 프록시 미설정/터널 다운/데이터센터면 false. */
+/** egress가 등록 집 IP인지 검증. 프록시 미설정/터널 다운/데이터센터/미등록 ISP면 false. */
 async function verifyHomeEgress(): Promise<boolean> {
   if (!process.env.CRAWL_PROXY) { console.error('[enrich] ⛔ CRAWL_PROXY 미설정 — 집 IP 프록시 필수. 중단.'); return false; }
   try {
@@ -33,11 +33,11 @@ async function verifyHomeEgress(): Promise<boolean> {
     }
     const kind = classifyEgress(profile);
     if (kind !== 'home') {
-      console.error(`[enrich] ⛔ egress(${egress} · ${profile.org ?? 'org 미상'})가 등록 집 IP/주거용 ISP로 확인되지 않음(${kind}). 중단.`);
-      console.error('[enrich] CRAWL_HOME_IPS에 실제 집 회선 IP를 등록하면 정확 검증합니다. 데이터센터 프록시는 허용하지 않습니다.');
+      console.error(`[enrich] ⛔ egress(${egress} · ${profile.org ?? 'org 미상'})가 등록 집 IP로 확인되지 않음(${kind}). 중단.`);
+      console.error('[enrich] CRAWL_HOME_IPS에 실제 집 회선 IP를 등록해야 통과합니다. ISP 문자열만으로는 데이터센터 프록시를 배제할 수 없어 허용하지 않습니다.');
       return false;
     }
-    console.log(`[enrich] ✅ egress=집/주거용 IP(${egress} · ${profile.org ?? 'org 미상'}), VM직접(${direct}) — 안전.`);
+    console.log(`[enrich] ✅ egress=등록 집 IP(${egress} · ${profile.org ?? 'org 미상'}), VM직접(${direct}) — 안전.`);
     return true;
   } catch (e) { console.error('[enrich] ⛔ egress 검증 실패 — 중단:', e instanceof Error ? e.message : e); return false; }
 }
@@ -75,11 +75,11 @@ async function main(): Promise<void> {
       try {
         const res = await lookupCaseDetail(page, c.court, c.case_no, c.item_no); // 엄격 직렬: 한 건씩 순차
         if (!res) {
-          await upsertDeonakTenants(c.id, c.case_no, [], false); // deonakchal에 없음 — 나중에 재시도(retryDays 후)
+          await upsertDeonakTenants(c.id, c.case_no, c.item_no, [], false); // deonakchal에 없음 — 나중에 재시도(retryDays 후)
           missed++;
           console.log(`[enrich] · ${c.case_no} (${c.court}) — deonakchal 미발견`);
         } else if (res.detail.tenants.length) {
-          await upsertDeonakTenants(c.id, c.case_no, res.detail.tenants, true);
+          await upsertDeonakTenants(c.id, c.case_no, c.item_no, res.detail.tenants, true);
           if (targetIds.has(c.id)) {
             const sourceUrl = `${DEONAKCHAL_BASE_URL}/auction/view.html?product_id=${res.productId}`;
             await replaceListingDocs(c.id, docsFromDetail(c.case_no, c.item_no, res.detail, [], sourceUrl), ['registry_summary', 'sale_statement', 'appraisal_report', 'site_metrics']);
@@ -88,7 +88,7 @@ async function main(): Promise<void> {
           found++;
           console.log(`[enrich] ✓ ${c.case_no} (${c.court}) ${targetIds.has(c.id) ? '타겟 상세+' : ''}임차인 ${res.detail.tenants.length}명 보강 (product ${res.productId})`);
         } else {
-          await upsertDeonakTenants(c.id, c.case_no, [], true); // 찾았으나 임차인 없음(소유자점유/공실) — 재시도 불필요
+          await upsertDeonakTenants(c.id, c.case_no, c.item_no, [], true); // 찾았으나 임차인 없음(소유자점유/공실) — 재시도 불필요
           if (targetIds.has(c.id)) {
             const sourceUrl = `${DEONAKCHAL_BASE_URL}/auction/view.html?product_id=${res.productId}`;
             await replaceListingDocs(c.id, docsFromDetail(c.case_no, c.item_no, res.detail, [], sourceUrl), ['registry_summary', 'sale_statement', 'appraisal_report', 'site_metrics']);

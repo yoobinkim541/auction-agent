@@ -135,6 +135,9 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position 
           )}
           <div><span>추정시세</span><b>{loc?.market_price == null ? <span className="muted">미확보 — 안전마진 산정 불가</span> : <>{eok(loc.market_price)}{loc.market_confidence ? ` · 신뢰도 ${CONF[loc.market_confidence]}` : ''}</>}</b></div>
           <div><span>예상낙찰가</span><b>{eok(loc?.expected_bid_price)}</b></div>
+          {row.ml_calibration?.reference_bid_price != null && (
+            <div><span title="지역×종류 과거 낙찰 중앙값 기반 — 운영 반영 전 참고용">ML 참고 보정가</span><b>{eok(row.ml_calibration.reference_bid_price)} <small className="muted">({row.ml_calibration.region} · n={row.ml_calibration.sample_size})</small></b></div>
+          )}
           <div><span>안전마진(최저가)</span><b>{pct(loc?.safety_margin)}</b></div>
           <div><span title="시세 − 총취득비용(취득세·명도비·채권·인수 포함)">진짜 안전마진</span><b className={(loc?.acquisition_cost?.trueSafetyMargin ?? 0) < 0 ? 'danger' : ''}>{pct(loc?.acquisition_cost?.trueSafetyMargin)}</b></div>
           <div><span>총 인수금액</span><b className={rights?.assumed_amount ? 'danger' : ''}>{won(rights?.assumed_amount ?? 0)}</b></div>

@@ -4,6 +4,7 @@ import { parseKoreanMoney, parseKoreanDate, mapPropertyType, mapRightKind, parse
 describe('parseKoreanMoney', () => {
   it('콤마 숫자', () => expect(parseKoreanMoney('530,000,000원')).toBe(530_000_000));
   it('억+만', () => expect(parseKoreanMoney('5억3,000만')).toBe(530_000_000));
+  it('임차인 보증금 억/만원 표기', () => expect(parseKoreanMoney('1억2,000만원')).toBe(120_000_000));
   it('억만 단순', () => expect(parseKoreanMoney('5억')).toBe(500_000_000));
   it('만 단위', () => expect(parseKoreanMoney('8,500만원')).toBe(85_000_000));
   it('억+천만(천 표기)', () => expect(parseKoreanMoney('5억3천만')).toBe(530_000_000));
@@ -31,6 +32,8 @@ describe('extractLabeledKoreanMoney', () => {
     expect(extractLabeledKoreanMoney('임대차보증금 금 3억5천만원, 주민등록일자 2020.01.01', '(?:임차보증금|임대차보증금)', ['주민등록일자'])).toBe(350_000_000));
   it('다음 날짜 숫자를 금액에 섞지 않음', () =>
     expect(extractLabeledKoreanMoney('보증금 120,000,000 전입일자 2024-01-02', '보증금', ['전입일자'])).toBe(120_000_000));
+  it('월차임 앞에서 멈추고 억/만원 보증금을 보존', () =>
+    expect(extractLabeledKoreanMoney('보증금 금 1억2,000만원 월차임 70만원 전입일자 2024-01-02', '보증금', ['월차임', '전입일자'])).toBe(120_000_000));
 });
 
 describe('parseKoreanDate', () => {

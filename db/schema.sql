@@ -8,7 +8,7 @@ create extension if not exists vector;
 create table if not exists gm_listings (
   id            bigint generated always as identity primary key,
   case_no       text not null,
-  item_no       text not null default '',  -- NULL이면 unique(case_no,item_no,source)가 중복 허용 → '' 사용
+  item_no       text not null default '1', -- NULL이면 unique(case_no,item_no,source)가 중복 허용 → 기본 물건번호 '1' 사용
   court         text not null,
   address       text not null,
   road_address  text,
@@ -241,10 +241,12 @@ create index if not exists gm_doc_changes_pending_idx on gm_doc_changes (notifie
 create table if not exists gm_deonak_tenants (
   listing_id  bigint primary key references gm_listings(id) on delete cascade,
   case_no     text not null,
+  item_no     text not null default '1',
   tenants     jsonb not null default '[]'::jsonb,     -- Tenant[] (found=true일 때 채워짐)
   found       boolean not null default false,
   fetched_at  timestamptz not null default now()
 );
+create index if not exists gm_deonak_tenants_case_item_idx on gm_deonak_tenants (case_no, item_no);
 
 -- 예측 스냅샷(Phase 0) — analyze가 점수를 덮어쓰므로, 매각 직전 예측을 동결해 사후 결과와 비교.
 create table if not exists gm_prediction_snapshots (
@@ -259,6 +261,7 @@ create table if not exists gm_prediction_snapshots (
   passed_filter  boolean,
   recommendation text,
   true_margin    double precision,                 -- 진짜 안전마진
+  max_safe_bid   bigint,                           -- 최대 안전 입찰가(스냅샷 시점)
   inq_cnt        int,
   interest_cnt   int,
   snapped_at     timestamptz not null default now(),
@@ -276,12 +279,259 @@ create or replace view gm_outcome_eval as
   select s.case_no, s.item_no, s.sale_date,
          l.property_type, l.court, l.address, l.appraisal_value,
          s.expected_bid, s.market_price, s.min_bid_price, s.total_score, s.passed_filter,
-         s.recommendation, s.true_margin, s.inq_cnt, s.interest_cnt,
+         s.recommendation, s.true_margin, s.max_safe_bid, s.inq_cnt, s.interest_cnt,
          r.sold, r.sold_amount, r.result_cd, r.min_price as result_min_price,
          (r.dxdy_date is not null) as matched,
          case when r.sold then r.sold_amount - s.expected_bid end as residual,
          case when r.sold and s.expected_bid > 0 then (r.sold_amount - s.expected_bid)::float8 / s.expected_bid end as residual_pct,
-         case when r.sold and l.appraisal_value > 0 then r.sold_amount::float8 / l.appraisal_value end as sale_ratio
+         case when r.sold and l.appraisal_value > 0 then r.sold_amount::float8 / l.appraisal_value end as sale_ratio,
+         case when r.sold and s.max_safe_bid is not null then r.sold_amount <= s.max_safe_bid end as would_have_won_under_max_safe_bid,
+         case when r.sold and s.market_price > 0 then (s.market_price - r.sold_amount)::float8 / s.market_price end as realized_bid_margin
     from gm_prediction_snapshots s
     join L l on l.case_no = s.case_no and l.item_no = s.item_no
     left join gm_auction_results r on r.case_no = s.case_no and r.item_no = s.item_no and r.dxdy_date = s.sale_date;
+
+
+-- Phase2 operational review/cache views.
+
+create or replace view gm_ml_price_calibration as
+  with sold as (
+    select property_type,
+           case
+             when split_part(address, ' ', 1) in ('서울특별시','부산광역시','대구광역시','인천광역시','광주광역시','대전광역시','울산광역시','세종특별자치시')
+               then split_part(address, ' ', 1) || ' ' || split_part(address, ' ', 2)
+             when split_part(address, ' ', 1) like '%도'
+               then split_part(address, ' ', 1) || ' ' || split_part(address, ' ', 2)
+             else split_part(address, ' ', 1)
+           end as region,
+           sale_ratio,
+           realized_bid_margin
+      from gm_outcome_eval
+     where sale_date < current_date
+       and sold
+       and sale_ratio is not null
+  )
+  select property_type, region,
+         count(*)::int as sample_size,
+         percentile_cont(0.5) within group (order by sale_ratio) as median_sale_ratio,
+         percentile_cont(0.5) within group (order by realized_bid_margin) as median_realized_margin
+    from sold
+   group by property_type, region
+  having count(*) >= 5;
+
+create or replace view gm_rights_risk_eval as
+  with latest_listing as (
+    select distinct on (case_no, coalesce(nullif(item_no,''),'1'))
+           id as listing_id, case_no, coalesce(nullif(item_no,''),'1') as item_no
+      from gm_listings
+     order by case_no, coalesce(nullif(item_no,''),'1'), crawled_at desc nulls last
+  )
+  select e.case_no, coalesce(nullif(e.item_no,''),'1') as item_no, e.sale_date, e.matched, e.sold,
+         e.sold_amount, e.sale_ratio, e.realized_bid_margin, e.would_have_won_under_max_safe_bid,
+         r.risk_grade, r.assumed_amount, r.max_safe_bid,
+         jsonb_array_length(coalesce(r.tenants, '[]'::jsonb)) as tenant_count,
+         exists (
+           select 1 from jsonb_array_elements(coalesce(r.tenants, '[]'::jsonb)) t
+            where coalesce((t->>'hasOpposition')::boolean, false)
+         ) as has_opposition_tenant,
+         jsonb_array_length(coalesce(r.red_flags, '[]'::jsonb)) as red_flag_count
+    from gm_outcome_eval e
+    left join latest_listing l on l.case_no = e.case_no and l.item_no = coalesce(nullif(e.item_no,''),'1')
+    left join gm_rights_analysis r on r.listing_id = l.listing_id
+   where e.sale_date < current_date;
+
+create table if not exists gm_result_retry_status (
+  case_no text not null,
+  item_no text not null default '1',
+  sale_date date not null,
+  attempts int not null default 0,
+  last_status text not null default 'pending',
+  last_phase text,
+  last_error text,
+  last_http_status int,
+  captcha_detected boolean not null default false,
+  blocked_reason text,
+  last_round_count int not null default 0,
+  last_attempted_at timestamptz,
+  succeeded_at timestamptz,
+  primary key (case_no, item_no, sale_date),
+  check (last_status in ('pending','success','empty','blocked','error'))
+);
+
+create index if not exists gm_result_retry_status_status_idx on gm_result_retry_status (last_status, last_attempted_at desc);
+
+create table if not exists gm_shadow_scores (
+  id bigint generated always as identity primary key,
+  case_no text not null,
+  item_no text not null default '1',
+  sale_date date not null,
+  model_name text not null,
+  model_version text not null,
+  predicted_sale_ratio double precision not null,
+  confidence double precision,
+  feature_snapshot_hash text not null,
+  features jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  unique (case_no, item_no, sale_date, model_name, model_version),
+  check (predicted_sale_ratio > 0),
+  check (confidence is null or (confidence >= 0 and confidence <= 1))
+);
+
+create index if not exists gm_shadow_scores_case_sale_idx on gm_shadow_scores (case_no, item_no, sale_date);
+create index if not exists gm_shadow_scores_model_idx on gm_shadow_scores (model_name, model_version, created_at desc);
+
+create or replace view gm_result_retry_queue as
+  select e.case_no, coalesce(nullif(e.item_no,''),'1') as item_no, e.sale_date, e.court, e.property_type, e.address,
+         (current_date - e.sale_date)::int as days_overdue,
+         e.total_score, e.passed_filter, e.recommendation, e.expected_bid, e.min_bid_price, e.inq_cnt, e.interest_cnt,
+         coalesce(rs.attempts, 0) as retry_attempts,
+         rs.last_status as retry_last_status,
+         rs.last_attempted_at as retry_last_attempted_at,
+         case
+           when e.sale_date < current_date - 14 then 100
+           when e.passed_filter then 80
+           when e.total_score >= 70 then 70
+           else 50
+         end as retry_priority
+    from gm_outcome_eval e
+    left join gm_result_retry_status rs
+      on rs.case_no = e.case_no
+     and rs.item_no = coalesce(nullif(e.item_no,''),'1')
+     and rs.sale_date = e.sale_date
+   where e.sale_date < current_date
+     and e.matched = false
+     and coalesce(rs.last_status, 'pending') <> 'success'
+     and (rs.last_attempted_at is null or rs.last_attempted_at < now() - interval '24 hours')
+   order by retry_priority desc, e.sale_date desc, e.case_no, item_no;
+
+create or replace view gm_shadow_score_eval as
+  select s.id, s.case_no, s.item_no, s.sale_date, s.model_name, s.model_version,
+         s.predicted_sale_ratio, s.confidence, s.feature_snapshot_hash, s.created_at,
+         e.property_type, e.court, e.address, e.appraisal_value, e.matched, e.sold,
+         e.sold_amount, e.sale_ratio, e.realized_bid_margin,
+         case when e.sale_ratio is not null then s.predicted_sale_ratio - e.sale_ratio end as sale_ratio_error,
+         case when e.sale_ratio is not null then abs(s.predicted_sale_ratio - e.sale_ratio) end as abs_sale_ratio_error,
+         (e.sale_date <= current_date - 14) as eligible_for_review
+    from gm_shadow_scores s
+    left join gm_outcome_eval e
+      on e.case_no = s.case_no
+     and coalesce(nullif(e.item_no,''),'1') = s.item_no
+     and e.sale_date = s.sale_date;
+
+create or replace view gm_today_actions as
+with active_listings as (
+  select l.id, l.case_no, coalesce(nullif(l.item_no, ''), '1') as item_no,
+         l.source, l.source_url, l.sale_date, l.is_favorite,
+         s.passed_filter, s.total_score,
+         r.id as rights_id,
+         loc.id as location_id,
+         loc.report,
+         loc.eviction,
+         coalesce(jsonb_array_length(loc.report->'fieldwork'->'fieldChecklist'), 0) as field_total,
+         coalesce((select count(*) from gm_fieldwork_notes fn where fn.listing_id = l.id and fn.checked), 0) as field_done
+    from gm_listings l
+    left join gm_scores s on s.listing_id = l.id
+    left join gm_rights_analysis r on r.listing_id = l.id
+    left join gm_location_analysis loc on loc.listing_id = l.id
+   where l.sale_date is null or l.sale_date >= current_date - 2
+), recrawl_needed as (
+  select id as listing_id, case_no, item_no,
+         'recrawl_needed'::text as action_type,
+         110::int as priority,
+         'danger'::text as severity,
+         '재수집 필요'::text as title,
+         case
+           when report->>'headline' like '[데이터 불완전]%' then '등기/명세서 데이터가 불완전해 권리분석을 신뢰할 수 없습니다.'
+           when rights_id is null then '권리분석 결과가 없어 재수집 또는 재분석이 필요합니다.'
+           else '입지분석 결과가 없어 재분석이 필요합니다.'
+         end as reason,
+         null::date as due_date,
+         current_date as sort_date,
+         source_url
+    from active_listings
+   where report->>'headline' like '[데이터 불완전]%'
+      or rights_id is null
+      or location_id is null
+), rights_enrichment as (
+  select id as listing_id, case_no, item_no,
+         'rights_enrichment'::text as action_type,
+         75::int as priority,
+         'warn'::text as severity,
+         '권리 보강 필요'::text as title,
+         '법원경매 원천의 점유관계가 미상입니다. deonakchal 임차인 보강 대상으로 올립니다.'::text as reason,
+         null::date as due_date,
+         coalesce(sale_date, current_date + 30) as sort_date,
+         source_url
+    from active_listings
+   where source = 'courtauction'
+     and eviction->>'occupantLabel' = '점유관계 미상'
+     and (passed_filter = true or is_favorite = true or coalesce(total_score, 0) >= 70)
+), bid_soon as (
+  select id as listing_id, case_no, item_no,
+         'bid_soon'::text as action_type,
+         (case when sale_date = current_date then 120 else 90 - greatest(0, sale_date - current_date) end)::int as priority,
+         (case when sale_date = current_date then 'danger' else 'warn' end)::text as severity,
+         '입찰 임박'::text as title,
+         ('매각기일이 ' || sale_date::text || '입니다. 보증금, 원본 문서, 최대입찰가를 확인하세요.')::text as reason,
+         sale_date as due_date,
+         sale_date as sort_date,
+         source_url
+    from active_listings
+   where sale_date between current_date and current_date + 7
+     and (passed_filter = true or is_favorite = true)
+), fieldwork as (
+  select id as listing_id, case_no, item_no,
+         'fieldwork'::text as action_type,
+         65::int as priority,
+         'info'::text as severity,
+         '현장 확인 남음'::text as title,
+         ('임장 체크리스트 ' || field_done || '/' || field_total || ' 완료 상태입니다.')::text as reason,
+         sale_date as due_date,
+         coalesce(sale_date, current_date + 30) as sort_date,
+         source_url
+    from active_listings
+   where field_total > 0
+     and field_done < field_total
+     and (passed_filter = true or is_favorite = true)
+), review_result as (
+  select l.id as listing_id, q.case_no, q.item_no,
+         'review_result'::text as action_type,
+         55::int as priority,
+         'info'::text as severity,
+         '결과 수집 복기'::text as title,
+         ('매각기일이 ' || q.sale_date::text || '로 ' || q.days_overdue || '일 지났지만 결과 재시도가 남아 있습니다.')::text as reason,
+         q.sale_date as due_date,
+         q.sale_date as sort_date,
+         l.source_url
+    from gm_result_retry_queue q
+    join gm_listings l on l.case_no = q.case_no and coalesce(nullif(l.item_no, ''), '1') = q.item_no
+   where q.days_overdue > 0
+  union all
+  select l.id as listing_id, e.case_no, coalesce(nullif(e.item_no, ''), '1') as item_no,
+         'review_result'::text as action_type,
+         45::int as priority,
+         'info'::text as severity,
+         '낙찰 결과 복기'::text as title,
+         case
+           when e.sold and e.residual_pct > 0 then '예상보다 높은 가격에 낙찰된 케이스입니다.'
+           when e.sold and (e.passed_filter = false or e.recommendation = 'avoid') then '회피/탈락 판단이었지만 낙찰된 케이스입니다.'
+           when e.matched and not e.sold and e.passed_filter = true then '추천 통과였지만 유찰된 케이스입니다.'
+           else '최근 결과 복기 대상입니다.'
+         end as reason,
+         e.sale_date as due_date,
+         e.sale_date as sort_date,
+         l.source_url
+    from gm_outcome_eval e
+    join gm_listings l on l.case_no = e.case_no and coalesce(nullif(l.item_no, ''), '1') = coalesce(nullif(e.item_no, ''), '1')
+   where e.sale_date >= current_date - 14
+     and (
+       (e.sold and e.residual_pct > 0.15)
+       or (e.sold and (e.passed_filter = false or e.recommendation = 'avoid'))
+       or (e.matched and not e.sold and e.passed_filter = true)
+     )
+)
+select * from recrawl_needed
+union all select * from rights_enrichment
+union all select * from bid_soon
+union all select * from fieldwork
+union all select * from review_result;

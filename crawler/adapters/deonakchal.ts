@@ -62,8 +62,8 @@ function blockCooldownRemainingMs(): number {
   } catch { return 0; }
 }
 
-/** egress IP가 데이터센터/클라우드면 경고만 한다(개인 계정을 클라우드 IP로 로그인 = 계정 플래그 트리거).
- *  막지는 않음. CRAWL_ALLOW_DATACENTER=true 로 침묵. 네트워크 실패는 무시(throw-safe). */
+/** egress IP가 등록 집 IP가 아니면 경고한다(개인 계정을 클라우드 IP로 로그인 = 계정 플래그 트리거).
+ *  오케스트레이터(enrich)는 fail-closed로 중단하고, 일반 크롤 어댑터는 경고만 한다. */
 let _egressChecked = false;
 async function warnIfDatacenterEgress(): Promise<void> {
   if (_egressChecked || process.env.CRAWL_ALLOW_DATACENTER === 'true') return;
@@ -72,9 +72,10 @@ async function warnIfDatacenterEgress(): Promise<void> {
     const res = await fetch('https://ipinfo.io/json', { signal: AbortSignal.timeout(4000) });
     if (!res.ok) return;
     const j = (await res.json()) as { ip?: string; org?: string };
-    if (classifyEgress(j) !== 'home') {
-      console.warn(`[deonakchal] ⚠️ egress IP(${j.ip ?? '?'} · ${j.org})가 등록 집 IP/주거용 ISP로 확인되지 않습니다.`);
-      console.warn('[deonakchal] ⚠️ 개인 구독 계정을 클라우드 IP로 로그인하면 비정상 로그인으로 계정이 플래그될 수 있습니다 — 주거용 회선 권장. (무시: CRAWL_ALLOW_DATACENTER=true)');
+    const kind = classifyEgress(j);
+    if (kind !== 'home') {
+      console.warn(`[deonakchal] ⚠️ egress IP(${j.ip ?? '?'} · ${j.org})가 등록 집 IP로 확인되지 않습니다(${kind}).`);
+      console.warn('[deonakchal] ⚠️ ISP 문자열만으로는 데이터센터 프록시를 배제할 수 없습니다. CRAWL_HOME_IPS에 실제 집 IP 등록 권장. (무시: CRAWL_ALLOW_DATACENTER=true)');
     }
   } catch { /* 네트워크 실패 무시 */ }
 }
@@ -233,6 +234,15 @@ async function parseListPage(page: Page, rowSelector: string = SEL.resultRow): P
     if (parsed) out.push(parsed);
   }
   return out;
+}
+
+/** deonakchal 검색결과에서 사건번호와 물건번호가 모두 같은 행만 선택한다. */
+export function chooseDeonakListRow<T extends { productId?: string; listing: { caseNo: string; itemNo?: string | null } }>(rows: T[], caseNo: string, itemNo: string | null | undefined): T | undefined {
+  const wantCase = normalizeCaseNo(caseNo);
+  const wantItem = normalizeItemNo(itemNo);
+  return rows.find((row) =>
+    !!row.productId && normalizeCaseNo(row.listing.caseNo) === wantCase && normalizeItemNo(row.listing.itemNo) === wantItem,
+  );
 }
 
 /** 명세서 notes에서 "최선순위설정: 2023.09.06" → ISO 추출 */
@@ -755,8 +765,7 @@ export async function lookupCaseDetail(
   // deonakchal 행 사건번호는 "연도-번호"(예: 2025-103018) — courtauction "2025타경103018"과 형식이 달라
   // normalizeCaseNo(공백제거만)로는 안 맞음. court1으로 이미 법원 필터되므로 연도-번호 일치 행을 고른다.
   const wantDash = `${year}-${num}`;
-  const wantItemNo = normalizeItemNo(itemNo);
-  const chosen = rows.find((r) => r.productId && r.listing.caseNo === wantDash && (r.listing.itemNo ?? '1') === wantItemNo);
+  const chosen = chooseDeonakListRow(rows, wantDash, itemNo);
   if (!chosen) return null;
   try {
     return { productId: chosen.productId!, detail: await parseDetail(page, chosen.productId!) };

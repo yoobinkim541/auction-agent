@@ -49,7 +49,7 @@ export async function upsertListing(l: Listing): Promise<number> {
        inq_cnt=excluded.inq_cnt, interest_cnt=excluded.interest_cnt
      returning id`,
     [
-      l.caseNo, l.itemNo ?? '', l.court, l.address, l.roadAddress ?? null, l.lat ?? null, l.lng ?? null,
+      l.caseNo, l.itemNo ?? '1', l.court, l.address, l.roadAddress ?? null, l.lat ?? null, l.lng ?? null,
       l.propertyType, l.appraisalValue ?? null, l.minBidPrice ?? null, l.minBidRatio ?? null,
       l.failCount ?? 0, l.saleDate ?? null, l.demandDeadline ?? null, l.areaM2 ?? null,
       l.buildingAreaM2 ?? null, l.isCollectiveBuilding ?? false, l.source, l.sourceUrl ?? null,
@@ -200,7 +200,7 @@ export async function recentCrawlRuns(limit = 50): Promise<CrawlRunRow[]> {
 
 // ── 읽기 ─────────────────────────────────────────────────────────
 export interface ListingRow {
-  id: number; case_no: string; court: string; address: string; road_address: string | null;
+  id: number; case_no: string; item_no: string; court: string; address: string; road_address: string | null;
   lat: number | null; lng: number | null; property_type: Listing['propertyType'];
   appraisal_value: string | null; min_bid_price: string | null; fail_count: number | null;
   sale_date: string | null; demand_deadline: string | null; area_m2: string | null;
@@ -213,7 +213,7 @@ export async function fetchListingsForAnalysis(limit = 200, onlyNew = false): Pr
     : '';
   // 활성(미래 기일·기일미정) 우선 — 재고가 limit를 넘어도 지나간 물건이 활성 재분석을 밀어내지 않게.
   return query<ListingRow>(
-    `select id, case_no, court, address, road_address, lat, lng, property_type, appraisal_value,
+    `select id, case_no, coalesce(item_no,'1') as item_no, court, address, road_address, lat, lng, property_type, appraisal_value,
             min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url
      from gm_listings ${where}
      order by (sale_date is null or sale_date >= current_date) desc, crawled_at desc limit $1`,
@@ -232,7 +232,7 @@ export async function fetchListingDocs(listingId: number): Promise<{ doc_type: s
 export async function fetchListingsByIds(ids: number[]): Promise<ListingRow[]> {
   if (!ids.length) return [];
   return query<ListingRow>(
-    `select id, case_no, court, address, road_address, lat, lng, property_type, appraisal_value,
+    `select id, case_no, coalesce(item_no,'1') as item_no, court, address, road_address, lat, lng, property_type, appraisal_value,
             min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url
      from gm_listings where id = any($1::bigint[])`,
     [ids],
@@ -251,7 +251,10 @@ export async function fetchTargetDeonakDetailCandidates(limit: number, retryDays
   return query<EnrichCandidate>(
     `select l.id, l.case_no, l.court, coalesce(l.item_no,'1') as item_no
        from gm_listings l
-       left join gm_deonak_tenants dt on dt.listing_id = l.id
+       left join gm_deonak_tenants dt
+         on dt.listing_id = l.id
+        and dt.case_no = l.case_no
+        and coalesce(dt.item_no,'1') = coalesce(l.item_no,'1')
       where l.source = 'courtauction'
         and (l.sale_date is null or l.sale_date >= current_date - 2)
         and (${TARGET_DEONAK_DETAIL_ADDRESS_SQL})
@@ -275,7 +278,10 @@ export async function fetchEnrichmentCandidates(limit: number, retryDays = 14): 
        from gm_listings l
        join gm_scores s on s.listing_id = l.id
        join gm_location_analysis loc on loc.listing_id = l.id
-       left join gm_deonak_tenants dt on dt.listing_id = l.id
+       left join gm_deonak_tenants dt
+         on dt.listing_id = l.id
+        and dt.case_no = l.case_no
+        and coalesce(dt.item_no,'1') = coalesce(l.item_no,'1')
       where s.passed_filter = true and l.source = 'courtauction'
         and loc.eviction->>'occupantLabel' = '점유관계 미상'
         and (dt.listing_id is null or dt.fetched_at < now() - (($2)::text || ' days')::interval)
@@ -285,19 +291,24 @@ export async function fetchEnrichmentCandidates(limit: number, retryDays = 14): 
   );
 }
 /** deonakchal 조회 결과 저장(found=true면 tenants, false면 '없음' 마커). 반복 히트 방지 + analyze 소스. */
-export async function upsertDeonakTenants(listingId: number, caseNo: string, tenants: unknown, found: boolean): Promise<void> {
+export async function upsertDeonakTenants(listingId: number, caseNo: string, itemNo: string, tenants: unknown, found: boolean): Promise<void> {
   await query(
-    `insert into gm_deonak_tenants (listing_id, case_no, tenants, found, fetched_at)
-     values ($1,$2,$3::jsonb,$4,now())
-     on conflict (listing_id) do update set case_no=excluded.case_no, tenants=excluded.tenants, found=excluded.found, fetched_at=now()`,
-    [listingId, caseNo, j(tenants ?? []), found],
+    `insert into gm_deonak_tenants (listing_id, case_no, item_no, tenants, found, fetched_at)
+     values ($1,$2,$3,$4::jsonb,$5,now())
+     on conflict (listing_id) do update set
+       case_no=excluded.case_no, item_no=excluded.item_no, tenants=excluded.tenants, found=excluded.found, fetched_at=now()`,
+    [listingId, caseNo, itemNo || '1', j(tenants ?? []), found],
   );
 }
 /** analyze용: 이 물건의 deonakchal 임차인(있으면). courtauction 임차인 미파싱을 보강. */
-export async function fetchDeonakTenants(listingId: number): Promise<any[] | null> {
+export async function fetchDeonakTenants(listingId: number, itemNo: string): Promise<any[] | null> {
   const rows = await query<{ tenants: any; found: boolean }>(
-    `select tenants, found from gm_deonak_tenants where listing_id=$1 and found=true`,
-    [listingId],
+    `select tenants, found
+       from gm_deonak_tenants
+      where listing_id=$1
+        and coalesce(item_no,'1')=$2
+        and found=true`,
+    [listingId, itemNo || '1'],
   );
   const t = rows[0]?.tenants;
   return Array.isArray(t) && t.length ? t : null;

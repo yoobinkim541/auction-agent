@@ -8,8 +8,7 @@
 - **더낙찰옥션**: 개인 구독 계정을 **클라우드 IP로 로그인**하는 것 자체가 계정 플래그 트리거(→ 비정상접속 차단).
 
 해법: 크롤 트래픽을 **집(주거용) 회선**으로 내보낸다. SSH SOCKS 터널을 쓰면 추가 데몬 없이 가능하다.
-코드는 이미 프록시를 탄다 — Playwright(더낙찰)는 `CRAWL_PROXY`를, 법원경매 `fetch`는 `crawler/proxy.ts`의
-`crawlFetch`를 통해 같은 `CRAWL_PROXY`를 사용한다(socks5/socks4/http 지원).
+코드는 프록시 경로를 소스별로 분리한다. Playwright(더낙찰)는 `CRAWL_PROXY`를 쓰고, 법원경매 `fetch`는 기본 직접망이며 필요할 때만 `COURTAUCTION_PROXY`를 쓴다. `COURTAUCTION_USE_CRAWL_PROXY=true`를 설정한 경우에만 법원경매도 `CRAWL_PROXY`를 공유한다(socks5/socks4/http 지원).
 
 > ⚠️ 더낙찰은 프록시만으로 안 풀린다 — **계정 플래그**가 먼저 해제돼야 한다(1577-9352 전화). 프록시는
 > 계정 복구 후 재발(클라우드 IP 로그인) 방지용. 법원경매는 프록시만으로 바로 효과가 있다.
@@ -54,7 +53,13 @@ autossh -M 0 -N -R 1080 ubuntu@<VM_공인_IP> \
 
 ```
 CRAWL_PROXY=socks5://127.0.0.1:1080
+CRAWL_HOME_IPS=<집_회선_공인_IP>
+# 법원경매도 같은 집 터널을 써야 할 때만 아래 둘 중 하나 사용
+# COURTAUCTION_PROXY=socks5://127.0.0.1:1080
+# COURTAUCTION_USE_CRAWL_PROXY=true
 ```
+
+`CRAWL_HOME_IPS`는 더낙찰 계정 보호용 필수 안전핀이다. `ipinfo.org`의 통신사/ISP 문자열만으로는 데이터센터 프록시를 배제할 수 없으므로, 보강 스크립트는 **등록된 집 IP와 정확히 일치할 때만** 로그인한다. 집 IP가 바뀌면 아래 검증 명령의 egress 값을 다시 등록한다.
 
 여러 회선이면 순차 폴백(차단 시 다음으로):
 ```
@@ -69,22 +74,26 @@ CRAWL_PROXIES=socks5://127.0.0.1:1080,socks5://127.0.0.1:1081
 # (a) 터널 자체 — 집 IP가 떠야 함(217.142.149.79=VM이면 실패)
 curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org ; echo
 
-# (b) 코드 경로 — crawlFetch egress가 집 IP인지
+# (b) 더낙찰 코드 경로 — crawlFetch egress가 집 IP인지
 CRAWL_PROXY=socks5://127.0.0.1:1080 npx tsx -e \
   "import {crawlFetch} from './crawler/proxy.ts'; crawlFetch('https://api.ipify.org').then(r=>r.text()).then(t=>console.log('egress',t))"
 
-# (c) 법원경매만 프록시로 실제 수집(차단 풀렸는지)
-CRAWL_PROXY=socks5://127.0.0.1:1080 npm run crawl -- --source=courtauction --max=10
+# (c) 법원경매 전용 코드 경로 — COURTAUCTION_PROXY egress가 집 IP인지
+COURTAUCTION_PROXY=socks5://127.0.0.1:1080 npx tsx -e \
+  "import {courtAuctionFetch} from './crawler/proxy.ts'; courtAuctionFetch('https://api.ipify.org').then(r=>r.text()).then(t=>console.log('egress',t))"
+
+# (d) 법원경매만 프록시로 실제 수집(차단 풀렸는지)
+COURTAUCTION_PROXY=socks5://127.0.0.1:1080 npm run crawl -- --source=courtauction --max=10
 ```
 
-(c)에서 `[courtauction] 수집 완료: N건`(N>0)이면 성공. 0건/IP 차단 로그면 터널 egress IP를 (a)로 다시 확인.
+(d)에서 `[courtauction] 수집 완료: N건`(N>0)이면 성공. 0건/IP 차단 로그면 터널 egress IP를 (a)로 다시 확인.
 
 ---
 
 ## 4. 주의
 
 - **집 PC가 켜져 있고 터널이 살아 있어야** cron 크롤이 나간다. 꺼지면 fetch 실패 → (더낙찰은) 쿨다운/폴백.
-- 법원경매는 프록시로 바로 효과. 더낙찰은 **계정 해제(전화) 후** 프록시+집 IP로 돌려야 재플래그를 피한다.
+- 법원경매는 필요할 때 `COURTAUCTION_PROXY`로만 프록시를 탄다. 더낙찰은 **계정 해제(전화) 후** `CRAWL_PROXY`+등록 집 IP로 돌려야 재플래그를 피한다.
 - VM `sshd`는 기본값(`AllowTcpForwarding yes`)이면 역방향 SOCKS에 추가 설정 불필요(127.0.0.1 바인딩이라 `GatewayPorts` 불필요).
 - 프록시는 IP 우회용이 아니라 **본래의 주거용 회선으로 정직하게 나가기** 위한 것. 수집량은 여전히 천천히
   (`CRAWL_MIN_REQ_MS`/`CRAWL_REQ_JITTER_MS`), 약관 범위 내에서.

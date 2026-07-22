@@ -72,4 +72,16 @@ public class ListingController {
   public List<Map<String, Object>> crawlRuns() {
     return service.crawlRuns();
   }
+
+  /** 오늘 할 일 큐: 재수집·권리보강·입찰임박·현장확인·복기 액션 */
+  @GetMapping(value = "/actions/today", produces = MediaType.APPLICATION_JSON_VALUE)
+  public ResponseEntity<String> todayActions(@RequestParam(defaultValue = "20") int limit) {
+    return ResponseEntity.ok(service.todayActionsJson(limit));
+  }
+
+  /** Phase2 복기/ML 대시보드 데이터 */
+  @GetMapping("/review/ml")
+  public Map<String, Object> mlReview() {
+    return service.mlReview();
+  }
 }
