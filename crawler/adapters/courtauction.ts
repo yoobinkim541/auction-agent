@@ -256,10 +256,19 @@ export function parseMoney(s: string | undefined): number {
 const PHOTO_KEY_RE = /(url|src|path|file|photo|image|img|thumb|thum)/i;
 const PHOTO_URL_RE = /\.(?:jpe?g|png|webp|gif)(?:\?|#|$)|(?:photo|image|img|thumb|thum|atch|file|down|download)/i;
 const NON_LISTING_IMAGE_RE = /logo|icon|btn|button|blank|spacer|bg[_-]|banner|sprite|\.svg(?:\?|#|$)/i;
+const RAW_JPEG_BASE64_RE = /^\/9j\/[A-Za-z0-9+/=\s]{80,}$/;
+
+function normalizeInlineCourtPhoto(raw: string): string | null {
+  const compact = raw.replace(/\s+/g, '');
+  if (!RAW_JPEG_BASE64_RE.test(compact)) return null;
+  return `data:image/jpeg;base64,${compact}`;
+}
 
 function normalizeCourtPhotoUrl(raw: string, baseUrl: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed || /^data:/i.test(trimmed) || NON_LISTING_IMAGE_RE.test(trimmed)) return null;
+  const inlinePhoto = normalizeInlineCourtPhoto(trimmed);
+  if (inlinePhoto) return inlinePhoto;
   if (!PHOTO_URL_RE.test(trimmed)) return null;
   try {
     if (trimmed.startsWith('//')) return `https:${trimmed}`;

@@ -210,6 +210,14 @@ describe('extractCourtPhotoUrls', () => {
       'https://www.courtauction.go.kr/files/thumb_photo3.png',
     ]);
   });
+
+  it('법원 상세의 JPEG base64 사진을 data URL로 추출한다', () => {
+    const rawJpegBase64 = `/9j/${'A'.repeat(160)}`;
+
+    expect(extractCourtPhotoUrls({ photoList: [{ photo: rawJpegBase64 }] })).toEqual([
+      `data:image/jpeg;base64,${rawJpegBase64}`,
+    ]);
+  });
 });
 
 describe('isKnownForIncremental (증분 상세 skip 판정)', () => {

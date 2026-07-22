@@ -53,6 +53,38 @@ export async function deletePhotoFiles(paths: string[]): Promise<number> {
   return deleted;
 }
 
+function describePhotoSource(sourceUrl: string): string {
+  if (sourceUrl.startsWith('data:')) return `${sourceUrl.slice(0, 48)}…`;
+  return sourceUrl.length > 160 ? `${sourceUrl.slice(0, 157)}…` : sourceUrl;
+}
+
+type PhotoPayload = {
+  bytes: Uint8Array;
+  ext: string;
+};
+
+function decodeDataUrlPhoto(sourceUrl: string): PhotoPayload | null {
+  const match = sourceUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/i);
+  if (!match) return null;
+  const contentType = match[1] ?? '';
+  const ext = normalizePhotoExtension(contentType, sourceUrl);
+  if (!ext) return null;
+  const bytes = new Uint8Array(Buffer.from((match[2] ?? '').replace(/\s+/g, ''), 'base64'));
+  return { bytes, ext };
+}
+
+async function loadPhotoPayload(sourceUrl: string, fetchImpl: typeof fetch): Promise<PhotoPayload | null> {
+  const dataUrlPhoto = decodeDataUrlPhoto(sourceUrl);
+  if (dataUrlPhoto) return dataUrlPhoto;
+
+  const response = await fetchImpl(sourceUrl, { redirect: 'follow' });
+  if (!response.ok) return null;
+  const ext = normalizePhotoExtension(response.headers.get('content-type'), sourceUrl);
+  if (!ext) return null;
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  return { bytes, ext };
+}
+
 export async function cacheListingPhotos(
   listingId: number,
   caseNo: string,
@@ -66,15 +98,14 @@ export async function cacheListingPhotos(
     if (seen.has(sourceUrl)) continue;
     seen.add(sourceUrl);
     try {
-      const response = await fetchImpl(sourceUrl, { redirect: 'follow' });
-      if (!response.ok) continue;
-      const ext = normalizePhotoExtension(response.headers.get('content-type'), sourceUrl);
-      if (!ext) continue;
-      const bytes = new Uint8Array(await response.arrayBuffer());
+      const payload = await loadPhotoPayload(sourceUrl, fetchImpl);
+      if (!payload) continue;
+      const { bytes, ext } = payload;
       if (!bytes.length || bytes.byteLength > MAX_PHOTO_BYTES) continue;
       const contentHash = createHash('sha256').update(bytes).digest('hex');
       const cachePath = photoCachePath(listingId, contentHash, ext);
       const publicUrl = photoPublicUrl(listingId, contentHash, ext);
+      const metadataSourceUrl = sourceUrl.startsWith('data:') ? `data:${contentHash}` : sourceUrl;
       await mkdir(join(photoCacheRoot(), String(listingId)), { recursive: true });
       await writeFile(cachePath, bytes);
       try {
@@ -82,7 +113,7 @@ export async function cacheListingPhotos(
           caseNo,
           itemNo,
           source: 'courtauction',
-          sourceUrl,
+          sourceUrl: metadataSourceUrl,
           cachePath,
           publicUrl,
           contentHash,
@@ -92,7 +123,7 @@ export async function cacheListingPhotos(
       }
       publicUrls.push(publicUrl);
     } catch (err) {
-      console.warn(`[listing-photos] cache failed ${sourceUrl}: ${err instanceof Error ? err.message : String(err)}`);
+      console.warn(`[listing-photos] cache failed ${describePhotoSource(sourceUrl)}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   return publicUrls;

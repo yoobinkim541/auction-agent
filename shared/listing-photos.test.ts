@@ -50,6 +50,16 @@ describe('listing photo cache download', () => {
     const urls = await cacheListingPhotos(77, '2026타경1', '1', ['https://example.test/p.jpg'], fetchImpl as typeof fetch);
     expect(urls[0]).toMatch(/^\/api\/listings\/77\/photos\/[a-f0-9]+\.jpg$/);
   });
+
+  it('data URL 이미지는 네트워크 fetch 없이 캐시한다', async () => {
+    const body = new Uint8Array([1, 2, 3, 4]);
+    const dataUrl = `data:image/jpeg;base64,${Buffer.from(body).toString('base64')}`;
+    const fetchImpl = async () => { throw new Error('fetch should not be called for data URLs'); };
+
+    const urls = await cacheListingPhotos(88, '2026타경2', '1', [dataUrl], fetchImpl as typeof fetch);
+
+    expect(urls[0]).toMatch(/^\/api\/listings\/88\/photos\/[a-f0-9]+\.jpg$/);
+  });
 });
 
 describe('listing photo deletion', () => {
