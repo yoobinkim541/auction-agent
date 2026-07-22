@@ -22,7 +22,7 @@ Excluded:
 
 Use Postgres as the durable source of truth. Add `gm_result_retry_status` for retry bookkeeping and update `gm_result_retry_queue` so already-successful rows and rows attempted too recently do not keep surfacing. Add `gm_shadow_scores` and `gm_shadow_score_eval` so offline model outputs can be stored and compared against future actual outcomes without touching production scoring.
 
-Add a small TypeScript worker `scripts/retry-outcome-results.ts`. It reads bounded rows from `gm_result_retry_queue`, tries active detail collection first, falls back to closed-case result lookup when needed, writes any result rounds through the same `gm_auction_results` table, and records status (`success`, `empty`, `blocked`, `error`) in `gm_result_retry_status`. This keeps the existing broad `collect:results` script intact and gives cron/bot/manual operators a narrower “retry just the misses” command.
+Add a small TypeScript worker `scripts/retry-outcome-results.ts`. It reads bounded unmatched outcome rows using the same priority logic as `gm_result_retry_queue`, applies the worker cooldown from `OUTCOME_RETRY_COOLDOWN_HOURS`, tries active detail collection first, falls back to closed-case result lookup when needed, writes any result rounds through the same `gm_auction_results` table, and records status (`success`, `empty`, `blocked`, `error`) in `gm_result_retry_status`. This keeps the existing broad `collect:results` script intact and gives cron/bot/manual operators a narrower “retry just the misses” command.
 
 ## Data Model
 

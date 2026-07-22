@@ -26,7 +26,8 @@
     "typecheck": "tsc --noEmit",
     "enrich:poi": "tsx pipeline/location/enrich-poi.ts",
     "geocode:bulk": "tsx scripts/geocode-bulk.ts",
-    "enrich:deonakchal": "tsx scripts/enrich-deonakchal.ts"
+    "enrich:deonakchal": "tsx scripts/enrich-deonakchal.ts",
+    "retry:outcomes": "tsx scripts/retry-outcome-results.ts"
   },
   "engines": {
     "node": ">=22"

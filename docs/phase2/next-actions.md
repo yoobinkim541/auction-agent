@@ -43,13 +43,15 @@
 
 ## Later
 
-8. Add outcome retry worker.
-   - Consume `gm_result_retry_queue` in bounded daily batches.
-   - Persist per-key retry status, blocked reason, and last HTTP/captcha state.
+8. Add outcome retry worker. ✅
+   - Run `npm run retry:outcomes` for bounded batches; default `OUTCOME_RETRY_LIMIT=50` and `OUTCOME_RETRY_COOLDOWN_HOURS=24`.
+   - Persist per-key retry status in `gm_result_retry_status`, including blocked reason, last HTTP status, captcha flag, attempts, and success timestamp.
+   - Stop the batch on block/captcha signals so a bad egress session does not keep hammering courtauction.
 
-9. Add shadow score table.
-   - Store `model_name`, `model_version`, `predicted_sale_ratio`, `confidence`, and feature snapshot hash.
-   - Compare shadow scores against later outcomes for at least two weeks before operating use.
+9. Add shadow score table. ✅
+   - Store `model_name`, `model_version`, `predicted_sale_ratio`, `confidence`, and `feature_snapshot_hash` in `gm_shadow_scores`.
+   - Compare shadow scores against later outcomes with `gm_shadow_score_eval`, with `eligible_for_review` only after a two-week observation window.
+   - Keep shadow scores report-only; they do not update bids, filters, `gm_scores`, or recommendations.
 
 ## Keep Disabled
 
