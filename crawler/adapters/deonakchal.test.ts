@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractRegistryRowsFromText, extractSiteMetrics, caseNoToMngno, DEONAK_COURT1 } from './deonakchal.ts';
+import { extractRegistryRowsFromText, extractSiteMetrics, caseNoToMngno, DEONAK_COURT1, chooseDeonakListRow } from './deonakchal.ts';
 
 describe('caseNoToMngno (courtauction 사건번호 → deonakchal mngno)', () => {
   it('타경 사건번호 → 연도-번호', () => {
@@ -27,8 +27,30 @@ describe('lookupCaseDetail row match key', () => {
       { productId: 'p1', listing: { caseNo: '2025-103018', itemNo: '1' } },
       { productId: 'p2', listing: { caseNo: '2025-103018', itemNo: '2' } },
     ];
-    const chosen = rows.find((r) => r.productId && r.listing.caseNo === '2025-103018' && (r.listing.itemNo ?? '1') === '2');
-    expect(chosen?.productId).toBe('p2');
+    expect(chooseDeonakListRow(rows, '2025-103018', '2')?.productId).toBe('p2');
+  });
+
+  it('물건번호 앞자리 0을 정규화해 같은 물건만 고름', () => {
+    const rows = [
+      { productId: 'p1', listing: { caseNo: '2025-103018', itemNo: '1' } },
+      { productId: 'p2', listing: { caseNo: '2025-103018', itemNo: '02' } },
+    ];
+    expect(chooseDeonakListRow(rows, '2025-103018', '2')?.productId).toBe('p2');
+  });
+
+  it('같은 사건이어도 요청 물건번호가 없으면 선택하지 않음', () => {
+    const rows = [
+      { productId: 'p1', listing: { caseNo: '2025-103018', itemNo: '1' } },
+    ];
+    expect(chooseDeonakListRow(rows, '2025-103018', '2')).toBeUndefined();
+  });
+
+  it('상세 product_id 없는 행은 선택하지 않음', () => {
+    const rows = [
+      { listing: { caseNo: '2025-103018', itemNo: '2' } },
+      { productId: 'p2', listing: { caseNo: '2025-103018', itemNo: '2' } },
+    ];
+    expect(chooseDeonakListRow(rows, '2025-103018', '2')?.productId).toBe('p2');
   });
 });
 

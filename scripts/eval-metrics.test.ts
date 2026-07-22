@@ -1,17 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { coverage, priceStats, qualityStats, surprises, formatSummary, type EvalRow } from './eval-metrics.ts';
+import { coverage, priceStats, qualityStats, profitStats, surprises, formatSummary, type EvalRow } from './eval-metrics.ts';
 
 const row = (o: Partial<EvalRow> = {}): EvalRow => ({
   case_no: 'x', item_no: '1', sale_date: '2026-06-01', property_type: 'apartment',
   court: '서울중앙지방법원', address: '서울특별시 강남구 역삼동', appraisal_value: 3e8,
   expected_bid: 2e8, market_price: 3e8, min_bid_price: 2e8, total_score: 80, passed_filter: true,
-  recommendation: 'consider', true_margin: 0.3, inq_cnt: 0, interest_cnt: 0,
+  recommendation: 'consider', true_margin: 0.3, max_safe_bid: 2.4e8, inq_cnt: 0, interest_cnt: 0,
   sold: false, sold_amount: null, result_cd: null, matched: true, residual: null, residual_pct: null, sale_ratio: null,
+  would_have_won_under_max_safe_bid: null, realized_bid_margin: null,
   ...o,
 });
 
-const overpriced = row({ case_no: 'A', sold: true, sold_amount: 2.6e8, residual_pct: 0.3, sale_ratio: 0.86 });
-const avoidSold = row({ case_no: 'B', passed_filter: false, recommendation: 'avoid', sold: true, sold_amount: 2.7e8, residual_pct: 0.1, sale_ratio: 0.9 });
+const overpriced = row({ case_no: 'A', sold: true, sold_amount: 2.6e8, residual_pct: 0.3, sale_ratio: 0.86, max_safe_bid: 2.7e8, would_have_won_under_max_safe_bid: true, realized_bid_margin: (3e8 - 2.6e8) / 3e8 });
+const avoidSold = row({ case_no: 'B', passed_filter: false, recommendation: 'avoid', sold: true, sold_amount: 2.7e8, residual_pct: 0.1, sale_ratio: 0.9, max_safe_bid: 2.4e8, would_have_won_under_max_safe_bid: false, realized_bid_margin: (3e8 - 2.7e8) / 3e8 });
 const passedUnsold = row({ case_no: 'C', sold: false, matched: true, result_cd: '002', passed_filter: true });
 const missed = row({ case_no: 'D', matched: false, sold: false });
 const rows = [overpriced, avoidSold, passedUnsold, missed];
@@ -43,6 +44,19 @@ describe('qualityStats', () => {
     const q = qualityStats(rows)!;
     expect(q.passedSoldRate).toBeCloseTo(0.5); // 통과 2건(A,C) 중 1건(A) 낙찰
     expect(q.notPassedSoldRate).toBeCloseTo(1); // 미통과 1건(B) 낙찰
+  });
+});
+
+
+describe('profitStats', () => {
+  it('안전입찰가와 실현마진 기준 품질을 집계', () => {
+    const p = profitStats(rows)!;
+    expect(p.soldRows).toBe(2);
+    expect(p.safeBidRows).toBe(2);
+    expect(p.wonUnderSafeBidRate).toBeCloseTo(0.5);
+    expect(p.positiveRealizedMarginRate).toBeCloseTo(1);
+    expect(p.passedPositiveMarginRate).toBeCloseTo(1);
+    expect(p.notPassedPositiveMarginRate).toBeCloseTo(1);
   });
 });
 

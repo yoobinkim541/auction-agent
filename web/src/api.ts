@@ -103,6 +103,16 @@ export interface ReportObj {
   memo?: string; // LLM 투자 의견서(통과 상위 후보)
   memoModel?: string;
 }
+export interface MlCalibrationObj {
+  method: 'group_median_v1';
+  status: 'reference_only';
+  region: string;
+  sample_size: number;
+  median_sale_ratio: number | null;
+  median_realized_margin: number | null;
+  reference_bid_price: number | null;
+  delta_vs_expected_bid: number | null;
+}
 export interface ListingItem {
   id: number;
   case_no: string;
@@ -119,6 +129,7 @@ export interface ListingItem {
   source_url: string | null;
   court_check_url?: string | null;
   deonakchal_check_url?: string | null;
+  ml_calibration?: MlCalibrationObj | null;
   is_favorite: boolean | null;
   crawled_at: string | null;
   lat: number | null;
@@ -135,6 +146,109 @@ export interface ListingItem {
   safety_margin_score: number | null;
   clean_rights_score: number | null;
   reason: string | null;
+}
+
+
+export type TodayActionType = 'recrawl_needed' | 'rights_enrichment' | 'bid_soon' | 'fieldwork' | 'review_result';
+export type TodayActionSeverity = 'danger' | 'warn' | 'info';
+
+export interface TodayAction {
+  listing_id: number;
+  case_no: string;
+  item_no: string;
+  action_type: TodayActionType;
+  priority: number;
+  severity: TodayActionSeverity;
+  title: string;
+  reason: string;
+  due_date: string | null;
+  sort_date: string | null;
+  source_url: string | null;
+}
+
+
+export interface MlReviewSummary {
+  past_snapshots: number;
+  matched: number;
+  sold: number;
+  unsold: number;
+  miss_rate: number | null;
+  sale_ratio_labels: number;
+  expected_bid_mape: number | null;
+  current_expected_mae: number | null;
+  positive_margin_rate: number | null;
+  safe_bid_rows: number;
+  safe_bid_hit_rate: number | null;
+}
+export interface MlGroupMedianRow {
+  property_type: string;
+  region: string;
+  rows: number;
+  median_sale_ratio: number | null;
+  median_realized_margin: number | null;
+}
+export interface MlFeatureCoverageRow {
+  feature: string;
+  non_null_rows: number;
+  coverage: number | null;
+}
+export interface MlSurpriseRow {
+  surprise_kind: 'overpriced' | 'avoid_but_sold' | 'passed_but_unsold';
+  surprise_score: number | null;
+  case_no: string;
+  item_no: string;
+  sale_date: string | null;
+  property_type: string;
+  court: string | null;
+  address: string;
+  expected_bid: number | null;
+  sold_amount: number | null;
+  sale_ratio: number | null;
+  residual_pct: number | null;
+  total_score: number | null;
+  passed_filter: boolean | null;
+  recommendation: string | null;
+  true_margin: number | null;
+  inq_cnt: number | null;
+  interest_cnt: number | null;
+  realized_bid_margin: number | null;
+}
+
+export interface MlRetryQueueRow {
+  case_no: string; item_no: string; sale_date: string | null; court: string | null; property_type: string; address: string;
+  days_overdue: number; retry_priority: number; total_score: number | null; passed_filter: boolean | null; recommendation: string | null;
+  expected_bid: number | null; min_bid_price: number | null; inq_cnt: number | null; interest_cnt: number | null;
+}
+export interface MlCalibrationPerformance {
+  rows: number; reference_mae: number | null; current_mae: number | null; reference_win_rate: number | null;
+}
+export interface MlRightsRiskRow {
+  risk_grade: string; rows: number; matched: number; sold: number; sold_rate: number | null; median_proxy_margin: number | null;
+  avg_assumed_amount: number | null; opposition_rows: number; safe_bid_hit_rate: number | null;
+}
+export interface MlReview {
+  summary: MlReviewSummary;
+  groupMedian: MlGroupMedianRow[];
+  featureCoverage: MlFeatureCoverageRow[];
+  surprises: MlSurpriseRow[];
+  retryQueue: MlRetryQueueRow[];
+  calibrationPerformance: MlCalibrationPerformance;
+  rightsRisk: MlRightsRiskRow[];
+  reportMarkdown: string;
+}
+
+export async function fetchTodayActions(limit = 20): Promise<TodayAction[]> {
+  const qs = new URLSearchParams();
+  qs.set('limit', String(limit));
+  const res = await fetch(`${BASE}/api/actions/today?${qs.toString()}`);
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return (await res.json()) as TodayAction[];
+}
+
+export async function fetchMlReview(): Promise<MlReview> {
+  const res = await fetch(`${BASE}/api/review/ml`);
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return (await res.json()) as MlReview;
 }
 
 export async function fetchListings(params: { passedOnly?: boolean; type?: string; q?: string } = {}): Promise<ListingItem[]> {

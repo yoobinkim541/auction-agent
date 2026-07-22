@@ -74,6 +74,7 @@ function extractTenantsFromNotes(notes: string[]): Tenant[] {
 function rowToListing(r: ListingRow): Listing {
   return {
     caseNo: r.case_no,
+    itemNo: r.item_no ?? '1',
     court: r.court,
     address: r.address,
     roadAddress: r.road_address ?? undefined,
@@ -142,7 +143,7 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<{ 
   }
 
   // [교차보강] deonakchal 임차인이 있으면 최우선(courtauction은 임차인 표 미파싱). 별도 테이블이라 courtauction 재크롤로 안 지워짐.
-  const deonakTenants = await fetchDeonakTenants(listingId);
+  const deonakTenants = await fetchDeonakTenants(listingId, listing.itemNo ?? '1');
   if (deonakTenants && deonakTenants.length) tenants = deonakTenants as Tenant[];
 
   return {
