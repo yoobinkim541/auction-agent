@@ -1,8 +1,14 @@
 package com.gyeongmae.web;
 
 import com.gyeongmae.service.ListingService;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -36,6 +42,20 @@ public class ListingController {
   public ResponseEntity<String> detail(@PathVariable String caseNo) {
     String json = service.detailJson(caseNo);
     return json == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(json);
+  }
+
+
+  /** 캐시된 매물 사진. active 메타 + 실제 파일이 모두 있어야 노출한다. */
+  @GetMapping("/listings/{id}/photos/{filename:.+}")
+  public ResponseEntity<Resource> photo(@PathVariable long id, @PathVariable String filename) throws IOException {
+    Path path = service.photoPath(id, filename);
+    if (path == null) return ResponseEntity.notFound().build();
+    String contentType = Files.probeContentType(path);
+    MediaType mediaType = contentType == null ? MediaType.APPLICATION_OCTET_STREAM : MediaType.parseMediaType(contentType);
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .contentType(mediaType)
+        .body(new FileSystemResource(path));
   }
 
   /** 관심 토글: POST /api/listings/{id}/favorite?value=true */

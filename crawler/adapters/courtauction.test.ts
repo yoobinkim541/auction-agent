@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped, parseCourtDetail, isKnownForIncremental, shouldFetchDetailNow, detailDecision } from './courtauction.ts';
+import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped, parseCourtDetail, isKnownForIncremental, shouldFetchDetailNow, detailDecision, extractCourtPhotoUrls } from './courtauction.ts';
 
 describe('filterCourts', () => {
   it('빈 regions → 수도권 전체(16개) 반환', () => {
@@ -187,6 +187,28 @@ describe('parseCourtDetail', () => {
     expect(d.registry).toEqual([]);
     expect(d.statementSeniorDate).toBeUndefined();
     expect(d.notes).toEqual([]);
+  });
+});
+
+
+describe('extractCourtPhotoUrls', () => {
+  it('상세 dma_result에서 법원 매물 사진 URL만 추출한다', () => {
+    const detail = {
+      photoList: [
+        { fileUrl: '/down/image/photo1.jpg' },
+        { imgUrl: 'https://www.courtauction.go.kr/down/image/photo2.jpeg?x=1' },
+        { fileUrl: '/images/logo.png' },
+        { fileUrl: 'data:image/png;base64,abc' },
+        { fileUrl: '/down/image/photo1.jpg' },
+      ],
+      nested: { thumUrl: '/files/thumb_photo3.png' },
+    };
+
+    expect(extractCourtPhotoUrls(detail)).toEqual([
+      'https://www.courtauction.go.kr/down/image/photo1.jpg',
+      'https://www.courtauction.go.kr/down/image/photo2.jpeg?x=1',
+      'https://www.courtauction.go.kr/files/thumb_photo3.png',
+    ]);
   });
 });
 

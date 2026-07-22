@@ -252,6 +252,58 @@ export function parseMoney(s: string | undefined): number {
   return isNaN(n) ? 0 : n;
 }
 
+
+const PHOTO_KEY_RE = /(url|src|path|file|photo|image|img|thumb|thum)/i;
+const PHOTO_URL_RE = /\.(?:jpe?g|png|webp|gif)(?:\?|#|$)|(?:photo|image|img|thumb|thum|atch|file|down|download)/i;
+const NON_LISTING_IMAGE_RE = /logo|icon|btn|button|blank|spacer|bg[_-]|banner|sprite|\.svg(?:\?|#|$)/i;
+
+function normalizeCourtPhotoUrl(raw: string, baseUrl: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed || /^data:/i.test(trimmed) || NON_LISTING_IMAGE_RE.test(trimmed)) return null;
+  if (!PHOTO_URL_RE.test(trimmed)) return null;
+  try {
+    if (trimmed.startsWith('//')) return `https:${trimmed}`;
+    return new URL(trimmed, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+export function extractCourtPhotoUrls(detail: unknown, baseUrl = BASE): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const visited = new Set<object>();
+
+  function pushCandidate(value: string): void {
+    const normalized = normalizeCourtPhotoUrl(value, baseUrl);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+
+  function walk(value: unknown, keyHint = ''): void {
+    if (out.length >= 15 || value == null) return;
+    if (typeof value === 'string') {
+      if (PHOTO_KEY_RE.test(keyHint) || PHOTO_URL_RE.test(value)) pushCandidate(value);
+      return;
+    }
+    if (typeof value !== 'object') return;
+    if (visited.has(value)) return;
+    visited.add(value);
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item, keyHint);
+      return;
+    }
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      walk(nested, key);
+      if (out.length >= 15) return;
+    }
+  }
+
+  walk(detail);
+  return out.slice(0, 15);
+}
+
 /** 법원코드 → 법원명 */
 function courtName(code: string): string {
   return METRO_COURTS.find((c) => c.code === code)?.name ?? code;
@@ -567,6 +619,13 @@ function applyDetail(scraped: ScrapedListing, detail: any): void {
     caseNo: scraped.listing.caseNo, itemNo: scraped.listing.itemNo, docType: 'sale_statement',
     parsedJson: { tenants: d.tenants, notes: d.notes },
   });
+  const photos = extractCourtPhotoUrls(detail);
+  if (photos.length) {
+    docs.push({
+      caseNo: scraped.listing.caseNo, itemNo: scraped.listing.itemNo, docType: 'site_metrics',
+      parsedJson: { source: 'courtauction', photos },
+    });
+  }
   scraped.docs = docs;
 }
 

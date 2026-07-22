@@ -19,6 +19,7 @@ import {
   toCourtCaseNo,
   toCourtItemNo,
 } from './outcome-retry-utils.ts';
+import { deleteCachedPhotosForSoldListing } from '../shared/listing-photos.ts';
 
 interface RetryQueueRow {
   case_no: string;
@@ -67,6 +68,10 @@ async function recordRounds(caseNo: string, itemNo: string, court: string | null
       [caseNo, itemNo, court, round.date, round.kindCd, round.resultCd, round.minPrice, round.soldAmount, round.sold],
     );
     upserted++;
+    if (round.sold) {
+      const deleted = await deleteCachedPhotosForSoldListing(caseNo, itemNo, 'sold');
+      if (deleted) console.log(`[retry-outcomes] 사진 캐시 삭제 ${caseNo}/${itemNo}: ${deleted}개`);
+    }
   }
   const next = nextSaleDate(rounds, today);
   if (next) {

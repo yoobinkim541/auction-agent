@@ -87,6 +87,25 @@ public class ListingService {
       ) deonak_doc on true
       """;
 
+
+  public Path photoPath(long listingId, String filename) {
+    if (filename == null || !filename.matches("(?i)^[a-f0-9]{64}\\.(jpg|jpeg|png|webp|gif)$")) return null;
+    List<Map<String, Object>> rows = jdbc.queryForList("""
+        select cache_path
+          from gm_listing_photos
+         where listing_id = :id
+           and status = 'active'
+           and public_url = '/api/listings/' || cast(:id as text) || '/photos/' || :filename
+         order by id desc
+         limit 1
+        """, new MapSqlParameterSource().addValue("id", listingId).addValue("filename", filename));
+    if (rows.isEmpty()) return null;
+    Object rawPath = rows.get(0).get("cache_path");
+    if (rawPath == null) return null;
+    Path path = Path.of(rawPath.toString()).normalize();
+    return Files.isRegularFile(path) ? path : null;
+  }
+
   /** 목록용 경량 쿼리 — comps/photos/report 본문/tenants/classified 등 무거운 필드 제외 (~10× 경량) */
   private static final String SELECT_SLIM = """
       select l.id, l.case_no, l.item_no, l.court, l.address, l.property_type,

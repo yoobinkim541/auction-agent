@@ -27,6 +27,7 @@ import { fetchRentDeals, estimateRent, estimateRentFromSalePrice } from './incom
 import { analyzeIncome } from './income/yield.ts';
 import { analyzeEviction } from './eviction/index.ts';
 import { parseKoreanDate, extractLabeledKoreanMoney } from '../crawler/normalize.ts';
+import { cacheListingPhotos } from '../shared/listing-photos.ts';
 
 /** 사용자 취득세 가정(개인 1주택 기본). 다주택/법인이면 여기 또는 향후 설정에서 조정. */
 const TAX_ASSUMPTION = { homeCountAfter: 1 } as const;
@@ -262,7 +263,13 @@ async function main() {
       loc.building = siteMetrics.building;
       loc.adminOffices = siteMetrics.adminOffices;
       loc.siteComps = siteMetrics.siteComps;
-      loc.photos = siteMetrics.photos;
+      if (siteMetrics.photos?.length) {
+        try {
+          loc.photos = await cacheListingPhotos(r.id, listing.caseNo, listing.itemNo ?? '1', siteMetrics.photos);
+        } catch (err) {
+          console.warn(`[analyze] 사진 캐시 실패 ${listing.caseNo}/${listing.itemNo ?? '1'}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
       loc.landUseFlags = classifyLandUseFlags(siteMetrics.landUseText);
       if (siteMetrics.transit?.length) {
         const nearest = [...siteMetrics.transit].sort((a, b) => a.distanceM - b.distanceM)[0]!;

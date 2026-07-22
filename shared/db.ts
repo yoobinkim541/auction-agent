@@ -142,6 +142,76 @@ export async function saveLocationAnalysis(listingId: number, loc: LocationAnaly
   );
 }
 
+
+export interface ListingPhotoInput {
+  caseNo: string;
+  itemNo: string;
+  source: string;
+  sourceUrl: string;
+  cachePath: string;
+  publicUrl: string;
+  contentHash: string;
+}
+
+export async function saveListingPhotoMetadata(listingId: number, input: ListingPhotoInput): Promise<void> {
+  await query(
+    `insert into gm_listing_photos
+       (listing_id, case_no, item_no, source, source_url, cache_path, public_url, content_hash, status, delete_reason, deleted_at, captured_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,'active',null,null,now())
+     on conflict (listing_id, content_hash) do update set
+       case_no=excluded.case_no,
+       item_no=excluded.item_no,
+       source=excluded.source,
+       source_url=excluded.source_url,
+       cache_path=excluded.cache_path,
+       public_url=excluded.public_url,
+       status='active',
+       delete_reason=null,
+       deleted_at=null,
+       captured_at=now()`,
+    [listingId, input.caseNo, input.itemNo || '1', input.source, input.sourceUrl, input.cachePath, input.publicUrl, input.contentHash],
+  );
+}
+
+export async function activeListingPhotoUrls(listingId: number): Promise<string[]> {
+  const rows = await query<{ public_url: string }>(
+    `select public_url from gm_listing_photos where listing_id=$1 and status='active' order by captured_at, id`,
+    [listingId],
+  );
+  return rows.map((r) => r.public_url);
+}
+
+export async function photoCachePathForPublicFile(listingId: number, filename: string): Promise<string | null> {
+  const rows = await query<{ cache_path: string }>(
+    `select cache_path
+       from gm_listing_photos
+      where listing_id=$1 and status='active' and public_url = '/api/listings/' || $1::text || '/photos/' || $2
+      order by id desc limit 1`,
+    [listingId, filename],
+  );
+  return rows[0]?.cache_path ?? null;
+}
+
+export async function markListingPhotosDeletedByCase(caseNo: string, itemNo: string, reason: string): Promise<string[]> {
+  const normalizedItemNo = itemNo || '1';
+  const rows = await query<{ listing_id: number; cache_path: string }>(
+    `update gm_listing_photos p
+        set status='deleted', delete_reason=$3, deleted_at=now()
+       from gm_listings l
+      where p.listing_id=l.id
+        and p.status='active'
+        and l.case_no=$1
+        and coalesce(nullif(l.item_no,''),'1')=$2
+      returning p.listing_id, p.cache_path`,
+    [caseNo, normalizedItemNo, reason],
+  );
+  const listingIds = [...new Set(rows.map((r) => r.listing_id))];
+  for (const listingId of listingIds) {
+    await query(`update gm_location_analysis set photos='[]'::jsonb, analyzed_at=now() where listing_id=$1`, [listingId]);
+  }
+  return rows.map((r) => r.cache_path);
+}
+
 /** sale_rounds 차수에서 fail_count 역산해 gm_listings 갱신 — 이전엔 saveLocationAnalysis의 숨은
  *  부수효과였던 것을 분리(호출부에서 명시 호출). N차 매각기일 = N-1회 유찰;
  *  sale_date 일치 차수 우선, 없으면 과거 최대 차수를 하한으로 사용. */

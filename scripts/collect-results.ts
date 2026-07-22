@@ -14,6 +14,7 @@ import {
   nextSaleDate, failedRoundCount, type SaleResultRound,
 } from '../crawler/adapters/courtauction.ts';
 import { normalizeCaseNo } from '../crawler/normalize.ts';
+import { deleteCachedPhotosForSoldListing } from '../shared/listing-photos.ts';
 
 interface Counters { upserted: number; sold: number; refreshed: number }
 interface DbKey { caseNo: string; itemNo: string }
@@ -57,7 +58,11 @@ async function recordRounds(caseNo: string, itemNo: string, court: string | null
       [caseNo, itemNo, court, rd.date, rd.kindCd, rd.resultCd, rd.minPrice, rd.soldAmount, rd.sold],
     );
     ctr.upserted++;
-    if (rd.sold) ctr.sold++;
+    if (rd.sold) {
+      ctr.sold++;
+      const deleted = await deleteCachedPhotosForSoldListing(caseNo, itemNo, 'sold');
+      if (deleted) console.log(`[collect-results] 사진 캐시 삭제 ${caseNo}/${itemNo}: ${deleted}개`);
+    }
   }
   const next = nextSaleDate(rounds, today);
   if (next) {
