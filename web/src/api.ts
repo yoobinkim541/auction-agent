@@ -5,6 +5,38 @@
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined) || '';
 export const apiBase = BASE || '(상대경로 /api → Vercel 프록시)';
 
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), 15_000);
+  const headers = { Accept: 'application/json', ...(init.headers ?? {}) };
+  try {
+    const res = await fetch(`${BASE}${path}`, { ...init, headers, signal: init.signal ?? controller.signal });
+    if (!res.ok) {
+      let detail = '';
+      try {
+        const body = (await res.json()) as { error?: string; message?: string };
+        detail = body.error || body.message || '';
+      } catch {
+        detail = await res.text().catch(() => '');
+      }
+      throw new ApiError(res.status, `API ${res.status}${detail ? `: ${detail}` : ''}`);
+    }
+    return (await res.json()) as T;
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw new Error('API timeout');
+    throw e;
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
+}
+
 // Spring /api/listings 가 반환하는 행 형태 (Postgres가 조립한 중첩 JSON)
 export interface RightsObj {
   malso_basis?: { note?: string; date?: string | null } | null;
@@ -237,18 +269,26 @@ export interface MlReview {
   reportMarkdown: string;
 }
 
+export interface BackendHealth {
+  ok: boolean;
+  service?: string;
+  version?: string;
+  time?: string;
+  [key: string]: unknown;
+}
+
+export async function fetchBackendHealth(): Promise<BackendHealth> {
+  return apiJson<BackendHealth>('/api/health');
+}
+
 export async function fetchTodayActions(limit = 20): Promise<TodayAction[]> {
   const qs = new URLSearchParams();
   qs.set('limit', String(limit));
-  const res = await fetch(`${BASE}/api/actions/today?${qs.toString()}`);
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return (await res.json()) as TodayAction[];
+  return apiJson<TodayAction[]>(`/api/actions/today?${qs.toString()}`);
 }
 
 export async function fetchMlReview(): Promise<MlReview> {
-  const res = await fetch(`${BASE}/api/review/ml`);
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return (await res.json()) as MlReview;
+  return apiJson<MlReview>('/api/review/ml');
 }
 
 export async function fetchListings(params: { passedOnly?: boolean; type?: string; q?: string } = {}): Promise<ListingItem[]> {
@@ -256,15 +296,11 @@ export async function fetchListings(params: { passedOnly?: boolean; type?: strin
   if (params.passedOnly) qs.set('passedOnly', 'true');
   if (params.type && params.type !== 'all') qs.set('type', params.type);
   if (params.q) qs.set('q', params.q);
-  const res = await fetch(`${BASE}/api/listings?${qs.toString()}`);
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return (await res.json()) as ListingItem[];
+  return apiJson<ListingItem[]>(`/api/listings?${qs.toString()}`);
 }
 
 export async function fetchDetail(caseNo: string): Promise<ListingItem> {
-  const res = await fetch(`${BASE}/api/listings/${encodeURIComponent(caseNo)}`);
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return (await res.json()) as ListingItem;
+  return apiJson<ListingItem>(`/api/listings/${encodeURIComponent(caseNo)}`);
 }
 
 export async function triggerJob(job: 'crawl' | 'analyze' | 'eval' | 'ingest-legal'): Promise<void> {
@@ -312,9 +348,7 @@ function postJob(job: 'crawl' | 'analyze' | 'eval' | 'ingest-legal', token: stri
 
 export interface JobStatus { state: 'idle' | 'running' | 'ok' | 'error'; startedAt?: string; finishedAt?: string; exitCode?: number; error?: string; }
 export async function fetchJobStatus(): Promise<Record<string, JobStatus>> {
-  const res = await fetch(`${BASE}/api/jobs/status`);
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return (await res.json()) as Record<string, JobStatus>;
+  return apiJson<Record<string, JobStatus>>('/api/jobs/status');
 }
 
 export async function setFavorite(id: number, value: boolean): Promise<void> {
@@ -326,9 +360,7 @@ export async function setFavorite(id: number, value: boolean): Promise<void> {
 export interface FieldworkNote { item_key: string; checked: boolean; note: string; updated_at?: string }
 
 export async function fetchFieldworkNotes(id: number): Promise<FieldworkNote[]> {
-  const res = await fetch(`${BASE}/api/listings/${id}/fieldwork`);
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return (await res.json()) as FieldworkNote[];
+  return apiJson<FieldworkNote[]>(`/api/listings/${id}/fieldwork`);
 }
 
 export async function saveFieldworkNote(id: number, itemKey: string, checked: boolean, note: string): Promise<void> {

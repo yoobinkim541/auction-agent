@@ -23,6 +23,7 @@ import { exportCSV } from './export-csv.ts';
 import { loadConfig, saveConfig, loadUIState, saveUIState } from './persistence.ts';
 import { useMediaQuery } from './useMediaQuery.ts';
 import { buildTriageCards } from './triage.ts';
+import { useBackendStatus } from './backend-status.ts';
 
 const TODAY = localDateISO(); // KST 기준 로컬 날짜(UTC slice는 00:00~09:00 KST 구간에서 어제 날짜)
 
@@ -65,6 +66,7 @@ const SORT_DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
 export default function App() {
   const { rows, setRows, loading, err, lastCrawl, load } = useListings();
   const { actions: todayActions, loading: todayActionsLoading, error: todayActionsError, reload: reloadTodayActions } = useTodayActions(20);
+  const backendStatus = useBackendStatus();
   const [onlyPassed, setOnlyPassed] = useState<boolean>(() => loadUIState().onlyPassed ?? false);
   const [onlyFavorite, setOnlyFavorite] = useState(false);
   const [onlyMultiRound, setOnlyMultiRound] = useState<boolean>(() => loadUIState().onlyMultiRound ?? false);
@@ -292,6 +294,9 @@ export default function App() {
         <div className="ops-brand">
           <b>GYEONGMAE AGENT</b>
           <span>Operations Cockpit</span>
+          <button className={`backend-pill backend-${backendStatus.view.tone}`} onClick={backendStatus.reload} title={backendStatus.view.detail}>
+            {backendStatus.view.label}
+          </button>
         </div>
 
         {!loading && rows.length > 0 && (
@@ -332,7 +337,12 @@ export default function App() {
 
       <main className="content-area">
       <header className="dash-header">
-        <h1>경매 매물 분석 <span className="sub">권리분석 · 입지분석</span>{lastCrawl && <span className="crawl-date">데이터 기준 {lastCrawl.date}</span>}</h1>
+        <div className="dash-title-row">
+          <h1>경매 매물 분석 <span className="sub">권리분석 · 입지분석</span>{lastCrawl && <span className="crawl-date">데이터 기준 {lastCrawl.date}</span>}</h1>
+          <button className={`backend-pill backend-${backendStatus.view.tone}`} onClick={backendStatus.reload} title={backendStatus.view.detail}>
+            {backendStatus.view.label}
+          </button>
+        </div>
         {lastCrawl?.blocked && (
           <div className="stale-banner blocked" role="alert">
             ⛔ <strong>크롤 차단 의심</strong> — 법원경매 최근 수집이 0건/실패입니다{lastCrawl.daysAgo < 900 ? ` (마지막 정상 수집 ${lastCrawl.daysAgo}일 전)` : ''}.
@@ -582,6 +592,46 @@ export default function App() {
         <Suspense fallback={<div className="list-more">지도 불러오는 중…</div>}>
           <MapView items={mapPoints} onSelect={handleSelect} showAll={mapShowAll} onToggleShowAll={() => setMapShowAll((s) => !s)} />
         </Suspense>
+      )}
+
+      {!showReview && viewMode === 'list' && view.length > 0 && !isMobile && (
+        <section className="deal-board" aria-label="추천 딜 보드">
+          <div className="panel-head">
+            <div>
+              <h2>추천 딜 보드</h2>
+              <p>현재 조건에서 먼저 열어볼 상위 매물입니다. 카드로 판단하고 표로 검증하세요.</p>
+            </div>
+            <span className="panel-count">TOP {Math.min(6, visible.length)}</span>
+          </div>
+          <div className="deal-grid">
+            {visible.slice(0, 6).map(({ item, sc }) => {
+              const risk = RISK[item.rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
+              const reco = item.location?.report?.recommendation;
+              const trueMgn = item.location?.acquisition_cost?.trueSafetyMargin;
+              const assumed = item.rights?.assumed_amount ?? 0;
+              return (
+                <button key={`deal:${item.id}`} className={`deal-card-ui deal-${reco ?? 'none'}${assumed > 0 ? ' deal-assumed' : ''}`} onClick={() => handleSelect(item)}>
+                  <span className="deal-topline">
+                    <b>{TYPE_LABEL[item.property_type] ?? item.property_type}</b>
+                    <DDay dateStr={item.sale_date} />
+                  </span>
+                  <strong className="deal-address">{item.address}</strong>
+                  <span className="deal-case mono">{item.case_no}{item.item_no && item.item_no !== '1' ? `-${item.item_no}` : ''}</span>
+                  <span className="deal-metrics">
+                    <span><small>최저가</small><b>{eok(item.min_bid_price)}</b></span>
+                    <span><small>진짜마진</small><b className={(trueMgn ?? 0) < 0 ? 'danger' : 'good'}>{pct(trueMgn)}</b></span>
+                    <span><small>인수</small><b className={assumed > 0 ? 'danger' : ''}>{assumed > 0 ? eok(assumed) : '0'}</b></span>
+                  </span>
+                  <span className="deal-foot">
+                    <span className={`badge ${risk.cls}`}>{risk.label}</span>
+                    {reco && <span className={`badge ${RECO[reco]?.cls ?? ''}`}>{RECO[reco]?.label ?? reco}</span>}
+                    <b className="deal-score">{sc.totalScore}</b>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
       )}
 
       {!showReview && viewMode === 'list' && view.length > 0 && !isMobile && (

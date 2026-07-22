@@ -60,7 +60,7 @@ function cardFor(row: ScoredRow, today: string): TriageCard | null {
   const subtitle = subtitleOf(item);
   const dday = ddayLabel(item, today);
 
-  if (diff !== null && diff <= 0) {
+  if (diff !== null && diff <= 1) {
     return {
       kind: 'urgent', tone: 'danger', label: '입찰임박', caseNo: item.case_no,
       title, subtitle, metric: pct(margin), footLeft: dday, footRight: assumed > 0 ? `인수 ${eok(assumed)}` : '인수 0',

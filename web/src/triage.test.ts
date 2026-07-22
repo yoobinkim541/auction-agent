@@ -56,6 +56,14 @@ describe('buildTriageCards', () => {
     expect(cards[1]).toMatchObject({ tone: 'warn', label: '인수주의' });
   });
 
+  it('내일 매각기일도 입찰임박 카드로 먼저 노출한다', () => {
+    const cards = buildTriageCards([
+      scored({ id: 1, case_no: 'tomorrow', sale_date: '2026-07-23' }, 72),
+    ], '2026-07-22', 4);
+
+    expect(cards[0]).toMatchObject({ kind: 'urgent', label: '입찰임박', footLeft: 'D-1' });
+  });
+
   it('같은 매물은 가장 중요한 카드 한 장으로만 노출한다', () => {
     const cards = buildTriageCards([
       scored({ id: 1, case_no: 'both', sale_date: '2026-07-22', rights: { risk_grade: 'risky', assumed_amount: 80_000_000 } as any }, 35, false),
