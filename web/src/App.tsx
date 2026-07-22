@@ -22,6 +22,7 @@ import { useIncrementalList } from './useIncremental.ts';
 import { exportCSV } from './export-csv.ts';
 import { loadConfig, saveConfig, loadUIState, saveUIState } from './persistence.ts';
 import { useMediaQuery } from './useMediaQuery.ts';
+import { buildTriageCards } from './triage.ts';
 
 const TODAY = localDateISO(); // KST 기준 로컬 날짜(UTC slice는 00:00~09:00 KST 구간에서 어제 날짜)
 
@@ -215,6 +216,7 @@ export default function App() {
   const caseGroups = useMemo(() => groupRowsByCase(viewFull), [viewFull]);
   const view = useMemo(() => (groupByCase ? caseGroups.map((g) => g.rows[0]!) : viewFull), [groupByCase, caseGroups, viewFull]);
   const caseSizes = useMemo(() => new Map(caseGroups.map((g) => [g.caseNo, g.rows.length] as const)), [caseGroups]);
+  const triageCards = useMemo(() => buildTriageCards(viewFull, TODAY, 4), [viewFull]);
 
   // 점진 렌더 — 처음 60행만 마운트, 스크롤 시 60씩 추가(표·카드 공용).
   // 필터/정렬/탭 변경은 view 참조가 바뀌어 자동으로 처음부터. (수천 행 일괄 마운트가 렌더링 병목이었음)
@@ -245,6 +247,10 @@ export default function App() {
     setOnlyPassedAvoid(false); setOnlyToday(false); setFilterDate(null); setMaxGapEok(0);
     setType('all'); setQ('');
   };
+  const navAll = () => { setShowReview(false); setShowCfg(false); setOnlyFavorite(false); setOnlyPassed(false); window.scrollTo(0, 0); };
+  const navRecommend = () => { setShowReview(false); setShowCfg(false); setOnlyFavorite(false); setOnlyPassed(true); window.scrollTo(0, 0); };
+  const navFavorite = () => { setShowReview(false); setShowCfg(false); setOnlyFavorite(true); window.scrollTo(0, 0); };
+  const navFieldwork = () => { setShowReview(false); setShowCfg(false); setSort('fieldwork'); setSortDir('desc'); window.scrollTo(0, 0); };
 
   const stats = useMemo(() => {
     const all = scored; // 단일 패스 재사용(별도 scoreClient 패스 제거)
@@ -281,8 +287,51 @@ export default function App() {
   const selNavPos = selNavIdx >= 0 ? `${selNavIdx + 1} / ${view.length}` : undefined;
 
   return (
-    <div className="app">
-      <header>
+    <div className="app app-hybrid">
+      <aside className="ops-sidebar" aria-label="운영 내비게이션">
+        <div className="ops-brand">
+          <b>GYEONGMAE AGENT</b>
+          <span>Operations Cockpit</span>
+        </div>
+
+        {!loading && rows.length > 0 && (
+          <section className="ops-health" aria-label="운영 현황">
+            <div className="ops-side-head">
+              <span>Operational Health</span>
+              <time>{TODAY.slice(5).replace('-', '.')}</time>
+            </div>
+            <div className="ops-health-grid">
+              <button onClick={navAll}><span>전체 분석</span><b>{stats.total}</b></button>
+              <button className="ops-good" onClick={navRecommend}><span>분석 통과</span><b>{stats.passed}</b></button>
+              <button className="ops-danger" onClick={() => { setOnlyToday((v) => !v); setFilterDate(null); }}><span>오늘 기일</span><b>{stats.todayUrgent}</b></button>
+              <button className="ops-review" onClick={() => { setCfg((c) => ({ ...c, includeReviewRequired: !c.includeReviewRequired })); setOnlyPassed(true); }}><span>검토 필요</span><b>{stats.reviewCount}</b></button>
+            </div>
+          </section>
+        )}
+
+        <nav className="ops-nav">
+          <span>Navigation</span>
+          <button className={activeTab === 'all' ? 'on' : ''} onClick={navAll}>📋 전체 매물</button>
+          <button className={activeTab === 'recommend' ? 'on' : ''} onClick={navRecommend}>🎯 추천 매물</button>
+          <button className={activeTab === 'fav' ? 'on' : ''} onClick={navFavorite}>★ 관심 매물 <em>{favCount}</em></button>
+          <button onClick={navFieldwork}>🚶 현장 임장</button>
+          <button className={activeTab === 'review' ? 'on' : ''} onClick={() => { setShowReview((s) => !s); setShowCfg(false); window.scrollTo(0, 0); }}>🧠 복기 / ML</button>
+        </nav>
+
+        <div className="ops-quick">
+          <label>
+            <span>Quick Filter</span>
+            <select value={type} onChange={(e) => setType(e.target.value)}>
+              <option value="all">전체 종류</option>
+              {Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </label>
+          <button onClick={load}>↻ 데이터 동기화</button>
+        </div>
+      </aside>
+
+      <main className="content-area">
+      <header className="dash-header">
         <h1>경매 매물 분석 <span className="sub">권리분석 · 입지분석</span>{lastCrawl && <span className="crawl-date">데이터 기준 {lastCrawl.date}</span>}</h1>
         {lastCrawl?.blocked && (
           <div className="stale-banner blocked" role="alert">
@@ -415,6 +464,35 @@ export default function App() {
         error={todayActionsError}
         onOpenCase={openCaseFromReview}
       />
+
+      {!showReview && !loading && !err && triageCards.length > 0 && (
+        <section className="triage-panel" aria-label="우선순위 액션">
+          <div className="panel-head">
+            <div>
+              <h2>우선순위 액션</h2>
+              <p>입찰임박·인수주의·추천·임장대기를 먼저 꺼내 발품 순서를 정합니다.</p>
+            </div>
+            <span className="panel-count">{triageCards.length}건</span>
+          </div>
+          <div className="triage-grid">
+            {triageCards.map((card) => (
+              <button key={`${card.kind}:${card.row.id}`} className={`triage-card triage-${card.tone}`} onClick={() => handleSelect(card.row)} title={card.subtitle}>
+                <span className="triage-rail" />
+                <span className="triage-label">{card.label}</span>
+                <span className="triage-main">
+                  <strong>{card.title}</strong>
+                  <em>{card.subtitle}</em>
+                </span>
+                <span className="triage-metric">{card.metric}</span>
+                <span className="triage-foot">
+                  <b>{card.footLeft}</b>
+                  <small>{card.footRight}</small>
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="controls">
         <details className="filter-menu">
@@ -582,6 +660,7 @@ export default function App() {
           <span className="tb-ico">⚙</span>조건
         </button>
       </nav>
+      </main>
     </div>
   );
 }

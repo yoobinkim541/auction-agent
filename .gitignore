@@ -31,3 +31,5 @@ web/.vercel/
 artifacts/ml/
 .venv-ml/
 .vercel
+
+.superdesign/tmp/
