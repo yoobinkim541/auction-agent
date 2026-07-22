@@ -1,0 +1,16 @@
+.git
+.github
+.vercel
+node_modules
+web/node_modules
+server/target
+.venv-ml
+artifacts
+.cache
+tmp
+.auth
+*.log
+*.pdf
+*.tsbuildinfo
+.env
+.env.local
