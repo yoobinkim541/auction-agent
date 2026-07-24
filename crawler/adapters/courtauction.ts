@@ -33,6 +33,7 @@ const COURT_BID_START_OFFSET_DAYS = parseInt(process.env.COURT_BID_START_OFFSET_
 const COURT_BID_DAYS = Math.max(1, parseInt(process.env.COURT_BID_DAYS ?? '180', 10) || 180);
 const COURT_PAGE_SIZE = Math.max(1, parseInt(process.env.COURT_PAGE_SIZE ?? '40', 10) || 40);
 const MIN_REQ_INTERVAL_MS = Math.max(250, parseInt(process.env.COURT_MIN_REQ_INTERVAL_MS ?? '2500', 10) || 2500);
+const REQ_TIMEOUT_MS = Math.max(1000, parseInt(process.env.COURT_REQ_TIMEOUT_MS ?? '20000', 10) || 20000);
 const PAGE_DWELL_MIN_MS = Math.max(0, parseInt(process.env.COURT_PAGE_DWELL_MIN_MS ?? '3000', 10) || 3000);
 const PAGE_DWELL_MAX_MS = Math.max(PAGE_DWELL_MIN_MS, parseInt(process.env.COURT_PAGE_DWELL_MAX_MS ?? '7000', 10) || 7000);
 const DETAIL_DWELL_MIN_MS = Math.max(0, parseInt(process.env.COURT_DETAIL_DWELL_MIN_MS ?? '4000', 10) || 4000);
@@ -138,7 +139,7 @@ async function crawlFetchRetry(
   let lastErr: unknown;
   for (let i = 0; i < tries; i++) {
     try {
-      return await courtAuctionFetch(url, init);
+      return await courtAuctionFetch(url, { ...init, signal: AbortSignal.timeout(REQ_TIMEOUT_MS) });
     } catch (e) {
       lastErr = e;
       if (i < tries - 1) {
