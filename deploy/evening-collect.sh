@@ -5,6 +5,9 @@
 cd /home/ubuntu/projects/gyeongmae-agent || exit 1
 export PATH="/home/ubuntu/.local/bin:$PATH"
 NOTIFY="scripts/notify-telegram.sh"   # 경매 전용 봇
+# 저녁 배치는 당일 결과 신선도용이다. evening 프로파일은 1차/2차를 bounded로 줄이고 3차 Phase2 미매칭 백필은 별도 retry worker/아침 배치로 넘긴다.
+export COLLECT_RESULTS_PROFILE="${COLLECT_RESULTS_PROFILE:-evening}"
+export COURT_REQ_TIMEOUT_MS="${COURT_REQ_TIMEOUT_MS:-8000}"
 echo "[$(date '+%F %T')] === evening collect start ==="
 npm run collect:results
 rc=$?
