@@ -69,6 +69,8 @@ systemd에서는 `gyeongmae-parse.service` override에 `Environment=PRECISION_DI
 
 ## 5. 서비스 재시작과 스모크 체크
 
+실행 중인 JAR 파일을 Maven이 직접 덮어쓰면 이전 JVM의 지연 클래스 로딩이 종료 시 실패할 수 있다. 백엔드는 별도 worktree에서 패키징하고, 운영 서비스를 중지한 짧은 구간에 검증된 JAR을 임시 이름으로 복사한 뒤 같은 파일시스템에서 원자적으로 교체한다. 웹도 별도 디렉터리에 빌드한 `dist`를 검증한 뒤 교체한다.
+
 ```bash
 sudo systemctl restart gyeongmae-api.service gyeongmae-web.service
 systemctl is-active gyeongmae-api.service gyeongmae-web.service
