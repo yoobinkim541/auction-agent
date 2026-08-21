@@ -227,6 +227,152 @@ public class ListingService {
     return jdbc.queryForObject(sql, params, String.class);
   }
 
+  /** 정밀 추천 후보(JSON 배열) — 후보 뷰의 추천 행만 기존 경량 매물 JSON에 결합한다. */
+  public String precisionRecommendationsJson(int requestedLimit) {
+    int limit = Math.max(3, Math.min(7, requestedLimit));
+    String sql = """
+        select coalesce(json_agg(t order by t.conservative_margin desc nulls last, t.sale_date asc nulls last, t.id asc), '[]'::json)::text
+          from (
+            select slim.*,
+                   jsonb_build_object(
+                     'status', shortlist.status,
+                     'confidence', shortlist.confidence,
+                     'conservative_value', shortlist.conservative_value,
+                     'recommended_bid', shortlist.recommended_bid,
+                     'hard_cap_bid', shortlist.hard_cap_bid,
+                     'reason_codes', shortlist.reason_codes,
+                     'strengths', shortlist.strengths,
+                     'risks', shortlist.risks,
+                     'required_checks', shortlist.required_checks,
+                     'evaluator_version', shortlist.evaluator_version,
+                     'evaluated_at', shortlist.evaluated_at
+                   ) as precision,
+                   case when decision.listing_id is null then null else jsonb_build_object(
+                     'id', decision.id,
+                     'listing_id', decision.listing_id,
+                     'decision', decision.decision,
+                     'reason_code', decision.reason_code,
+                     'note', decision.note,
+                     'target_bid', decision.target_bid,
+                     'created_at', decision.created_at
+                   ) end as current_decision,
+                   shortlist.conservative_margin
+              from (
+        """ + SELECT_SLIM + """
+              ) slim
+              join gm_precision_shortlist shortlist on shortlist.listing_id = slim.id
+             and shortlist.status = 'recommended'
+              left join gm_current_decisions decision on decision.listing_id = slim.id
+             order by shortlist.conservative_margin desc nulls last, slim.sale_date asc nulls last, slim.id asc
+             limit :limit
+          ) t
+        """;
+    return jdbc.queryForObject(sql, new MapSqlParameterSource("limit", limit), String.class);
+  }
+
+  /** 결정 이력(JSON 배열). 존재하지 않는 매물은 null로 구분한다. */
+  public String decisionHistoryJson(long listingId) {
+    Integer exists = jdbc.queryForObject(
+        "select count(*)::int from gm_listings where id = :id",
+        new MapSqlParameterSource("id", listingId), Integer.class);
+    if (exists == null || exists == 0) return null;
+    String sql = """
+        select coalesce(json_agg(jsonb_build_object(
+                 'id', id,
+                 'listing_id', listing_id,
+                 'decision', decision,
+                 'reason_code', reason_code,
+                 'note', note,
+                 'target_bid', target_bid,
+                 'precision_snapshot', precision_snapshot,
+                 'created_at', created_at
+               ) order by created_at desc, id desc), '[]'::json)::text
+          from gm_decision_events
+         where listing_id = :id
+        """;
+    return jdbc.queryForObject(sql, new MapSqlParameterSource("id", listingId), String.class);
+  }
+
+  /** 매물 존재와 최신 정밀 평가 스냅샷을 한 insert-select로 원자적으로 보존한다. */
+  public String recordDecision(
+      long listingId, String decision, String reasonCode, String note, Long targetBid) {
+    String sql = """
+        insert into gm_decision_events (
+          listing_id, decision, reason_code, note, target_bid, precision_snapshot
+        )
+        select l.id,
+               :decision,
+               :reasonCode,
+               :note,
+               :targetBid,
+               coalesce(to_jsonb(precision) - 'listing_id', '{}'::jsonb)
+          from gm_listings l
+          left join gm_precision_evaluations precision on precision.listing_id = l.id
+         where l.id = :listingId
+        returning jsonb_build_object(
+          'id', id,
+          'listing_id', listing_id,
+          'decision', decision,
+          'reason_code', reason_code,
+          'note', note,
+          'target_bid', target_bid,
+          'precision_snapshot', precision_snapshot,
+          'created_at', created_at
+        )::text
+        """;
+    var params = new MapSqlParameterSource()
+        .addValue("listingId", listingId)
+        .addValue("decision", decision)
+        .addValue("reasonCode", reasonCode)
+        .addValue("note", note == null ? "" : note)
+        .addValue("targetBid", targetBid);
+    List<String> rows = jdbc.queryForList(sql, params, String.class);
+    return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  /** 결정 저널 집계(JSON 객체) — 개인화 순위에는 사용하지 않는 읽기 전용 리포트다. */
+  public String decisionReviewJson() {
+    String sql = """
+        with summary as (
+          select coalesce(max(sample_size), 0)::int as sample_size,
+                 coalesce(bool_or(eligible_for_personalization), false) as eligible_for_personalization
+            from gm_decision_preference_summary
+        ), decision_counts as (
+          select decision, sum(event_count)::int as event_count
+            from gm_decision_preference_summary
+           group by decision
+        ), reason_distribution as (
+          select reason_code, sum(event_count)::int as event_count
+            from gm_decision_preference_summary
+           where reason_code is not null
+           group by reason_code
+        ), current_counts as (
+          select decision, count(*)::int as listing_count
+            from gm_current_decisions
+           group by decision
+        ), funnel as (
+          select coalesce(max(listing_count) filter (where decision = 'reviewing'), 0)::float8 as reviewing,
+                 coalesce(max(listing_count) filter (where decision = 'favorite'), 0)::float8 as favorite,
+                 coalesce(max(listing_count) filter (where decision = 'fieldwork'), 0)::float8 as fieldwork,
+                 coalesce(max(listing_count) filter (where decision = 'bid_review'), 0)::float8 as bid_review
+            from current_counts
+        )
+        select jsonb_build_object(
+          'decision_counts', coalesce((select jsonb_object_agg(decision, event_count) from decision_counts), '{}'::jsonb),
+          'reason_distribution', coalesce((select jsonb_object_agg(reason_code, event_count) from reason_distribution), '{}'::jsonb),
+          'funnel_conversion', jsonb_build_object(
+            'reviewing_to_favorite', case when funnel.reviewing + funnel.favorite > 0 then funnel.favorite / (funnel.reviewing + funnel.favorite) else null end,
+            'favorite_to_fieldwork', case when funnel.favorite + funnel.fieldwork > 0 then funnel.fieldwork / (funnel.favorite + funnel.fieldwork) else null end,
+            'fieldwork_to_bid_review', case when funnel.fieldwork + funnel.bid_review > 0 then funnel.bid_review / (funnel.fieldwork + funnel.bid_review) else null end
+          ),
+          'sample_size', summary.sample_size,
+          'eligible_for_personalization', summary.eligible_for_personalization
+        )::text
+          from summary cross join funnel
+        """;
+    return jdbc.queryForObject(sql, new MapSqlParameterSource(), String.class);
+  }
+
   /** 단일 매물 상세(JSON 객체 문자열 또는 null) */
   public String detailJson(String caseNo) {
     String sql = "select row_to_json(t)::text from (\n" + SELECT_BODY
