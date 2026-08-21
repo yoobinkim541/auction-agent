@@ -31,8 +31,9 @@ import { cacheListingPhotos } from '../shared/listing-photos.ts';
 import { evaluateListingTrust } from '../shared/data-trust.ts';
 import { evaluatePrecision } from './precision/evaluate.ts';
 import {
-  buildListingTrustInput, buildPrecisionInput, hashEvaluationInput, internalEvaluationHold,
+  buildListingTrustInput, buildPrecisionInput, hashEvaluationInput,
 } from './precision/input.ts';
+import { persistPrecisionStages } from './precision/persist.ts';
 
 /** 사용자 취득세 가정(개인 1주택 기본). 다주택/법인이면 여기 또는 향후 설정에서 조정. */
 const TAX_ASSUMPTION = { homeCountAfter: 1 } as const;
@@ -409,34 +410,34 @@ async function main() {
       }
 
       // 5) 결정형 분석 저장 후 신뢰·정밀 추천을 순차 평가한다.
-      await saveRightsAnalysis(r.id, rights, modelVersion, citations);
-      await saveLocationAnalysis(r.id, loc);
-      await backfillFailCountFromSaleRounds(r.id, loc.saleRounds); // 부수효과 명시 호출(이전엔 save 내부 숨김)
       const analysisAt = new Date().toISOString();
       const trustInput = buildListingTrustInput({ listing, rights, location: loc, documents, analysisAt });
-      const trust = evaluateListingTrust(trustInput);
-      await saveListingDataTrust(r.id, trust, hashEvaluationInput(trustInput));
-
-      const precisionInput = buildPrecisionInput({ listing, rights, location: loc, trustStatus: trust.status });
-      let precision = internalEvaluationHold();
-      try {
-        precision = evaluatePrecision(precisionInput);
-      } catch (error) {
-        console.warn(`[precision] ${listing.caseNo} 평가 실패: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      await savePrecisionEvaluation(r.id, precision, hashEvaluationInput(precisionInput));
 
       // 6) 레거시 점수는 마지막에 저장하고, 정밀 평가 내부 오류가 난 행은 통과시키지 않는다.
-      const score = scoreListing(listing.caseNo, rights, loc, listing.propertyType, listing.address, DEFAULT_SCORE_CONFIG, { inq: listing.inquiryCount ?? null, interest: listing.interestCount ?? null });
+      let score = scoreListing(listing.caseNo, rights, loc, listing.propertyType, listing.address, DEFAULT_SCORE_CONFIG, { inq: listing.inquiryCount ?? null, interest: listing.interestCount ?? null });
       if (!dataComplete && score.passedFilter) {
         score.passedFilter = false;
         score.reason = (score.reason ? score.reason + '; ' : '') + '등기 미수집 — 권리분석 보류';
       }
-      if (precision.reasonCodes.includes('INTERNAL_EVALUATION_ERROR') && score.passedFilter) {
-        score.passedFilter = false;
-        score.reason = (score.reason ? score.reason + '; ' : '') + '정밀 평가 내부 오류 — 추천 보류';
-      }
-      await saveScore(r.id, score);
+      let precisionInput: ReturnType<typeof buildPrecisionInput> | undefined;
+      const persisted = await persistPrecisionStages({
+        score,
+        saveRights: () => saveRightsAnalysis(r.id, rights, modelVersion, citations),
+        saveLocation: async () => {
+          await saveLocationAnalysis(r.id, loc);
+          await backfillFailCountFromSaleRounds(r.id, loc.saleRounds);
+        },
+        evaluateTrust: () => evaluateListingTrust(trustInput),
+        saveTrust: (trust) => saveListingDataTrust(r.id, trust, hashEvaluationInput(trustInput)),
+        evaluatePrecision: (trust) => {
+          precisionInput = buildPrecisionInput({ listing, rights, location: loc, trustStatus: trust.status });
+          return evaluatePrecision(precisionInput);
+        },
+        savePrecision: (precision) => savePrecisionEvaluation(r.id, precision, hashEvaluationInput(precisionInput!)),
+        saveLegacyScore: (legacyScore) => saveScore(r.id, legacyScore),
+        onPrecisionError: (error) => console.warn(`[precision] ${listing.caseNo} 평가 실패: ${error instanceof Error ? error.message : String(error)}`),
+      });
+      score = persisted.score;
       // 분석 중 지오코딩으로 새로 얻은 좌표를 gm_listings에 캐시
       if (loc.resolvedLat != null && loc.resolvedLng != null && (r.lat == null || r.lng == null)) {
         await query('UPDATE gm_listings SET lat=$2, lng=$3 WHERE id=$1', [r.id, loc.resolvedLat, loc.resolvedLng]);
