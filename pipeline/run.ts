@@ -8,7 +8,7 @@
  */
 import 'dotenv/config';
 import {
-  saveRightsAnalysis, saveLocationAnalysis, saveScore,
+  saveRightsAnalysis, saveLocationAnalysis, saveScore, saveListingDataTrust, savePrecisionEvaluation,
   fetchListingsForAnalysis, fetchListingDocs, type ListingRow, query, backfillFailCountFromSaleRounds,
   fetchDeonakTenants, fetchListingsByIds,
 } from '../shared/db.ts';
@@ -28,6 +28,11 @@ import { analyzeIncome } from './income/yield.ts';
 import { analyzeEviction } from './eviction/index.ts';
 import { parseKoreanDate, extractLabeledKoreanMoney } from '../crawler/normalize.ts';
 import { cacheListingPhotos } from '../shared/listing-photos.ts';
+import { evaluateListingTrust } from '../shared/data-trust.ts';
+import { evaluatePrecision } from './precision/evaluate.ts';
+import {
+  buildListingTrustInput, buildPrecisionInput, hashEvaluationInput, internalEvaluationHold,
+} from './precision/input.ts';
 
 /** 사용자 취득세 가정(개인 1주택 기본). 다주택/법인이면 여기 또는 향후 설정에서 조정. */
 const TAX_ASSUMPTION = { homeCountAfter: 1 } as const;
@@ -91,12 +96,12 @@ function rowToListing(r: ListingRow): Listing {
     isCollectiveBuilding: r.is_collective_building ?? false,
     source: r.source,
     sourceUrl: r.source_url ?? undefined,
-    crawledAt: new Date().toISOString(),
+    crawledAt: r.crawled_at instanceof Date ? r.crawled_at.toISOString() : r.crawled_at,
   };
 }
 
 /** 등기/임차인 문서(parsed_json)로 RightsInput을 구성. 없으면 빈 입력(엔진이 경고). */
-async function buildRightsInput(listingId: number, listing: Listing): Promise<{ input: RightsInput; siteAssumed: number | null; appraisalHighlights: string[]; siteMetrics: SiteMetrics; gongPrice?: number; scanNotes: string[]; appraisalText: string }> {
+async function buildRightsInput(listingId: number, listing: Listing): Promise<{ input: RightsInput; siteAssumed: number | null; appraisalHighlights: string[]; siteMetrics: SiteMetrics; gongPrice?: number; scanNotes: string[]; appraisalText: string; documents: unknown[] }> {
   const data = await fetchListingDocs(listingId);
 
   let registry: RegistryEntry[] = [];
@@ -170,6 +175,7 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<{ 
     gongPrice,
     scanNotes: notes,
     appraisalText,
+    documents: data.map((document) => document.parsed_json),
   };
 }
 
@@ -236,7 +242,7 @@ async function main() {
     const listing = rowToListing(r);
     try {
       // 1) 권리분석 (결정형 엔진) + 사이트 예상 낙찰자인수(권위값) 반영
-      const { input, siteAssumed, appraisalHighlights, siteMetrics, gongPrice, scanNotes, appraisalText } = await buildRightsInput(r.id, listing);
+      const { input, siteAssumed, appraisalHighlights, siteMetrics, gongPrice, scanNotes, appraisalText, documents } = await buildRightsInput(r.id, listing);
       const rights = analyzeRights(input);
       // courtauction 원천: 등기부·임차인 데이터 없음 → 거짓 "클린" 방지
       if (r.source === 'courtauction' && input.registry.length === 0) {
@@ -402,17 +408,34 @@ async function main() {
         }
       }
 
-      // 5) 점수 (데이터 불완전이면 통과 불가 — 등기 미수집 상태에서 점수 통과하면 오탐)
+      // 5) 결정형 분석 저장 후 신뢰·정밀 추천을 순차 평가한다.
+      await saveRightsAnalysis(r.id, rights, modelVersion, citations);
+      await saveLocationAnalysis(r.id, loc);
+      await backfillFailCountFromSaleRounds(r.id, loc.saleRounds); // 부수효과 명시 호출(이전엔 save 내부 숨김)
+      const analysisAt = new Date().toISOString();
+      const trustInput = buildListingTrustInput({ listing, rights, location: loc, documents, analysisAt });
+      const trust = evaluateListingTrust(trustInput);
+      await saveListingDataTrust(r.id, trust, hashEvaluationInput(trustInput));
+
+      const precisionInput = buildPrecisionInput({ listing, rights, location: loc, trustStatus: trust.status });
+      let precision = internalEvaluationHold();
+      try {
+        precision = evaluatePrecision(precisionInput);
+      } catch (error) {
+        console.warn(`[precision] ${listing.caseNo} 평가 실패: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      await savePrecisionEvaluation(r.id, precision, hashEvaluationInput(precisionInput));
+
+      // 6) 레거시 점수는 마지막에 저장하고, 정밀 평가 내부 오류가 난 행은 통과시키지 않는다.
       const score = scoreListing(listing.caseNo, rights, loc, listing.propertyType, listing.address, DEFAULT_SCORE_CONFIG, { inq: listing.inquiryCount ?? null, interest: listing.interestCount ?? null });
       if (!dataComplete && score.passedFilter) {
         score.passedFilter = false;
         score.reason = (score.reason ? score.reason + '; ' : '') + '등기 미수집 — 권리분석 보류';
       }
-
-      // 6) 저장
-      await saveRightsAnalysis(r.id, rights, modelVersion, citations);
-      await saveLocationAnalysis(r.id, loc);
-      await backfillFailCountFromSaleRounds(r.id, loc.saleRounds); // 부수효과 명시 호출(이전엔 save 내부 숨김)
+      if (precision.reasonCodes.includes('INTERNAL_EVALUATION_ERROR') && score.passedFilter) {
+        score.passedFilter = false;
+        score.reason = (score.reason ? score.reason + '; ' : '') + '정밀 평가 내부 오류 — 추천 보류';
+      }
       await saveScore(r.id, score);
       // 분석 중 지오코딩으로 새로 얻은 좌표를 gm_listings에 캐시
       if (loc.resolvedLat != null && loc.resolvedLng != null && (r.lat == null || r.lng == null)) {

@@ -9,6 +9,7 @@ import type {
 import type { CrawlRunRow } from './crawl-health.ts';
 import type { ListingTrustResult } from './data-trust.ts';
 import type { OutcomeTrustResult } from './outcome-trust.ts';
+import type { PrecisionEvaluation } from '../pipeline/precision/evaluate.ts';
 
 let _pool: pg.Pool | null = null;
 
@@ -43,6 +44,28 @@ export async function saveListingDataTrust(
        checks=excluded.checks, evaluator_version=excluded.evaluator_version,
        input_hash=excluded.input_hash, evaluated_at=now()`,
     [listingId, result.status, result.score, j(result.reasonCodes), j(result.checks), result.evaluatorVersion, inputHash],
+  );
+}
+
+export async function savePrecisionEvaluation(
+  listingId: number, result: PrecisionEvaluation, inputHash: string,
+): Promise<void> {
+  await query(
+    `insert into gm_precision_evaluations
+       (listing_id,status,confidence,conservative_value,recommended_bid,hard_cap_bid,
+        reason_codes,strengths,risks,required_checks,evaluator_version,input_hash,evaluated_at)
+     values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,now())
+     on conflict (listing_id) do update set
+       status=excluded.status, confidence=excluded.confidence,
+       conservative_value=excluded.conservative_value, recommended_bid=excluded.recommended_bid,
+       hard_cap_bid=excluded.hard_cap_bid, reason_codes=excluded.reason_codes,
+       strengths=excluded.strengths, risks=excluded.risks, required_checks=excluded.required_checks,
+       evaluator_version=excluded.evaluator_version, input_hash=excluded.input_hash, evaluated_at=now()`,
+    [
+      listingId, result.status, result.confidence, result.conservativeValue, result.recommendedBid,
+      result.hardCapBid, j(result.reasonCodes), j(result.strengths), j(result.risks),
+      j(result.requiredChecks), result.evaluatorVersion, inputHash,
+    ],
   );
 }
 
@@ -306,6 +329,7 @@ export interface ListingRow {
   appraisal_value: string | null; min_bid_price: string | null; fail_count: number | null;
   sale_date: string | null; demand_deadline: string | null; area_m2: string | null;
   is_collective_building: boolean | null; source: Listing['source']; source_url: string | null;
+  crawled_at: string | Date;
 }
 
 export async function fetchListingsForAnalysis(limit = 200, onlyNew = false): Promise<ListingRow[]> {
@@ -315,7 +339,7 @@ export async function fetchListingsForAnalysis(limit = 200, onlyNew = false): Pr
   // 활성(미래 기일·기일미정) 우선 — 재고가 limit를 넘어도 지나간 물건이 활성 재분석을 밀어내지 않게.
   return query<ListingRow>(
     `select id, case_no, coalesce(item_no,'1') as item_no, court, address, road_address, lat, lng, property_type, appraisal_value,
-            min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url
+            min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url, crawled_at
      from gm_listings ${where}
      order by (sale_date is null or sale_date >= current_date) desc, crawled_at desc limit $1`,
     [limit],
@@ -334,7 +358,7 @@ export async function fetchListingsByIds(ids: number[]): Promise<ListingRow[]> {
   if (!ids.length) return [];
   return query<ListingRow>(
     `select id, case_no, coalesce(item_no,'1') as item_no, court, address, road_address, lat, lng, property_type, appraisal_value,
-            min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url
+            min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url, crawled_at
      from gm_listings where id = any($1::bigint[])`,
     [ids],
   );
