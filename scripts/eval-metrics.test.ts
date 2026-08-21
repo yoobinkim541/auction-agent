@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { coverage, priceStats, qualityStats, profitStats, surprises, formatSummary, type EvalRow } from './eval-metrics.ts';
+import { coverage, priceStats, qualityStats, profitStats, surprises, formatReport, formatSummary, type EvalRow } from './eval-metrics.ts';
 
 const row = (o: Partial<EvalRow> = {}): EvalRow => ({
   case_no: 'x', item_no: '1', sale_date: '2026-06-01', property_type: 'apartment',
@@ -74,5 +74,16 @@ describe('formatSummary', () => {
     expect(formatSummary(rows, 50)).toContain('매칭 3건(낙찰 2');
     expect(formatSummary(rows, 50)).toContain('축적 중');
     expect(formatSummary(rows, 2)).toContain('시작 가능');
+  });
+});
+
+describe('formatReport', () => {
+  it('keeps raw coverage while calculating price metrics from trusted rows', () => {
+    const trustedRows = [overpriced];
+    const report = formatReport(trustedRows, 50, rows);
+
+    expect(report).toContain('매칭 3건(낙찰 2');
+    expect(report).toContain('[가격] 낙찰 1건');
+    expect(report).not.toContain('2025타경908');
   });
 });

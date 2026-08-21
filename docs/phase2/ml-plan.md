@@ -4,6 +4,12 @@
 
 ML is report-only until it beats the current rule-based pipeline on time-split backtests. It must not auto-change bids, filters, or recommendations yet.
 
+## Trusted Outcome Boundary
+
+- `gm_outcome_eval` is retained only for raw snapshot coverage, matched counts, and miss-rate reporting.
+- `gm_trusted_outcome_eval` is the sole source for price/profit/error metrics, calibration groups, rights replay, surprise cases, and ML CSV labels.
+- Review summaries report raw, trusted, held, and quarantined row counts so data-quality exclusions remain visible.
+
 ## First Targets
 
 1. Sale ratio regression
@@ -42,8 +48,8 @@ npm run ml:eval
 
 ## Adoption Gate
 
-- `gm_outcome_eval` miss rate < 30%.
-- Sold rows with sale-ratio labels >= 150.
+- Raw `gm_outcome_eval` miss rate < 30%.
+- Trusted sold rows with sale-ratio labels >= 150.
 - Time-split holdout beats current expected-bid MAE.
 - No automatic bid/recommendation changes before manual review.
 

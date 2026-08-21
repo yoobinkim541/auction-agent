@@ -167,9 +167,8 @@ const OUTCOME_TRUST_SQL = `
          e.matched as sale_date_matches,
          (select count(distinct coalesce(nullif(r.item_no, ''), '1')) from gm_auction_results r
            where r.case_no = e.case_no and r.dxdy_date = e.sale_date) as case_date_item_count
-    from gm_outcome_eval e
+   from gm_outcome_eval e
    where e.sale_date is not null
-     and (not e.matched or e.sold)
    order by e.sale_date desc, e.case_no, e.item_no
    limit $1`;
 

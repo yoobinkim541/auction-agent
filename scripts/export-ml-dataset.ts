@@ -19,19 +19,33 @@ function csvCell(value: Cell): string {
 
 async function main(): Promise<void> {
   const rows = await query<Record<string, Cell>>(
-    `select case_no, item_no, sale_date::text, property_type, court, address,
+    `with latest_listing as (
+       select distinct on (case_no, coalesce(nullif(item_no, ''), '1'))
+              id as listing_id, case_no, coalesce(nullif(item_no, ''), '1') as item_no
+         from gm_listings
+        order by case_no, coalesce(nullif(item_no, ''), '1'), crawled_at desc nulls last
+     ), trusted as (
+       select e.*, rr.risk_grade, rr.assumed_amount,
+              exists (
+                select 1
+                  from jsonb_array_elements(coalesce(rr.tenants, '[]'::jsonb)) tenant
+                 where coalesce((tenant->>'hasOpposition')::boolean, false)
+              ) as has_opposition_tenant
+         from gm_trusted_outcome_eval e
+         left join latest_listing l
+           on l.case_no = e.case_no
+          and l.item_no = coalesce(nullif(e.item_no, ''), '1')
+         left join gm_rights_analysis rr on rr.listing_id = l.listing_id
+        where e.sale_date < current_date
+     )
+     select case_no, item_no, sale_date::text, property_type, court, address,
             appraisal_value::float8, expected_bid::float8, market_price::float8, min_bid_price::float8,
             total_score::float8, passed_filter, recommendation, true_margin::float8, max_safe_bid::float8,
             inq_cnt::float8, interest_cnt::float8,
             sold, sold_amount::float8, result_cd, matched, residual::float8, residual_pct, sale_ratio,
             would_have_won_under_max_safe_bid, realized_bid_margin,
             risk_grade, assumed_amount::float8, has_opposition_tenant
-       from (
-         select e.*, rr.risk_grade, rr.assumed_amount, rr.has_opposition_tenant
-           from gm_outcome_eval e
-           left join gm_rights_risk_eval rr on rr.case_no = e.case_no and rr.item_no = coalesce(nullif(e.item_no,''),'1') and rr.sale_date = e.sale_date
-       ) q
-      where sale_date < current_date
+       from trusted
       order by sale_date, case_no, item_no`,
   );
   mkdirSync(dirname(outPath), { recursive: true });

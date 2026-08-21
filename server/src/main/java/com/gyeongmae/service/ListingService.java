@@ -284,14 +284,27 @@ public class ListingService {
   /** Phase2 복기/ML 대시보드 데이터 — 운영 추천에는 반영하지 않는 read-only 지표. */
   public Map<String, Object> mlReview() {
     String summarySql = """
-        with base as (
+        with raw as (
           select * from gm_outcome_eval where sale_date < current_date
+        ), trusted as (
+          select * from gm_trusted_outcome_eval where sale_date < current_date
+        ), trust_counts as (
+          select t.status, count(*)::int as rows
+            from gm_outcome_trust t
+            join raw r on r.case_no = t.case_no
+             and coalesce(nullif(r.item_no, ''), '1') = t.item_no
+             and r.sale_date = t.sale_date
+           group by t.status
         )
-        select count(*)::int as past_snapshots,
-               count(*) filter (where matched)::int as matched,
-               count(*) filter (where matched and sold)::int as sold,
-               count(*) filter (where matched and not sold)::int as unsold,
-               case when count(*) > 0 then 1 - count(*) filter (where matched)::float8 / count(*) else 0 end as miss_rate,
+        select (select count(*)::int from raw) as raw_rows,
+               (select count(*)::int from raw) as past_snapshots,
+               (select count(*) filter (where matched)::int from raw) as matched,
+               (select count(*) filter (where matched and sold)::int from raw) as sold,
+               (select count(*) filter (where matched and not sold)::int from raw) as unsold,
+               (select case when count(*) > 0 then 1 - count(*) filter (where matched)::float8 / count(*) else 0 end from raw) as miss_rate,
+               (select count(*)::int from trusted) as trusted,
+               coalesce((select rows from trust_counts where status = 'hold'), 0) as held,
+               coalesce((select rows from trust_counts where status = 'quarantined'), 0) as quarantined,
                count(*) filter (where sold and sale_ratio is not null)::int as sale_ratio_labels,
                avg(abs(residual_pct)) filter (where sold and residual_pct is not null) as expected_bid_mape,
                avg(abs(sale_ratio - expected_bid::float8 / nullif(appraisal_value, 0)))
@@ -301,7 +314,7 @@ public class ListingService {
                count(*) filter (where sold and would_have_won_under_max_safe_bid is not null)::int as safe_bid_rows,
                avg(case when would_have_won_under_max_safe_bid then 1.0 else 0.0 end)
                  filter (where sold and would_have_won_under_max_safe_bid is not null) as safe_bid_hit_rate
-          from base
+          from trusted
         """;
     Map<String, Object> summary = jdbc.getJdbcTemplate().queryForMap(summarySql);
 
@@ -316,7 +329,7 @@ public class ListingService {
                    else split_part(address, ' ', 1)
                  end as region,
                  sale_ratio, realized_bid_margin
-            from gm_outcome_eval
+            from gm_trusted_outcome_eval
            where sale_date < current_date and sold and sale_ratio is not null
         )
         select property_type, region, count(*)::int as rows,
@@ -354,7 +367,7 @@ public class ListingService {
           select case_no, coalesce(nullif(item_no,''),'1') as item_no, sale_date, property_type, court, address,
                  expected_bid, sold_amount, sale_ratio, residual_pct, total_score, passed_filter,
                  recommendation, true_margin, inq_cnt, interest_cnt, realized_bid_margin, matched, sold
-            from gm_outcome_eval
+            from gm_trusted_outcome_eval
            where sale_date < current_date
         ), ranked as (
           (select 'overpriced' as surprise_kind, residual_pct as surprise_score, *
@@ -399,13 +412,31 @@ public class ListingService {
     List<Map<String, Object>> retryQueue = jdbc.getJdbcTemplate().queryForList(retrySql);
 
     String calibrationPerformanceSql = """
-        with scored as (
+        with trusted_sold as (
+          select property_type,
+                 case
+                   when split_part(address, ' ', 1) in ('서울특별시','부산광역시','대구광역시','인천광역시','광주광역시','대전광역시','울산광역시','세종특별자치시')
+                     then split_part(address, ' ', 1) || ' ' || split_part(address, ' ', 2)
+                   when split_part(address, ' ', 1) like '%도'
+                     then split_part(address, ' ', 1) || ' ' || split_part(address, ' ', 2)
+                   else split_part(address, ' ', 1)
+                 end as region,
+                 sale_ratio, realized_bid_margin
+            from gm_trusted_outcome_eval
+           where sale_date < current_date and sold and sale_ratio is not null
+        ), calibration as (
+          select property_type, region,
+                 percentile_cont(0.5) within group (order by sale_ratio) as median_sale_ratio
+            from trusted_sold
+           group by property_type, region
+          having count(*) >= 5
+        ), scored as (
           select e.case_no, e.item_no, e.property_type, e.address, e.appraisal_value,
                  e.expected_bid, e.sale_ratio, c.median_sale_ratio,
                  abs(e.sale_ratio - c.median_sale_ratio) as reference_abs_error,
                  abs(e.sale_ratio - e.expected_bid::float8 / nullif(e.appraisal_value, 0)) as current_abs_error
-            from gm_outcome_eval e
-            join gm_ml_price_calibration c on c.property_type = e.property_type
+            from gm_trusted_outcome_eval e
+            join calibration c on c.property_type = e.property_type
              and c.region = case
                when split_part(e.address, ' ', 1) in ('서울특별시','부산광역시','대구광역시','인천광역시','광주광역시','대전광역시','울산광역시','세종특별자치시')
                  then split_part(e.address, ' ', 1) || ' ' || split_part(e.address, ' ', 2)
@@ -428,18 +459,22 @@ public class ListingService {
     Map<String, Object> calibrationPerformance = jdbc.getJdbcTemplate().queryForMap(calibrationPerformanceSql);
 
     String rightsRiskSql = """
-        select coalesce(risk_grade, 'unknown') as risk_grade,
+        select coalesce(r.risk_grade, 'unknown') as risk_grade,
                count(*)::int as rows,
-               count(*) filter (where matched)::int as matched,
-               count(*) filter (where sold)::int as sold,
-               avg(case when sold then 1.0 else 0.0 end) filter (where matched) as sold_rate,
-               avg(realized_bid_margin) filter (where sold and realized_bid_margin is not null) as median_proxy_margin,
-               avg(assumed_amount) filter (where assumed_amount is not null) as avg_assumed_amount,
-               count(*) filter (where has_opposition_tenant)::int as opposition_rows,
-               avg(case when would_have_won_under_max_safe_bid then 1.0 else 0.0 end)
-                 filter (where would_have_won_under_max_safe_bid is not null) as safe_bid_hit_rate
-          from gm_rights_risk_eval
-         group by coalesce(risk_grade, 'unknown')
+               count(*) filter (where e.matched)::int as matched,
+               count(*) filter (where e.sold)::int as sold,
+               avg(case when e.sold then 1.0 else 0.0 end) filter (where e.matched) as sold_rate,
+               avg(e.realized_bid_margin) filter (where e.sold and e.realized_bid_margin is not null) as median_proxy_margin,
+               avg(r.assumed_amount) filter (where r.assumed_amount is not null) as avg_assumed_amount,
+               count(*) filter (where r.has_opposition_tenant)::int as opposition_rows,
+               avg(case when e.would_have_won_under_max_safe_bid then 1.0 else 0.0 end)
+                 filter (where e.would_have_won_under_max_safe_bid is not null) as safe_bid_hit_rate
+          from gm_rights_risk_eval r
+          join gm_trusted_outcome_eval e
+            on e.case_no = r.case_no
+           and coalesce(nullif(e.item_no, ''), '1') = r.item_no
+           and e.sale_date = r.sale_date
+         group by coalesce(r.risk_grade, 'unknown')
          order by rows desc
         """;
     List<Map<String, Object>> rightsRisk = jdbc.getJdbcTemplate().queryForList(rightsRiskSql);

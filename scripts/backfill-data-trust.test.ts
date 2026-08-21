@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   isOutcomeTrustCandidate,
@@ -18,6 +19,12 @@ describe('readTrustBackfillOptions', () => {
 });
 
 describe('trust backfill mappings', () => {
+  it('classifies matched-unsold snapshots instead of excluding them from outcome trust', () => {
+    const source = readFileSync(new URL('./backfill-data-trust.ts', import.meta.url), 'utf8');
+
+    expect(source).not.toContain('and (not e.matched or e.sold)');
+  });
+
   it('filters outcomes without a sale date before trust-key mapping', () => {
     const candidates = [{
       case_no: '2026타경0', item_no: '1', sale_date: null,

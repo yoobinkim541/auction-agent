@@ -115,25 +115,25 @@ export function formatSummary(rows: EvalRow[], gate: number): string {
 }
 
 /** 전체 보정·복기 리포트(stdout/대시보드). 게이트 미달이면 축적 안내. */
-export function formatReport(rows: EvalRow[], gate: number): string {
-  const c = coverage(rows);
-  const out: string[] = ['=== 결과 피드백 보정 리포트 ===', formatSummary(rows, gate)];
+export function formatReport(trustedRows: EvalRow[], gate: number, coverageRows: EvalRow[] = trustedRows): string {
+  const c = coverage(coverageRows);
+  const out: string[] = ['=== 결과 피드백 보정 리포트 ===', formatSummary(coverageRows, gate)];
   if (c.pastSnapshots === 0) {
     out.push('', '아직 매각기일이 지난 예측 스냅샷이 없습니다. 매일 축적 중 — 매각이 발생하면 채워집니다.');
     return out.join('\n');
   }
   if (c.missRate > 0.3) out.push(`⚠️ 결과 미매칭률 ${(c.missRate * 100).toFixed(0)}% — 매각결과를 자주 놓치면 '매각결과 전용검색' 캡처 검토(plan 2a).`);
-  const p = priceStats(rows);
+  const p = priceStats(trustedRows);
   if (p) {
     out.push('', `[가격] 낙찰 ${p.n}건 · 예상오차(MAPE) ${p.mapePct.toFixed(1)}% · 편향 ${p.biasPct >= 0 ? '+' : ''}${p.biasPct.toFixed(1)}%(+면 과소예측) · 낙찰가율(중앙) ${p.saleRatioMedPct.toFixed(0)}%`);
     if (p.missingResidual > 0) out.push(`[가격] 낙찰 ${p.soldRows}건 중 ${p.missingResidual}건은 예상가/낙찰가 누락으로 가격오차 집계 제외(expected 누락 ${p.missingExpected}, sold_amount 누락 ${p.missingSoldAmount})`);
   }
-  const q = qualityStats(rows);
+  const q = qualityStats(trustedRows);
   if (q) out.push(`[품질] 통과 매물 낙찰률 ${q.passedSoldRate != null ? (q.passedSoldRate * 100).toFixed(0) + '%' : '-'} vs 미통과 낙찰률 ${q.notPassedSoldRate != null ? (q.notPassedSoldRate * 100).toFixed(0) + '%' : '-'}`);
-  const pr = profitStats(rows);
+  const pr = profitStats(trustedRows);
   if (pr) out.push(`[수익성] 안전입찰가 이하 낙찰률 ${pr.wonUnderSafeBidRate != null ? (pr.wonUnderSafeBidRate * 100).toFixed(0) + '%' : '-'} (${pr.safeBidRows}/${pr.soldRows}) · 실현 bid 마진 양수 ${pr.positiveRealizedMarginRate != null ? (pr.positiveRealizedMarginRate * 100).toFixed(0) + '%' : '-'} · 중앙 ${(pr.realizedMarginMedianPct).toFixed(1)}%`);
-  if (c.sold > 0) {
-    const s = surprises(rows, 3);
+  if (trustedRows.some((row) => row.sold)) {
+    const s = surprises(trustedRows, 3);
     if (s.overpriced.length) {
       out.push('', '🔺 예상보다 비싸게 팔림:');
       for (const r of s.overpriced) out.push(`  ${r.case_no} ${r.address.slice(0, 18)} — 예상 ${eok(r.expected_bid)}→실제 ${eok(r.sold_amount)} (+${((r.residual_pct ?? 0) * 100).toFixed(0)}%)`);
