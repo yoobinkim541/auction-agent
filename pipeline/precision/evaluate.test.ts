@@ -79,6 +79,31 @@ describe('evaluatePrecision', () => {
     expect(evaluatePrecision(precisionInput(overrides)).status).toBe('hold');
   });
 
+  it.each([
+    ['mixed comparable prices', [200_000_000, 0]],
+    ['infinite comparable price', [200_000_000, Infinity]],
+    ['NaN comparable price', [200_000_000, NaN]],
+  ] as const)('never recommends with %s', (_, comparablePrices) => {
+    const evaluation = evaluatePrecision(precisionInput({ comparablePrices }));
+    expect(evaluation.status).toBe('hold');
+    expect(evaluation.reasonCodes).toContain('INVALID_COMPARABLE_PRICE');
+    expect(evaluation.recommendedBid).toBeNull();
+    expect(`${evaluation.risks.join(' ')} ${evaluation.requiredChecks.join(' ')}`).toMatch(/[가-힣]/);
+  });
+
+  it.each([
+    ['market', { marketPrice: null }],
+    ['minimum bid', { minBidPrice: 0 }],
+    ['expected bid', { expectedBidPrice: NaN }],
+    ['maximum safe bid', { maxSafeBid: Infinity }],
+    ['comparable', { comparablePrices: [200_000_000, -1] }],
+  ] as const)('explains %s price holds in Korean', (_, overrides) => {
+    const evaluation = evaluatePrecision(precisionInput(overrides));
+    expect(evaluation.status).toBe('hold');
+    expect(`${evaluation.risks.join(' ')} ${evaluation.requiredChecks.join(' ')}`).toMatch(/[가-힣]/);
+    expect(evaluation.status).not.toBe('recommended');
+  });
+
   it('allows one comparable only with high market confidence', () => {
     expect(evaluatePrecision(precisionInput({ comparablePrices: [200_000_000] })).status).toBe('recommended');
   });

@@ -71,18 +71,24 @@ const result = (
 
 export const evaluatePrecision = (input: PrecisionInput): PrecisionEvaluation => {
   const targetMarginPct = input.targetMarginPct ?? 0.15;
-  const positivePriceEvidence = [input.appraisalValue, input.minBidPrice, input.marketPrice]
-    .every(isPositive);
+  const validAppraisalValue = isPositive(input.appraisalValue);
+  const validMinBidPrice = isPositive(input.minBidPrice);
+  const validMarketPrice = isPositive(input.marketPrice);
+  const validExpectedBidPrice = isPositive(input.expectedBidPrice);
+  const validMaxSafeBid = isPositive(input.maxSafeBid);
+  const positivePriceEvidence = validAppraisalValue && validMinBidPrice && validMarketPrice;
   const validCosts = isNonNegative(input.fixedCosts) && isNonNegative(input.assumedAmount);
-  const validControls = isPositive(input.expectedBidPrice)
-    && isPositive(input.maxSafeBid)
+  const validControls = validExpectedBidPrice
+    && validMaxSafeBid
     && Number.isFinite(targetMarginPct)
     && targetMarginPct >= 0
     && targetMarginPct < 1
     && isNonNegative(input.dangerFlagCount)
     && input.trueSafetyMargin !== null
     && Number.isFinite(input.trueSafetyMargin);
-  const positiveComparables = input.comparablePrices.filter(isPositive);
+  const comparablePricesValid = input.comparablePrices.length > 0
+    && input.comparablePrices.every(isPositive);
+  const positiveComparables = comparablePricesValid ? [...input.comparablePrices] : [];
   const enoughComparables = positiveComparables.length >= 2
     || (positiveComparables.length === 1 && input.marketConfidence === 'high');
   const validEvidence = positivePriceEvidence && validCosts && validControls && enoughComparables;
@@ -97,13 +103,34 @@ export const evaluatePrecision = (input: PrecisionInput): PrecisionEvaluation =>
   let recommendedBid: number | null = null;
 
   if (!positivePriceEvidence) reasonCodes.push('MISSING_OR_NON_POSITIVE_PRICE_EVIDENCE');
+  if (!validAppraisalValue) {
+    reasonCodes.push('MISSING_OR_NON_POSITIVE_APPRAISAL_VALUE');
+    requiredChecks.push('감정가가 없거나 0 이하 또는 유효하지 않습니다. 감정가를 확인하세요.');
+  }
+  if (!validMarketPrice) {
+    reasonCodes.push('MISSING_OR_NON_POSITIVE_MARKET_PRICE');
+    requiredChecks.push('시장가격이 없거나 0 이하 또는 유효하지 않습니다. 시장가격을 확인하세요.');
+  }
+  if (!validMinBidPrice) {
+    reasonCodes.push('MISSING_OR_NON_POSITIVE_MIN_BID_PRICE');
+    requiredChecks.push('최저입찰가가 없거나 0 이하 또는 유효하지 않습니다. 최저입찰가를 확인하세요.');
+  }
   if (!validCosts) reasonCodes.push('INVALID_COST_INPUT');
-  if (!isPositive(input.expectedBidPrice)) reasonCodes.push('MISSING_OR_NON_POSITIVE_EXPECTED_BID');
-  if (!isPositive(input.maxSafeBid)) reasonCodes.push('MISSING_OR_NON_POSITIVE_MAX_SAFE_BID');
+  if (!validExpectedBidPrice) {
+    reasonCodes.push('MISSING_OR_NON_POSITIVE_EXPECTED_BID');
+    requiredChecks.push('예상입찰가가 없거나 0 이하 또는 유효하지 않습니다. 예상입찰가를 확인하세요.');
+  }
+  if (!validMaxSafeBid) {
+    reasonCodes.push('MISSING_OR_NON_POSITIVE_MAX_SAFE_BID');
+    requiredChecks.push('안전최대입찰가가 없거나 0 이하 또는 유효하지 않습니다. 안전최대입찰가를 확인하세요.');
+  }
   if (!Number.isFinite(targetMarginPct) || targetMarginPct < 0 || targetMarginPct >= 1) {
     reasonCodes.push('INVALID_TARGET_MARGIN');
   }
-  if (positiveComparables.length === 0) reasonCodes.push('NO_VALID_COMPARABLE_PRICES');
+  if (!comparablePricesValid && input.comparablePrices.length > 0) {
+    reasonCodes.push('INVALID_COMPARABLE_PRICE');
+    requiredChecks.push('비교사례 가격에 0 이하 또는 유효하지 않은 값이 있습니다. 모든 비교사례 가격을 확인하세요.');
+  } else if (positiveComparables.length === 0) reasonCodes.push('NO_VALID_COMPARABLE_PRICES');
   else if (!enoughComparables) reasonCodes.push('INSUFFICIENT_COMPARABLE_PRICES');
 
   if (positivePriceEvidence && positiveComparables.length > 0) {
@@ -117,15 +144,25 @@ export const evaluatePrecision = (input: PrecisionInput): PrecisionEvaluation =>
     }
   }
 
-  if (conservativeValue !== null && isPositive(input.maxSafeBid) && validCosts && Number.isFinite(targetMarginPct)) {
+  if (conservativeValue !== null && validMaxSafeBid && validCosts && Number.isFinite(targetMarginPct)) {
     const costCap = conservativeValue * (1 - targetMarginPct) - input.fixedCosts - input.assumedAmount;
-    hardCapBid = Math.max(0, Math.floor(Math.min(input.maxSafeBid, costCap)));
+    hardCapBid = Math.max(0, Math.floor(Math.min(input.maxSafeBid as number, costCap)));
     if (isPositive(input.minBidPrice)) {
-      if (input.minBidPrice > hardCapBid) reasonCodes.push('MIN_BID_ABOVE_HARD_CAP');
-      else if (isPositive(input.expectedBidPrice)) {
-        recommendedBid = Math.min(hardCapBid, Math.max(input.minBidPrice, input.expectedBidPrice));
+      if ((input.minBidPrice as number) > hardCapBid) {
+        reasonCodes.push('MIN_BID_ABOVE_HARD_CAP');
+        risks.push('최저입찰가가 산출된 하드캡을 초과합니다.');
+      }
+      else if (validExpectedBidPrice) {
+        recommendedBid = Math.min(hardCapBid, Math.max(input.minBidPrice as number, input.expectedBidPrice as number));
       }
     }
+  }
+
+  if (conservativeValue === null) {
+    requiredChecks.push('보수적 가치 산출에 필요한 감정가·시장가격·비교사례 근거를 확인하세요.');
+  }
+  if (hardCapBid === null) {
+    requiredChecks.push('비용 상한 산출에 필요한 보수적 가치·안전최대입찰가·비용을 확인하세요.');
   }
 
   if (input.assumedAmount > 0) {
@@ -186,6 +223,9 @@ export const evaluatePrecision = (input: PrecisionInput): PrecisionEvaluation =>
   if (sparseEvidence && validEvidence) {
     risks.push('비교사례가 성긴 가격 근거입니다.');
     requiredChecks.push('독립적인 추가 비교사례를 확인하세요.');
+  }
+  if (status !== 'recommended' && risks.length === 0 && requiredChecks.length === 0) {
+    requiredChecks.push('추천 조건을 충족하지 못한 사유와 원천 자료를 확인하세요.');
   }
 
   const confidence: PrecisionConfidence = status === 'hold' || status === 'conditional' || status === 'rejected'
