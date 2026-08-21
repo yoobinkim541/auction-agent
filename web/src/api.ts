@@ -178,6 +178,45 @@ export interface ListingItem {
   safety_margin_score: number | null;
   clean_rights_score: number | null;
   reason: string | null;
+  precision?: PrecisionObj | null;
+  current_decision?: DecisionEvent | null;
+}
+
+export type PrecisionStatus = 'recommended' | 'conditional' | 'hold' | 'rejected';
+export type PrecisionConfidence = 'high' | 'medium' | 'low';
+export type DecisionKind = 'reviewing' | 'favorite' | 'hold' | 'fieldwork' | 'bid_review' | 'rejected';
+export type DecisionReason = 'price' | 'rights' | 'location' | 'field' | 'capital' | 'schedule' | 'preference' | 'data_missing';
+
+export interface PrecisionObj {
+  status: PrecisionStatus;
+  confidence: PrecisionConfidence;
+  conservative_value: number | null;
+  recommended_bid: number | null;
+  hard_cap_bid: number | null;
+  reason_codes: string[];
+  strengths: string[];
+  risks: string[];
+  required_checks: string[];
+  evaluator_version: string;
+  evaluated_at: string;
+}
+
+export interface DecisionEvent {
+  id: number;
+  listing_id: number;
+  decision: DecisionKind;
+  reason_code: DecisionReason | null;
+  note: string;
+  target_bid: number | null;
+  precision_snapshot?: PrecisionObj | Record<string, unknown>;
+  created_at: string;
+}
+
+export interface DecisionInput {
+  decision: DecisionKind;
+  reasonCode?: DecisionReason;
+  note?: string;
+  targetBid?: number;
 }
 
 
@@ -297,6 +336,23 @@ export async function fetchListings(params: { passedOnly?: boolean; type?: strin
   if (params.type && params.type !== 'all') qs.set('type', params.type);
   if (params.q) qs.set('q', params.q);
   return apiJson<ListingItem[]>(`/api/listings?${qs.toString()}`);
+}
+
+export async function fetchPrecisionRecommendations(limit = 5): Promise<ListingItem[]> {
+  const clampedLimit = Math.max(3, Math.min(7, Math.trunc(limit) || 5));
+  return apiJson<ListingItem[]>(`/api/recommendations/precision?limit=${clampedLimit}`);
+}
+
+export async function fetchDecisions(id: number): Promise<DecisionEvent[]> {
+  return apiJson<DecisionEvent[]>(`/api/listings/${id}/decisions`);
+}
+
+export async function saveDecision(id: number, input: DecisionInput): Promise<DecisionEvent> {
+  return apiJson<DecisionEvent>(`/api/listings/${id}/decisions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
 }
 
 export async function fetchDetail(caseNo: string): Promise<ListingItem> {

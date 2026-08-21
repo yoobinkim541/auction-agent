@@ -1,17 +1,20 @@
 import { useState, useEffect } from 'react';
-import { eok, won, pct, type ListingItem, type RightsObj, type LocationObj } from './api.ts';
+import { eok, won, pct, type DecisionEvent, type ListingItem, type RightsObj, type LocationObj } from './api.ts';
 import { RISK, TYPE_LABEL, KIND_LABEL } from './labels.ts';
 import { resolveRound } from './listing-utils.ts';
 import { Section } from './ui.tsx';
 import { EvictionBlock, IncomeBlock, ReportBlock, FieldVisitChecklist } from './detail-blocks.tsx';
 import { CostCalculator } from './CostCalculator.tsx';
+import { PrecisionVerdict } from './PrecisionVerdict.tsx';
+import { DecisionActions } from './DecisionActions.tsx';
 
 const CONF: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' };
 
 /** 매물 상세 드로어 — 권리/입지/취득비용·현장모드·키보드 내비게이션(←/→/o/c/f/Esc). */
-export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position }: {
+export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position, onDecisionSaved }: {
   row: ListingItem; onClose: () => void; onFav: () => void;
   loading?: boolean; onPrev?: () => void; onNext?: () => void; position?: string;
+  onDecisionSaved: (event: DecisionEvent) => void;
 }) {
   const rights: RightsObj | null = row.rights;
   const loc: LocationObj | null = row.location;
@@ -66,21 +69,21 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position 
       <aside className={`drawer${fieldMode ? ' drawer-fieldmode' : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="drawer-topbar">
           <div className="drawer-nav">
-            <button className="nav-btn" disabled={!onPrev} onClick={onPrev} title="이전 (←)">‹</button>
+            <button className="nav-btn" disabled={!onPrev} onClick={onPrev} title="이전 (←)" aria-label="이전 매물">‹</button>
             {position && <span className="nav-pos">{position}</span>}
-            <button className="nav-btn" disabled={!onNext} onClick={onNext} title="다음 (→)">›</button>
+            <button className="nav-btn" disabled={!onNext} onClick={onNext} title="다음 (→)" aria-label="다음 매물">›</button>
           </div>
           {fieldwork && (
             <button className={`fieldmode-btn${fieldMode ? ' on' : ''}`} onClick={() => setFieldMode((v) => !v)} title="현장에서 체크리스트만 크게 보기">
               🚶 {fieldMode ? '분석 보기' : '현장모드'}
             </button>
           )}
-          <button className="close" onClick={onClose}>✕</button>
+          <button className="close" onClick={onClose} aria-label="상세 닫기">✕</button>
         </div>
 
         {fieldMode && fieldwork && (
           <div className="fieldmode">
-            <h2><span className="star" onClick={onFav}>{row.is_favorite ? '★' : '☆'}</span> {row.case_no}</h2>
+            <h2><button type="button" className="star" onClick={onFav} aria-label="관심 매물 토글">{row.is_favorite ? '★' : '☆'}</button> {row.case_no}</h2>
             <p className="addr">{row.address} · {TYPE_LABEL[row.property_type]}</p>
             <div className="srclinks">
               <p className="srclink"><a href={courtCheckUrl} target="_blank" rel="noopener noreferrer">🔗 법원경매 더블체크{itemHint} ↗</a></p>
@@ -91,12 +94,14 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position 
         )}
         {loading && <p className="detail-loading">상세 분석 불러오는 중…</p>}
         <h2>
-          <span className="star" onClick={onFav} title="관심 (단축키: f)">{row.is_favorite ? '★' : '☆'}</span>{' '}
+          <button type="button" className="star" onClick={onFav} title="관심 (단축키: f)" aria-label="관심 매물 토글">{row.is_favorite ? '★' : '☆'}</button>{' '}
           {row.case_no}{' '}
           <button className="copy-btn" onClick={copyCase} title="사건번호 복사 (단축키: c)">{copied ? '✓' : '⧉'}</button>{' '}
           <span className={`badge ${risk.cls}`}>{risk.label}</span>
         </h2>
         <p className="addr">{row.address} · {TYPE_LABEL[row.property_type]} · {row.court}</p>
+        <PrecisionVerdict precision={row.precision} />
+        <DecisionActions listingId={row.id} onSaved={onDecisionSaved} />
         <div className="srclinks">
           <p className="srclink"><a href={courtCheckUrl} target="_blank" rel="noopener noreferrer">🔗 법원경매 더블체크{itemHint}(사건번호 ⧉ 복사 후 검색) ↗</a> <span className="key-hint" title="단축키">o</span></p>
           <p className="srclink"><a href={deonakchalCheckUrl} target="_blank" rel="noopener noreferrer">🔎 더낙찰 더블체크{itemHint} ↗</a> <span className="key-hint" title="단축키">d</span></p>

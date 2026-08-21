@@ -3,8 +3,8 @@ import { FLAG_LABEL, TYPE_LABEL, RISK, RECO } from './labels.ts';
 import { SkeletonList, Notice, ThSort, DDay, FieldProgress } from './ui.tsx';
 import {
   fetchDetail, triggerJob, fetchJobStatus, setFavorite, fetchMlReview,
-  apiBase, eok, pct,
-  type ListingItem, type MlReview, type MlSurpriseRow,
+  apiBase, eok, pct, fetchPrecisionRecommendations,
+  type ListingItem, type MlReview, type MlSurpriseRow, type DecisionEvent,
 } from './api.ts';
 import { scoreClient, scoreBreakdown, type ScoreConfig, type ClientScore } from './scoring.ts';
 // 코드 스플릿 — 지도(leaflet)·비교·상세·설정·도움말은 열 때만 로드(초기 번들·첫 페인트 단축).
@@ -18,6 +18,7 @@ import { resolveRound, saleDaysDiff, localDateISO } from './listing-utils.ts';
 import { useListings } from './useListings.ts';
 import { useTodayActions } from './useTodayActions.ts';
 import { TodayActions } from './TodayActions.tsx';
+import { PrecisionInbox } from './PrecisionInbox.tsx';
 import { useIncrementalList } from './useIncremental.ts';
 import { exportCSV } from './export-csv.ts';
 import { loadConfig, saveConfig, loadUIState, saveUIState } from './persistence.ts';
@@ -67,6 +68,9 @@ export default function App() {
   const { rows, setRows, loading, err, lastCrawl, load } = useListings();
   const { actions: todayActions, loading: todayActionsLoading, error: todayActionsError, reload: reloadTodayActions } = useTodayActions(20);
   const backendStatus = useBackendStatus();
+  const [precisionItems, setPrecisionItems] = useState<ListingItem[]>([]);
+  const [precisionLoading, setPrecisionLoading] = useState(true);
+  const [precisionError, setPrecisionError] = useState<string | null>(null);
   const [onlyPassed, setOnlyPassed] = useState<boolean>(() => loadUIState().onlyPassed ?? false);
   const [onlyFavorite, setOnlyFavorite] = useState(false);
   const [onlyMultiRound, setOnlyMultiRound] = useState<boolean>(() => loadUIState().onlyMultiRound ?? false);
@@ -98,6 +102,15 @@ export default function App() {
   const jobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const loadPrecision = useCallback(() => {
+    setPrecisionLoading(true);
+    setPrecisionError(null);
+    return fetchPrecisionRecommendations(5)
+      .then((items) => setPrecisionItems(items))
+      .catch(() => setPrecisionError('정밀 추천 API 오류'))
+      .finally(() => setPrecisionLoading(false));
+  }, []);
+
   // 데이터 로드(rows·lastCrawl·load)는 useListings()로 이동(위 destructure)
   // 딥링크: URL #case=<사건번호> 로 진입하면 해당 매물 상세를 자동으로 연다(다이제스트/봇 링크용).
   useEffect(() => {
@@ -107,6 +120,7 @@ export default function App() {
   }, []);
   useEffect(() => { saveConfig(cfg); }, [cfg]);
   useEffect(() => { saveUIState({ sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete, groupByCase }); }, [sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete, groupByCase]);
+  useEffect(() => { void loadPrecision(); }, [loadPrecision]);
 
   // useCallback — 안정 참조여야 React.memo 행이 스킵된다(load도 useListings에서 안정화).
   const toggleFav = useCallback((item: ListingItem) => {
@@ -145,6 +159,7 @@ export default function App() {
               showJob(`✓ ${label} 완료 (${elapsedStr})`, true);
               load();
               reloadTodayActions();
+              void loadPrecision();
             } else if (s?.state === 'error') {
               stopPoll();
               showJob(`✕ ${label} 실패`, false);
@@ -164,16 +179,28 @@ export default function App() {
 
   const handleSelect = useCallback((item: ListingItem) => {
     const cached = detailCacheRef.current.get(item.case_no);
-    if (cached) { setSelected(cached); return; }
+    if (cached) {
+      setSelected(item.precision ? { ...cached, precision: item.precision, current_decision: item.current_decision ?? null } : { ...cached, precision: null, current_decision: null });
+      return;
+    }
     setSelected(item);
     setDetailLoading(item.case_no);
     fetchDetail(item.case_no)
       .then((full) => {
         detailCacheRef.current.set(item.case_no, full);
-        setSelected((cur) => (cur?.case_no === item.case_no ? full : cur));
+        setSelected((cur) => (cur?.case_no === item.case_no ? {
+          ...full,
+          precision: item.precision ?? null,
+          current_decision: item.current_decision ?? null,
+        } : cur));
       })
       .catch(() => {})
       .finally(() => setDetailLoading((cur) => (cur === item.case_no ? null : cur)));
+  }, []);
+
+  const updateCurrentDecision = useCallback((event: DecisionEvent) => {
+    setPrecisionItems((items) => items.map((item) => item.id === event.listing_id ? { ...item, current_decision: event } : item));
+    setSelected((item) => item?.id === event.listing_id ? { ...item, current_decision: event } : item);
   }, []);
 
   const openCaseFromReview = useCallback((caseNo: string) => {
@@ -468,6 +495,15 @@ export default function App() {
         </div>
       )}
 
+      <PrecisionInbox
+        items={precisionItems}
+        loading={precisionLoading}
+        error={precisionError}
+        onOpen={handleSelect}
+        onReload={() => { void loadPrecision(); }}
+        onLegacy={() => { setShowReview(false); setViewMode('list'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+      />
+
       <TodayActions
         actions={todayActions}
         loading={todayActionsLoading}
@@ -674,6 +710,7 @@ export default function App() {
         row={selected} onClose={() => setSelected(null)} onFav={() => toggleFav(selected)}
         loading={detailLoading === selected.case_no}
         onPrev={selNavPrev} onNext={selNavNext} position={selNavPos}
+        onDecisionSaved={updateCurrentDecision}
       /></Suspense>}
 
       {showCompare && (

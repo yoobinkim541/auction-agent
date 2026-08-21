@@ -20,21 +20,22 @@ export function TodayActions({ actions, loading, error, onOpenCase }: {
   error: string | null;
   onOpenCase: (caseNo: string) => void;
 }) {
-  if (!loading && !error && actions.length === 0) return null;
   const visible = actions.slice(0, 8);
   const hidden = Math.max(0, actions.length - visible.length);
 
   return (
-    <section className="today-actions" aria-label="오늘 할 일">
-      <div className="today-actions-head">
+    <details className="today-actions" aria-label="운영·보강 상태">
+      <summary className="today-actions-head">
         <div>
-          <span className="today-actions-kicker">오늘 할 일</span>
+          <span className="today-actions-kicker">운영·보강 상태</span>
           <b>{loading ? '불러오는 중…' : `${actions.length}건`}</b>
         </div>
         {hidden > 0 && <span className="today-actions-more">외 {hidden}건</span>}
-      </div>
+      </summary>
       {error ? (
         <p className="today-actions-error">할 일 큐를 불러오지 못했습니다: {error}</p>
+      ) : !loading && visible.length === 0 ? (
+        <p className="today-actions-error">현재 보강이 필요한 운영 항목이 없습니다.</p>
       ) : (
         <div className="today-actions-list">
           {visible.map((action) => (
@@ -53,6 +54,6 @@ export function TodayActions({ actions, loading, error, onOpenCase }: {
           ))}
         </div>
       )}
-    </section>
+    </details>
   );
 }
