@@ -25,6 +25,7 @@ import { loadConfig, saveConfig, loadUIState, saveUIState } from './persistence.
 import { useMediaQuery } from './useMediaQuery.ts';
 import { buildTriageCards } from './triage.ts';
 import { useBackendStatus } from './backend-status.ts';
+import { applyIfCurrent, createRequestGate } from './precision.ts';
 
 const TODAY = localDateISO(); // KST 기준 로컬 날짜(UTC slice는 00:00~09:00 KST 구간에서 어제 날짜)
 
@@ -101,14 +102,17 @@ export default function App() {
   const [jobStatus, setJobStatus] = useState<{ msg: string; ok: boolean } | null>(null);
   const jobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const precisionRequestGateRef = useRef(createRequestGate());
 
   const loadPrecision = useCallback(() => {
+    const requestGate = precisionRequestGateRef.current;
+    const requestGeneration = requestGate.begin();
     setPrecisionLoading(true);
     setPrecisionError(null);
     return fetchPrecisionRecommendations(5)
-      .then((items) => setPrecisionItems(items))
-      .catch(() => setPrecisionError('정밀 추천 API 오류'))
-      .finally(() => setPrecisionLoading(false));
+      .then((items) => { applyIfCurrent(requestGate, requestGeneration, () => setPrecisionItems(items)); })
+      .catch(() => { applyIfCurrent(requestGate, requestGeneration, () => setPrecisionError('정밀 추천 API 오류')); })
+      .finally(() => { applyIfCurrent(requestGate, requestGeneration, () => setPrecisionLoading(false)); });
   }, []);
 
   // 데이터 로드(rows·lastCrawl·load)는 useListings()로 이동(위 destructure)
@@ -120,7 +124,10 @@ export default function App() {
   }, []);
   useEffect(() => { saveConfig(cfg); }, [cfg]);
   useEffect(() => { saveUIState({ sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete, groupByCase }); }, [sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete, groupByCase]);
-  useEffect(() => { void loadPrecision(); }, [loadPrecision]);
+  useEffect(() => {
+    void loadPrecision();
+    return () => { precisionRequestGateRef.current.invalidate(); };
+  }, [loadPrecision]);
 
   // useCallback — 안정 참조여야 React.memo 행이 스킵된다(load도 useListings에서 안정화).
   const toggleFav = useCallback((item: ListingItem) => {

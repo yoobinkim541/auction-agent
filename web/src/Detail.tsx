@@ -7,6 +7,7 @@ import { EvictionBlock, IncomeBlock, ReportBlock, FieldVisitChecklist } from './
 import { CostCalculator } from './CostCalculator.tsx';
 import { PrecisionVerdict } from './PrecisionVerdict.tsx';
 import { DecisionActions } from './DecisionActions.tsx';
+import { shouldShowLegacyBid } from './precision.ts';
 
 const CONF: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' };
 
@@ -63,6 +64,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
   const detailRounds = loc?.sale_rounds ?? [];
   const detailResolvedRound = resolveRound(detailRounds, row.sale_date, row.fail_count);
   const currentRound = detailResolvedRound?.n ?? null;
+  const showLegacyBid = shouldShowLegacyBid(row.precision);
 
   return (
     <div className="drawer-bg" onClick={onClose}>
@@ -101,7 +103,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
         </h2>
         <p className="addr">{row.address} · {TYPE_LABEL[row.property_type]} · {row.court}</p>
         <PrecisionVerdict precision={row.precision} />
-        <DecisionActions listingId={row.id} onSaved={onDecisionSaved} />
+        <DecisionActions key={row.id} listingId={row.id} onSaved={onDecisionSaved} />
         <div className="srclinks">
           <p className="srclink"><a href={courtCheckUrl} target="_blank" rel="noopener noreferrer">🔗 법원경매 더블체크{itemHint}(사건번호 ⧉ 복사 후 검색) ↗</a> <span className="key-hint" title="단축키">o</span></p>
           <p className="srclink"><a href={deonakchalCheckUrl} target="_blank" rel="noopener noreferrer">🔎 더낙찰 더블체크{itemHint} ↗</a> <span className="key-hint" title="단축키">d</span></p>
@@ -139,14 +141,14 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
             <div><span>현재 차수</span><b className={currentRound > 1 ? 'danger' : ''} title={detailResolvedRound?.est ? '분석 후 재매각기일 갱신 — 차수 추정값' : ''}>{currentRound}차{detailResolvedRound?.est ? '+' : ''}{currentRound > 1 ? ` · 유찰 ${currentRound - 1}회${detailResolvedRound?.est ? '~' : ''}` : ''}</b></div>
           )}
           <div><span>추정시세</span><b>{loc?.market_price == null ? <span className="muted">미확보 — 안전마진 산정 불가</span> : <>{eok(loc.market_price)}{loc.market_confidence ? ` · 신뢰도 ${CONF[loc.market_confidence]}` : ''}</>}</b></div>
-          <div><span>예상낙찰가</span><b>{eok(loc?.expected_bid_price)}</b></div>
-          {row.ml_calibration?.reference_bid_price != null && (
+          {showLegacyBid && <div><span>일반 예상낙찰가 <small className="muted">(정밀 추천 아님)</small></span><b>{eok(loc?.expected_bid_price)}</b></div>}
+          {showLegacyBid && row.ml_calibration?.reference_bid_price != null && (
             <div><span title="지역×종류 과거 낙찰 중앙값 기반 — 운영 반영 전 참고용">ML 참고 보정가</span><b>{eok(row.ml_calibration.reference_bid_price)} <small className="muted">({row.ml_calibration.region} · n={row.ml_calibration.sample_size})</small></b></div>
           )}
           <div><span>안전마진(최저가)</span><b>{pct(loc?.safety_margin)}</b></div>
           <div><span title="시세 − 총취득비용(취득세·명도비·채권·인수 포함)">진짜 안전마진</span><b className={(loc?.acquisition_cost?.trueSafetyMargin ?? 0) < 0 ? 'danger' : ''}>{pct(loc?.acquisition_cost?.trueSafetyMargin)}</b></div>
           <div><span>총 인수금액</span><b className={rights?.assumed_amount ? 'danger' : ''}>{won(rights?.assumed_amount ?? 0)}</b></div>
-          <div><span>최대안전입찰가</span><b>{won(rights?.max_safe_bid)}</b></div>
+          {showLegacyBid && <div><span>일반 최대안전입찰가 <small className="muted">(정밀 추천 아님)</small></span><b>{won(rights?.max_safe_bid)}</b></div>}
         </div>
 
         {/* 목록(slim) report에는 checklist/fieldwork가 없음 → 풀 상세 로드 후에만 렌더(빈 드로어 크래시 방지) */}
@@ -197,7 +199,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
           )}
         </Section>
 
-        {loc?.acquisition_cost?.bidPrice && <CostCalculator row={row} loc={loc} />}
+        {showLegacyBid && loc?.acquisition_cost?.bidPrice && <CostCalculator row={row} loc={loc} />}
         {loc?.income && <IncomeBlock income={loc.income} />}
         {loc?.eviction && <EvictionBlock ev={loc.eviction} />}
 
@@ -254,7 +256,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
               <div className="amen">{loc.sale_rounds.map((s, i) => <span key={i} className={i === 0 ? 'flag-high' : ''}>{s.round}차 {s.date} {eok(s.minPrice)}{s.ratioPct ? ` (${s.ratioPct}%↓)` : ''}</span>)}</div>
             </>
           )}
-          {loc?.expected_bid_basis && <p className="muted">예상낙찰가 근거: {loc.expected_bid_basis}</p>}
+          {showLegacyBid && loc?.expected_bid_basis && <p className="muted">일반 예상낙찰가 근거 (정밀 추천 아님): {loc.expected_bid_basis}</p>}
           {loc?.amenities && (
             <div className="amen">{Object.entries(loc.amenities).map(([k, v]) => <span key={k}>{k}: {v}</span>)}</div>
           )}

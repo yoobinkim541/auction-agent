@@ -1,26 +1,39 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { fetchDecisions, saveDecision, type DecisionEvent, type DecisionKind, type DecisionReason } from './api.ts';
-import { decisionLabel, decisionReasonLabel, decisionReasons, decisions } from './precision.ts';
+import {
+  applyIfCurrent, createDecisionDraft, createRequestGate, decisionLabel,
+  decisionReasonLabel, decisionReasons, decisions,
+} from './precision.ts';
 
 export function DecisionActions({ listingId, onSaved }: { listingId: number; onSaved: (event: DecisionEvent) => void }) {
+  const initialDraft = createDecisionDraft();
   const [history, setHistory] = useState<DecisionEvent[]>([]);
-  const [decision, setDecision] = useState<DecisionKind>('reviewing');
-  const [reasonCode, setReasonCode] = useState<DecisionReason | ''>('');
-  const [note, setNote] = useState('');
-  const [targetBid, setTargetBid] = useState('');
+  const [decision, setDecision] = useState<DecisionKind>(initialDraft.decision);
+  const [reasonCode, setReasonCode] = useState<DecisionReason | ''>(initialDraft.reasonCode);
+  const [note, setNote] = useState(initialDraft.note);
+  const [targetBid, setTargetBid] = useState(initialDraft.targetBid);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestGateRef = useRef(createRequestGate());
 
   useEffect(() => {
-    let active = true;
+    const requestGate = requestGateRef.current;
+    const requestGeneration = requestGate.begin();
+    const draft = createDecisionDraft();
+    setHistory([]);
+    setDecision(draft.decision);
+    setReasonCode(draft.reasonCode);
+    setNote(draft.note);
+    setTargetBid(draft.targetBid);
     setLoading(true);
+    setSaving(false);
     setError(null);
     fetchDecisions(listingId)
-      .then((events) => { if (active) setHistory(events); })
-      .catch(() => { if (active) setError('결정 이력을 불러오지 못했습니다.'); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+      .then((events) => { applyIfCurrent(requestGate, requestGeneration, () => setHistory(events)); })
+      .catch(() => { applyIfCurrent(requestGate, requestGeneration, () => setError('결정 이력을 불러오지 못했습니다.')); })
+      .finally(() => { applyIfCurrent(requestGate, requestGeneration, () => setLoading(false)); });
+    return () => { requestGate.invalidate(); };
   }, [listingId]);
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -39,6 +52,8 @@ export function DecisionActions({ listingId, onSaved }: { listingId: number; onS
       setError('입찰 검토에는 목표 입찰가를 입력해야 합니다.');
       return;
     }
+    const requestGate = requestGateRef.current;
+    const requestGeneration = requestGate.begin();
     setSaving(true);
     setError(null);
     try {
@@ -48,19 +63,32 @@ export function DecisionActions({ listingId, onSaved }: { listingId: number; onS
         ...(note.trim() ? { note: note.trim() } : {}),
         ...(parsedBid !== undefined ? { targetBid: parsedBid } : {}),
       });
+      if (!requestGate.isCurrent(requestGeneration)) return;
       onSaved(saved);
       try {
-        setHistory(await fetchDecisions(listingId));
+        const events = await fetchDecisions(listingId);
+        applyIfCurrent(requestGate, requestGeneration, () => {
+          setHistory(events);
+          setLoading(false);
+        });
       } catch {
-        setHistory((events) => [saved, ...events.filter((existing) => existing.id !== saved.id)]);
-        setError('결정은 저장됐지만 이력을 새로고침하지 못했습니다.');
+        applyIfCurrent(requestGate, requestGeneration, () => {
+          setHistory((events) => [saved, ...events.filter((existing) => existing.id !== saved.id)]);
+          setLoading(false);
+          setError('결정은 저장됐지만 이력을 새로고침하지 못했습니다.');
+        });
       }
-      setNote('');
-      setTargetBid('');
+      applyIfCurrent(requestGate, requestGeneration, () => {
+        setNote('');
+        setTargetBid('');
+      });
     } catch {
-      setError('결정을 저장하지 못했습니다. 다시 시도해 주세요.');
+      applyIfCurrent(requestGate, requestGeneration, () => {
+        setLoading(false);
+        setError('결정을 저장하지 못했습니다. 다시 시도해 주세요.');
+      });
     } finally {
-      setSaving(false);
+      applyIfCurrent(requestGate, requestGeneration, () => setSaving(false));
     }
   };
 

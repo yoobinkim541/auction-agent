@@ -39,6 +39,42 @@ export function canShowBid(precision: Pick<PrecisionObj, 'status'>): boolean {
   return precision.status === 'recommended';
 }
 
+export function shouldShowLegacyBid(precision: Pick<PrecisionObj, 'status'> | null | undefined): boolean {
+  return precision == null;
+}
+
+export interface DecisionDraft {
+  decision: DecisionKind;
+  reasonCode: DecisionReason | '';
+  note: string;
+  targetBid: string;
+}
+
+export function createDecisionDraft(): DecisionDraft {
+  return { decision: 'reviewing', reasonCode: '', note: '', targetBid: '' };
+}
+
+export interface RequestGate {
+  begin: () => number;
+  invalidate: () => void;
+  isCurrent: (generation: number) => boolean;
+}
+
+export function createRequestGate(): RequestGate {
+  let generation = 0;
+  return {
+    begin: () => ++generation,
+    invalidate: () => { generation += 1; },
+    isCurrent: (requestGeneration) => requestGeneration === generation,
+  };
+}
+
+export function applyIfCurrent(gate: RequestGate, generation: number, apply: () => void): boolean {
+  if (!gate.isCurrent(generation)) return false;
+  apply();
+  return true;
+}
+
 export function confidenceLabel(confidence: PrecisionObj['confidence']): string {
   return { high: '높음', medium: '보통', low: '낮음' }[confidence];
 }
