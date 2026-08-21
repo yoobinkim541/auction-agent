@@ -1,18 +1,40 @@
-import type { ListingTrustResult } from '../../shared/data-trust.ts';
-import type { Score } from '../../shared/types.ts';
-import type { PrecisionEvaluation } from './evaluate.ts';
-import { internalEvaluationHold } from './input.ts';
+import {
+  backfillFailCountFromSaleRounds,
+  saveListingDataTrust,
+  saveLocationAnalysis,
+  savePrecisionEvaluation,
+  saveRightsAnalysis,
+  saveScore,
+} from '../../shared/db.ts';
+import { evaluateListingTrust } from '../../shared/data-trust.ts';
+import type { Listing, LocationAnalysis, RightsAnalysisResult, Score } from '../../shared/types.ts';
+import { evaluatePrecision } from './evaluate.ts';
+import type { PrecisionEvaluation, PrecisionInput } from './evaluate.ts';
+import {
+  buildListingTrustInput,
+  buildPrecisionInput,
+  hashEvaluationInput,
+  internalEvaluationHold,
+} from './input.ts';
 
-export interface PrecisionPersistenceStages {
+type PrecisionEvaluator = (input: PrecisionInput) => PrecisionEvaluation;
+
+let precisionEvaluator: PrecisionEvaluator = evaluatePrecision;
+
+export function setPrecisionEvaluatorForTesting(evaluator: PrecisionEvaluator | undefined): void {
+  precisionEvaluator = evaluator ?? evaluatePrecision;
+}
+
+export interface PrecisionPersistenceInput {
+  listingId: number;
+  listing: Listing;
+  rights: RightsAnalysisResult;
+  location: LocationAnalysis;
+  documents: readonly unknown[];
+  analysisAt: string;
   score: Score;
-  saveRights: () => Promise<void>;
-  saveLocation: () => Promise<void>;
-  evaluateTrust: () => ListingTrustResult;
-  saveTrust: (trust: ListingTrustResult) => Promise<void>;
-  evaluatePrecision: (trust: ListingTrustResult) => PrecisionEvaluation;
-  savePrecision: (evaluation: PrecisionEvaluation) => Promise<void>;
-  saveLegacyScore: (score: Score) => Promise<void>;
-  onPrecisionError?: (error: unknown) => void;
+  modelVersion?: string;
+  citations?: unknown;
 }
 
 export interface PrecisionPersistenceResult {
@@ -20,30 +42,44 @@ export interface PrecisionPersistenceResult {
   score: Score;
 }
 
-export async function persistPrecisionStages(stages: PrecisionPersistenceStages): Promise<PrecisionPersistenceResult> {
-  await stages.saveRights();
-  await stages.saveLocation();
+export async function persistPrecisionStages(input: PrecisionPersistenceInput): Promise<PrecisionPersistenceResult> {
+  await saveRightsAnalysis(input.listingId, input.rights, input.modelVersion, input.citations);
+  await saveLocationAnalysis(input.listingId, input.location);
+  await backfillFailCountFromSaleRounds(input.listingId, input.location.saleRounds);
 
-  const trust = stages.evaluateTrust();
-  await stages.saveTrust(trust);
+  const trustInput = buildListingTrustInput({
+    listing: input.listing,
+    rights: input.rights,
+    location: input.location,
+    documents: input.documents,
+    analysisAt: input.analysisAt,
+  });
+  const trust = evaluateListingTrust(trustInput);
+  await saveListingDataTrust(input.listingId, trust, hashEvaluationInput(trustInput));
 
+  const precisionInput = buildPrecisionInput({
+    listing: input.listing,
+    rights: input.rights,
+    location: input.location,
+    trustStatus: trust.status,
+  });
   let precision: PrecisionEvaluation;
   try {
-    precision = stages.evaluatePrecision(trust);
+    precision = precisionEvaluator(precisionInput);
   } catch (error) {
-    stages.onPrecisionError?.(error);
+    console.warn(`[precision] ${input.listing.caseNo} 평가 실패: ${error instanceof Error ? error.message : String(error)}`);
     precision = internalEvaluationHold();
   }
-  await stages.savePrecision(precision);
+  await savePrecisionEvaluation(input.listingId, precision, hashEvaluationInput(precisionInput));
 
-  const score = precision.reasonCodes.includes('INTERNAL_EVALUATION_ERROR') && stages.score.passedFilter
+  const score = precision.reasonCodes.includes('INTERNAL_EVALUATION_ERROR') && input.score.passedFilter
     ? {
-      ...stages.score,
+      ...input.score,
       passedFilter: false,
-      reason: `${stages.score.reason ? `${stages.score.reason}; ` : ''}정밀 평가 내부 오류 — 추천 보류`,
+      reason: `${input.score.reason ? `${input.score.reason}; ` : ''}정밀 평가 내부 오류 — 추천 보류`,
     }
-    : stages.score;
-  await stages.saveLegacyScore(score);
+    : input.score;
+  await saveScore(input.listingId, score);
 
   return { precision, score };
 }

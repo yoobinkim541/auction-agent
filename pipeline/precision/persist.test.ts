@@ -1,61 +1,119 @@
-import { describe, expect, it } from 'vitest';
-import { persistPrecisionStages } from './persist.ts';
-import type { ListingTrustResult } from '../../shared/data-trust.ts';
-import type { PrecisionEvaluation } from './evaluate.ts';
-import type { Score } from '../../shared/types.ts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Listing, LocationAnalysis, RightsAnalysisResult, Score } from '../../shared/types.ts';
 
-const trusted: ListingTrustResult = {
-  status: 'trusted', score: 100, reasonCodes: [], checks: {}, evaluatorVersion: 'listing-trust-v1',
+const db = vi.hoisted(() => ({
+  saveRightsAnalysis: vi.fn(),
+  saveLocationAnalysis: vi.fn(),
+  backfillFailCountFromSaleRounds: vi.fn(),
+  saveListingDataTrust: vi.fn(),
+  savePrecisionEvaluation: vi.fn(),
+  saveScore: vi.fn(),
+}));
+
+vi.mock('../../shared/db.ts', () => db);
+
+import {
+  persistPrecisionStages,
+  setPrecisionEvaluatorForTesting,
+} from './persist.ts';
+
+const listing: Listing = {
+  caseNo: '2026타경101', itemNo: '1', court: '서울중앙지방법원', address: '서울시 중구 1',
+  propertyType: 'apartment', appraisalValue: 300_000_000, minBidPrice: 180_000_000,
+  failCount: 1, source: 'courtauction', crawledAt: new Date().toISOString(),
 };
 
-const recommended: PrecisionEvaluation = {
-  status: 'recommended', confidence: 'high', conservativeValue: 300_000_000,
-  recommendedBid: 200_000_000, hardCapBid: 220_000_000, reasonCodes: [], strengths: [],
-  risks: [], requiredChecks: [], evaluatorVersion: 'precision-v1',
-};
+const rights = {
+  caseNo: listing.caseNo,
+  classified: [{ entry: {}, disposition: 'extinguished', reason: '' }],
+  tenants: [],
+  assumedAmount: 0,
+  maxSafeBid: 250_000_000,
+  redFlags: [],
+  riskGrade: 'clean',
+  warnings: [],
+} as unknown as RightsAnalysisResult;
+
+const location = {
+  caseNo: listing.caseNo,
+  marketPrice: 320_000_000,
+  marketConfidence: 'high',
+  comps: [
+    { areaM2: 80, dealAmount: 310_000_000, dealDate: '2026-08-01' },
+    { areaM2: 80, dealAmount: 315_000_000, dealDate: '2026-08-02' },
+  ],
+  safetyMargin: 0.4,
+  expectedBidPrice: 200_000_000,
+  acquisitionCost: {
+    acqTax: 4_000_000, moveOutCost: 2_000_000, bondCost: 1_000_000, etcCost: 500_000,
+    trueSafetyMargin: 0.25,
+  },
+  saleRounds: [{ round: 2, date: '2026-09-01', minPrice: 180_000_000 }],
+  eviction: { occupantLabel: '소유자·채무자 점유' },
+} as unknown as LocationAnalysis;
 
 const passingScore = (): Score => ({
-  caseNo: '2026\ud0c0\uacbd101', safetyMarginScore: 90, cleanRightsScore: 100, totalScore: 95,
+  caseNo: listing.caseNo, safetyMarginScore: 90, cleanRightsScore: 100, totalScore: 95,
   passedFilter: true, reason: 'legacy pass',
 });
 
+const persistenceInput = () => ({
+  listingId: 101,
+  listing,
+  rights,
+  location,
+  documents: [{ itemNo: '1' }],
+  analysisAt: new Date().toISOString(),
+  score: passingScore(),
+});
+
+afterEach(() => {
+  setPrecisionEvaluatorForTesting(undefined);
+  vi.clearAllMocks();
+});
+
 describe('persistPrecisionStages', () => {
-  it('persists rights and location before trust, then trust before precision', async () => {
+  it('uses production persistence functions in the required order', async () => {
     const events: string[] = [];
+    db.saveRightsAnalysis.mockImplementation(async () => { events.push('saveRightsAnalysis'); });
+    db.saveLocationAnalysis.mockImplementation(async () => { events.push('saveLocationAnalysis'); });
+    db.backfillFailCountFromSaleRounds.mockImplementation(async () => { events.push('backfillFailCountFromSaleRounds'); });
+    db.saveListingDataTrust.mockImplementation(async () => { events.push('saveListingDataTrust'); });
+    db.savePrecisionEvaluation.mockImplementation(async () => { events.push('savePrecisionEvaluation'); });
+    db.saveScore.mockImplementation(async () => { events.push('saveScore'); });
 
-    await persistPrecisionStages({
-      score: passingScore(),
-      saveRights: async () => { events.push('rights'); },
-      saveLocation: async () => { events.push('location'); },
-      evaluateTrust: () => trusted,
-      saveTrust: async () => { events.push('trust'); },
-      evaluatePrecision: () => recommended,
-      savePrecision: async () => { events.push('precision'); },
-      saveLegacyScore: async () => { events.push('legacy'); },
-    });
+    await persistPrecisionStages(persistenceInput());
 
-    expect(events).toEqual(['rights', 'location', 'trust', 'precision', 'legacy']);
+    expect(events).toEqual([
+      'saveRightsAnalysis',
+      'saveLocationAnalysis',
+      'backfillFailCountFromSaleRounds',
+      'saveListingDataTrust',
+      'savePrecisionEvaluation',
+      'saveScore',
+    ]);
+    expect(db.saveListingDataTrust).toHaveBeenCalledWith(
+      101,
+      expect.objectContaining({ status: 'hold', reasonCodes: ['INSUFFICIENT_COMPS'] }),
+      expect.any(String),
+    );
   });
 
-  it('persists an internal-error hold and blocks a legacy pass when precision evaluation throws', async () => {
-    let savedPrecision: PrecisionEvaluation | undefined;
-    let savedScore: Score | undefined;
+  it('persists an internal-error hold and blocks a legacy pass when the precision evaluator throws', async () => {
+    setPrecisionEvaluatorForTesting(() => { throw new Error('evaluator unavailable'); });
 
-    await persistPrecisionStages({
-      score: passingScore(),
-      saveRights: async () => {},
-      saveLocation: async () => {},
-      evaluateTrust: () => trusted,
-      saveTrust: async () => {},
-      evaluatePrecision: () => { throw new Error('evaluator unavailable'); },
-      savePrecision: async (evaluation) => { savedPrecision = evaluation; },
-      saveLegacyScore: async (score) => { savedScore = score; },
-    });
+    await persistPrecisionStages(persistenceInput());
 
-    expect(savedPrecision).toMatchObject({
-      status: 'hold', confidence: 'low', reasonCodes: ['INTERNAL_EVALUATION_ERROR'],
-    });
-    expect(savedScore).toMatchObject({ passedFilter: false });
-    expect(savedScore?.reason).toContain('\uc815\ubc00 \ud3c9\uac00 \ub0b4\ubd80 \uc624\ub958');
+    expect(db.savePrecisionEvaluation).toHaveBeenCalledWith(
+      101,
+      expect.objectContaining({
+        status: 'hold', confidence: 'low', reasonCodes: ['INTERNAL_EVALUATION_ERROR'],
+      }),
+      expect.any(String),
+    );
+    expect(db.saveScore).toHaveBeenCalledWith(101, expect.objectContaining({
+      passedFilter: false,
+      reason: expect.stringContaining('정밀 평가 내부 오류'),
+    }));
   });
 });

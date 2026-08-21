@@ -1,5 +1,5 @@
 /**
- * 일일 추천 다이제스트 — gm_scores 통과 + 점수 상위 N건 + 데이터 신선도 + 어제 기일 결과 회고를 텍스트로 출력(stdout).
+ * 일일 추천 다이제스트 — gm_precision_shortlist 정밀 후보 상위 N건 + 데이터 신선도 + 어제 기일 결과 회고를 텍스트로 출력(stdout).
  * 발송은 deploy/daily-parse.sh가 stdout을 받아 notify-telegram.sh(경매봇)로 전송(이 스크립트는 조회·포맷만 = 안전).
  * 사용: npm run digest   (DIGEST_TOP_N 기본 5)
  */
