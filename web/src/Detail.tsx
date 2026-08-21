@@ -9,8 +9,18 @@ import { PrecisionVerdict } from './PrecisionVerdict.tsx';
 import { DecisionActions } from './DecisionActions.tsx';
 import { shouldShowLegacyBid } from './precision.ts';
 import { shouldIgnoreDrawerShortcut } from './detail-keyboard.ts';
+import { drawerFocusTrapDecision } from './drawer-focus.ts';
 
 const CONF: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' };
+const DRAWER_FOCUSABLE_SELECTOR = 'a[href], button, input, select, textarea, [contenteditable], [tabindex]:not([tabindex="-1"])';
+
+function visibleFocusableControls(drawer: HTMLElement): HTMLElement[] {
+  return Array.from(drawer.querySelectorAll<HTMLElement>(DRAWER_FOCUSABLE_SELECTOR)).filter((control) => {
+    if (control.matches(':disabled') || control.closest('[aria-hidden="true"], [inert]')) return false;
+    const style = window.getComputedStyle(control);
+    return style.display !== 'none' && style.visibility !== 'hidden' && control.getClientRects().length > 0;
+  });
+}
 
 /** 매물 상세 드로어 — 권리/입지/취득비용·현장모드·키보드 내비게이션(←/→/o/c/f/Esc). */
 export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position, onDecisionSaved }: {
@@ -48,6 +58,23 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
+      if (e.key === 'Tab') {
+        const drawer = drawerRef.current;
+        if (!drawer) return;
+        const controls = visibleFocusableControls(drawer);
+        const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        const decision = drawerFocusTrapDecision({
+          focusableCount: controls.length,
+          activeIndex: activeElement ? controls.indexOf(activeElement) : -1,
+          focusInsideDrawer: activeElement ? drawer.contains(activeElement) : false,
+          shiftKey: e.shiftKey,
+        });
+        if (decision.kind === 'none') return;
+        e.preventDefault();
+        if (decision.kind === 'container') drawer.focus();
+        else controls[decision.index]?.focus();
+        return;
+      }
       if (e.key === 'Escape') onClose();
       if (e.key === 'ArrowLeft' && onPrev && !shouldIgnoreDrawerShortcut(e.target)) { e.preventDefault(); onPrev(); }
       if (e.key === 'ArrowRight' && onNext && !shouldIgnoreDrawerShortcut(e.target)) { e.preventDefault(); onNext(); }

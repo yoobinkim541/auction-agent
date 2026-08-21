@@ -3,12 +3,14 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ListingItem, PrecisionObj } from './api.ts';
 import { Detail } from './Detail.tsx';
+import { notifySavedDecision } from './DecisionActions.tsx';
 import { PrecisionInbox } from './PrecisionInbox.tsx';
 import {
   applyIfCurrent, canShowBid, createDecisionDraft, createRequestGate, decisionReasonLabel,
   precisionView, shouldShowLegacyBid,
 } from './precision.ts';
 import { shouldIgnoreDrawerShortcut } from './detail-keyboard.ts';
+import { drawerFocusTrapDecision } from './drawer-focus.ts';
 
 const recommendedPrecision: PrecisionObj = {
   status: 'recommended', confidence: 'high', conservative_value: 400_000_000,
@@ -134,6 +136,27 @@ describe('precision presentation', () => {
     expect(shouldIgnoreDrawerShortcut({ tagName: 'BUTTON' } as EventTarget)).toBe(true);
     expect(shouldIgnoreDrawerShortcut({ tagName: 'A' } as EventTarget)).toBe(true);
     expect(shouldIgnoreDrawerShortcut({ isContentEditable: true } as EventTarget)).toBe(true);
+    expect(shouldIgnoreDrawerShortcut({ tagName: 'SPAN', closest: () => ({}) as Element } as EventTarget)).toBe(true);
     expect(shouldIgnoreDrawerShortcut({ tagName: 'DIV' } as EventTarget)).toBe(false);
+  });
+
+  it('notifies the parent of a saved decision before stale local state is discarded', () => {
+    const ordering: string[] = [];
+    const saved = { id: 1, listing_id: 9, decision: 'hold', reason_code: 'price', note: '', target_bid: null, created_at: '2026-08-21T00:00:00Z' } as const;
+
+    expect(notifySavedDecision(saved, () => ordering.push('parent'), () => false)).toBe(false);
+    expect(ordering).toEqual(['parent']);
+  });
+
+  it('calculates every drawer focus-trap boundary without DOM state', () => {
+    expect(drawerFocusTrapDecision({ focusableCount: 3, activeIndex: -1, focusInsideDrawer: false, shiftKey: false })).toEqual({ kind: 'item', index: 0 });
+    expect(drawerFocusTrapDecision({ focusableCount: 3, activeIndex: -1, focusInsideDrawer: false, shiftKey: true })).toEqual({ kind: 'item', index: 2 });
+    expect(drawerFocusTrapDecision({ focusableCount: 3, activeIndex: 0, focusInsideDrawer: true, shiftKey: true })).toEqual({ kind: 'item', index: 2 });
+    expect(drawerFocusTrapDecision({ focusableCount: 3, activeIndex: 2, focusInsideDrawer: true, shiftKey: false })).toEqual({ kind: 'item', index: 0 });
+    expect(drawerFocusTrapDecision({ focusableCount: 3, activeIndex: 1, focusInsideDrawer: true, shiftKey: false })).toEqual({ kind: 'none' });
+    expect(drawerFocusTrapDecision({ focusableCount: 3, activeIndex: 1, focusInsideDrawer: true, shiftKey: true })).toEqual({ kind: 'none' });
+    expect(drawerFocusTrapDecision({ focusableCount: 0, activeIndex: -1, focusInsideDrawer: false, shiftKey: false })).toEqual({ kind: 'container' });
+    expect(drawerFocusTrapDecision({ focusableCount: 1, activeIndex: 0, focusInsideDrawer: true, shiftKey: true })).toEqual({ kind: 'item', index: 0 });
+    expect(drawerFocusTrapDecision({ focusableCount: 1, activeIndex: 0, focusInsideDrawer: true, shiftKey: false })).toEqual({ kind: 'item', index: 0 });
   });
 });

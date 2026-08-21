@@ -5,6 +5,11 @@ import {
   decisionReasonLabel, decisionReasons, decisions,
 } from './precision.ts';
 
+export function notifySavedDecision(saved: DecisionEvent, onSaved: (event: DecisionEvent) => void, isCurrent: () => boolean): boolean {
+  onSaved(saved);
+  return isCurrent();
+}
+
 export function DecisionActions({ listingId, onSaved }: { listingId: number; onSaved: (event: DecisionEvent) => void }) {
   const initialDraft = createDecisionDraft();
   const [history, setHistory] = useState<DecisionEvent[]>([]);
@@ -63,8 +68,7 @@ export function DecisionActions({ listingId, onSaved }: { listingId: number; onS
         ...(note.trim() ? { note: note.trim() } : {}),
         ...(parsedBid !== undefined ? { targetBid: parsedBid } : {}),
       });
-      onSaved(saved);
-      if (!requestGate.isCurrent(requestGeneration)) return;
+      if (!notifySavedDecision(saved, onSaved, () => requestGate.isCurrent(requestGeneration))) return;
       try {
         const events = await fetchDecisions(listingId);
         applyIfCurrent(requestGate, requestGeneration, () => {
