@@ -11,6 +11,7 @@ const DEFAULT_LIMIT = 5000;
 
 export interface PrecisionBackfillOptions {
   limit: number;
+  sinceDays: number | null;
 }
 
 interface PrecisionBackfillRow {
@@ -42,7 +43,7 @@ interface PrecisionBackfillRow {
   eviction: unknown;
 }
 
-const PRECISION_BACKFILL_SQL = `
+export const PRECISION_BACKFILL_SQL = `
   select l.id, l.case_no, l.item_no, l.court, l.address, l.property_type,
          l.appraisal_value, l.min_bid_price, l.fail_count, l.source, l.crawled_at,
          t.status as trust_status,
@@ -53,7 +54,15 @@ const PRECISION_BACKFILL_SQL = `
     left join gm_data_trust t on t.listing_id = l.id
     left join gm_rights_analysis r on r.listing_id = l.id
     left join gm_location_analysis loc on loc.listing_id = l.id
-   order by l.crawled_at desc, l.id desc
+    left join gm_precision_evaluations current_precision on current_precision.listing_id = l.id
+   where $2::int is null
+      or (greatest(l.crawled_at, r.analyzed_at, loc.analyzed_at, t.evaluated_at)
+            >= now() - make_interval(days => $2::int)
+          and (current_precision.evaluated_at is null
+            or current_precision.evaluated_at < greatest(
+              l.crawled_at, r.analyzed_at, loc.analyzed_at, t.evaluated_at
+            )))
+   order by greatest(l.crawled_at, r.analyzed_at, loc.analyzed_at, t.evaluated_at) desc, l.id desc
    limit $1`;
 
 const numberOrNull = (value: string | number | null): number | null => {
@@ -80,7 +89,15 @@ export function readPrecisionBackfillOptions(
   const cliLimit = args.find((arg) => arg.startsWith('--limit='));
   const rawLimit = cliLimit === undefined ? env.PRECISION_BACKFILL_LIMIT : cliLimit.slice('--limit='.length);
   const parsedLimit = rawLimit === undefined ? DEFAULT_LIMIT : Number(rawLimit);
-  return { limit: Number.isInteger(parsedLimit) && parsedLimit >= 0 ? parsedLimit : DEFAULT_LIMIT };
+  const sinceDaysArg = args.find((arg) => arg.startsWith('--since-days='));
+  const sinceDays = sinceDaysArg === undefined ? null : Number(sinceDaysArg.slice('--since-days='.length));
+  if (sinceDays !== null && (!Number.isInteger(sinceDays) || sinceDays < 1)) {
+    throw new Error('유효한 --since-days 값은 1 이상의 정수여야 합니다');
+  }
+  return {
+    limit: Number.isInteger(parsedLimit) && parsedLimit >= 0 ? parsedLimit : DEFAULT_LIMIT,
+    sinceDays,
+  };
 }
 
 export function mapPrecisionBackfillInput(row: PrecisionBackfillRow) {
@@ -125,8 +142,8 @@ const record = (counts: Map<string, number>, key: string): void => {
 };
 
 export async function main(): Promise<void> {
-  const { limit } = readPrecisionBackfillOptions();
-  const rows = await query<PrecisionBackfillRow>(PRECISION_BACKFILL_SQL, [limit]);
+  const { limit, sinceDays } = readPrecisionBackfillOptions();
+  const rows = await query<PrecisionBackfillRow>(PRECISION_BACKFILL_SQL, [limit, sinceDays]);
   const statuses = new Map<string, number>();
   const reasons = new Map<string, number>();
 

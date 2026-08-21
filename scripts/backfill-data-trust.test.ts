@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  LISTING_TRUST_SQL,
+  OUTCOME_TRUST_SQL,
   isOutcomeTrustCandidate,
   mapListingTrustInput,
   mapOutcomeTrustInput,
@@ -14,7 +16,50 @@ describe('readTrustBackfillOptions', () => {
       { TRUST_BACKFILL_LIMIT: '34' },
     );
 
-    expect(options).toEqual({ limit: 12, outcomesOnly: true });
+    expect(options).toEqual({ limit: 12, outcomesOnly: true, sinceDays: null });
+  });
+
+  it('accepts a validated --since-days bound', () => {
+    expect(readTrustBackfillOptions(['--since-days=2'], {})).toEqual({
+      limit: 5000,
+      outcomesOnly: false,
+      sinceDays: 2,
+    });
+  });
+
+  it.each(['0', '-1', '1.5', 'nope'])('rejects invalid --since-days=%s', (value) => {
+    expect(() => readTrustBackfillOptions([`--since-days=${value}`], {}))
+      .toThrow('유효한 --since-days');
+  });
+});
+
+describe('trust backfill bounded selection', () => {
+  it('bounds listings by crawl, analysis, and document update timestamps before limit', () => {
+    expect(LISTING_TRUST_SQL).toContain('l.crawled_at');
+    expect(LISTING_TRUST_SQL).toContain('r.analyzed_at');
+    expect(LISTING_TRUST_SQL).toContain('loc.analyzed_at');
+    expect(LISTING_TRUST_SQL).toContain('docs.updated_at');
+    expect(LISTING_TRUST_SQL).toContain("make_interval(days => $2::int)");
+  });
+
+  it('selects only missing or source-stale listing trust rows in since-days mode', () => {
+    expect(LISTING_TRUST_SQL).toContain('left join gm_data_trust current_trust');
+    expect(LISTING_TRUST_SQL).toContain('current_trust.evaluated_at is null');
+    expect(LISTING_TRUST_SQL).toContain('current_trust.evaluated_at < greatest(');
+    expect(LISTING_TRUST_SQL).toContain('$2::int is null\n      or (');
+  });
+
+  it('bounds outcomes by their snapshot or result observation timestamp before limit', () => {
+    expect(OUTCOME_TRUST_SQL).toContain('s.snapped_at');
+    expect(OUTCOME_TRUST_SQL).toContain('r.captured_at');
+    expect(OUTCOME_TRUST_SQL).toContain("make_interval(days => $2::int)");
+  });
+
+  it('selects only missing or source-stale outcome trust rows in since-days mode', () => {
+    expect(OUTCOME_TRUST_SQL).toContain('left join gm_outcome_trust current_trust');
+    expect(OUTCOME_TRUST_SQL).toContain('current_trust.evaluated_at is null');
+    expect(OUTCOME_TRUST_SQL).toContain('current_trust.evaluated_at < greatest(');
+    expect(OUTCOME_TRUST_SQL).toContain('$2::int is null\n       or (');
   });
 });
 

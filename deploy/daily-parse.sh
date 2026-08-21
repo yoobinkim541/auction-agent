@@ -9,6 +9,7 @@
 cd /home/ubuntu/projects/gyeongmae-agent || exit 1
 export PATH="/home/ubuntu/.local/bin:$PATH"
 NOTIFY="scripts/notify-telegram.sh"   # 경매 전용 봇(GM_TELEGRAM_*) — 스톡봇(.hermes) 공용 스크립트 대체
+source deploy/precision-daily-gate.sh
 echo "[$(date '+%F %T')] === parse start ==="
 
 COURT_BID_DAYS="${COURT_BID_DAYS:-180}" npm run crawl -- --source=courtauction --incremental --max=10000 --max-new=500 --all-types --region=서울,경기
@@ -32,6 +33,13 @@ echo "[$(date '+%F %T')] === parse done (analyze rc=$rc) ==="
 npm run snapshot 2>&1 || echo "[snapshot] 실패(무시)"
 npm run collect:results 2>&1 || echo "[collect:results] 실패(무시)"
 
+# 최근 2일에 실제 갱신된 원천만 제한 처리하고, 정밀 안전 감사를 통과해야 정밀 다이제스트를 허용한다.
+# 실패해도 analyze rc와 레거시 분석/사진 데이터는 그대로 보존한다.
+PRECISION_DIGEST_ALLOWED=1
+if ! run_precision_refresh_and_audit; then
+  PRECISION_DIGEST_ALLOWED=0
+fi
+
 # 관심물건(★) 변동 알림(발품절감 ②·⑤) — 기일/유찰/최저가/문서갱신 diff. 변동 있을 때만 stdout → 발송.
 WATCH=$(npm run --silent watch:favs 2>/dev/null)
 if [ -n "$WATCH" ]; then
@@ -47,13 +55,9 @@ if [ "$HRC" != "0" ]; then
     "신규 수집 굶음 — 차단/계정플래그/프록시 점검. ${SUMMARY}" 2>/dev/null || true
 fi
 
-# 일일 추천 다이제스트 + 복기(학습) 커버리지 한 줄을 텔레그램으로(stdout만 발생 = 안전).
-DIGEST=$(npm run --silent digest 2>/dev/null)
+# 일일 정밀 추천 다이제스트 + 복기(학습) 커버리지 한 줄. 감사 실패 시 정밀 다이제스트만 생략한다.
 EVAL=$(npm run --silent eval:report -- --summary 2>/dev/null)
-if [ -n "$DIGEST" ]; then
-  bash "$NOTIFY" "경매 추천" "완료" "${DIGEST}
-${EVAL}" 2>/dev/null || true
-fi
+run_precision_digest "$PRECISION_DIGEST_ALLOWED" "$EVAL"
 
 # 학습 게이트 도달(매칭≥EVAL_GATE) 첫날 1회 — 전체 복기 리포트 + "이어서 진행" 알림. 마커로 재발송 방지.
 GATE_MARK="$HOME/.gyeongmae-phase2-alerted"

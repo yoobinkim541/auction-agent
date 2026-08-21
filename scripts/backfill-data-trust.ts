@@ -13,6 +13,7 @@ const MONEY_WARNING_PATTERNS = ['파싱', '금액 단위', '보증금 단위'];
 export interface TrustBackfillOptions {
   limit: number;
   outcomesOnly: boolean;
+  sinceDays: number | null;
 }
 
 export interface ListingTrustBackfillRow {
@@ -87,10 +88,16 @@ export function readTrustBackfillOptions(
   const cliLimit = args.find((arg) => arg.startsWith('--limit='));
   const rawLimit = cliLimit === undefined ? env.TRUST_BACKFILL_LIMIT : cliLimit.slice('--limit='.length);
   const parsedLimit = rawLimit === undefined ? DEFAULT_LIMIT : Number(rawLimit);
+  const sinceDaysArg = args.find((arg) => arg.startsWith('--since-days='));
+  const sinceDays = sinceDaysArg === undefined ? null : Number(sinceDaysArg.slice('--since-days='.length));
+  if (sinceDays !== null && (!Number.isInteger(sinceDays) || sinceDays < 1)) {
+    throw new Error('유효한 --since-days 값은 1 이상의 정수여야 합니다');
+  }
 
   return {
     limit: Number.isInteger(parsedLimit) && parsedLimit >= 0 ? parsedLimit : DEFAULT_LIMIT,
     outcomesOnly: args.includes('--outcomes-only'),
+    sinceDays,
   };
 }
 
@@ -141,7 +148,7 @@ export function mapOutcomeTrustInput(
   };
 }
 
-const LISTING_TRUST_SQL = `
+export const LISTING_TRUST_SQL = `
   select l.id, l.case_no, l.item_no, l.appraisal_value, l.min_bid_price, l.crawled_at,
          (r.id is not null) as rights_analyzed, r.classified, r.tenants, r.warnings,
          (loc.id is not null) as location_analyzed, loc.market_price, loc.expected_bid_price,
@@ -150,26 +157,51 @@ const LISTING_TRUST_SQL = `
     from gm_listings l
     left join gm_rights_analysis r on r.listing_id = l.id
     left join gm_location_analysis loc on loc.listing_id = l.id
+    left join gm_data_trust current_trust on current_trust.listing_id = l.id
     left join lateral (
-      select coalesce(jsonb_agg(d.parsed_json), '[]'::jsonb) as documents
+      select coalesce(jsonb_agg(d.parsed_json), '[]'::jsonb) as documents,
+             max(d.created_at) as updated_at
         from gm_listing_docs d
        where d.listing_id = l.id
     ) docs on true
-   order by l.crawled_at desc, l.id desc
+   where $2::int is null
+      or (greatest(l.crawled_at, r.analyzed_at, loc.analyzed_at, docs.updated_at)
+            >= now() - make_interval(days => $2::int)
+          and (current_trust.evaluated_at is null
+            or current_trust.evaluated_at < greatest(
+              l.crawled_at, r.analyzed_at, loc.analyzed_at, docs.updated_at
+            )))
+   order by greatest(l.crawled_at, r.analyzed_at, loc.analyzed_at, docs.updated_at) desc, l.id desc
    limit $1`;
 
-const OUTCOME_TRUST_SQL = `
+export const OUTCOME_TRUST_SQL = `
   select e.case_no, e.item_no, e.sale_date, e.appraisal_value, e.sold_amount,
-         (select count(*) from gm_auction_results r
-           where r.case_no = e.case_no
-             and coalesce(nullif(r.item_no, ''), '1') = coalesce(nullif(e.item_no, ''), '1')
-             and r.dxdy_date = e.sale_date) as duplicate_result_count,
+         (select count(*) from gm_auction_results duplicate_result
+           where duplicate_result.case_no = e.case_no
+             and coalesce(nullif(duplicate_result.item_no, ''), '1') = coalesce(nullif(e.item_no, ''), '1')
+             and duplicate_result.dxdy_date = e.sale_date) as duplicate_result_count,
          e.matched as sale_date_matches,
-         (select count(distinct coalesce(nullif(r.item_no, ''), '1')) from gm_auction_results r
-           where r.case_no = e.case_no and r.dxdy_date = e.sale_date) as case_date_item_count
+         (select count(distinct coalesce(nullif(case_result.item_no, ''), '1')) from gm_auction_results case_result
+           where case_result.case_no = e.case_no and case_result.dxdy_date = e.sale_date) as case_date_item_count
    from gm_outcome_eval e
+   join gm_prediction_snapshots s
+     on s.case_no = e.case_no
+    and s.item_no = coalesce(nullif(e.item_no, ''), '1')
+    and s.sale_date = e.sale_date
+   left join gm_auction_results r
+     on r.case_no = e.case_no
+    and coalesce(nullif(r.item_no, ''), '1') = coalesce(nullif(e.item_no, ''), '1')
+    and r.dxdy_date = e.sale_date
+   left join gm_outcome_trust current_trust
+     on current_trust.case_no = e.case_no
+    and current_trust.item_no = coalesce(nullif(e.item_no, ''), '1')
+    and current_trust.sale_date = e.sale_date
    where e.sale_date is not null
-   order by e.sale_date desc, e.case_no, e.item_no
+     and ($2::int is null
+       or (greatest(s.snapped_at, r.captured_at) >= now() - make_interval(days => $2::int)
+         and (current_trust.evaluated_at is null
+           or current_trust.evaluated_at < greatest(s.snapped_at, r.captured_at))))
+   order by greatest(s.snapped_at, r.captured_at) desc, e.sale_date desc, e.case_no, e.item_no
    limit $1`;
 
 type Status = 'trusted' | 'hold' | 'quarantined';
@@ -182,8 +214,8 @@ const inputHash = (input: ListingTrustInput): string => (
   createHash('sha256').update(JSON.stringify(input)).digest('hex')
 );
 
-async function backfillListings(limit: number, statuses: Map<string, number>, reasons: Map<string, number>): Promise<number> {
-  const rows = await query<ListingTrustBackfillRow>(LISTING_TRUST_SQL, [limit]);
+async function backfillListings(options: TrustBackfillOptions, statuses: Map<string, number>, reasons: Map<string, number>): Promise<number> {
+  const rows = await query<ListingTrustBackfillRow>(LISTING_TRUST_SQL, [options.limit, options.sinceDays]);
   for (const row of rows) {
     const input = mapListingTrustInput(row);
     const result = evaluateListingTrust(input);
@@ -194,8 +226,8 @@ async function backfillListings(limit: number, statuses: Map<string, number>, re
   return rows.length;
 }
 
-async function backfillOutcomes(limit: number, statuses: Map<string, number>, reasons: Map<string, number>): Promise<number> {
-  const rows = await query<OutcomeTrustBackfillRow>(OUTCOME_TRUST_SQL, [limit]);
+async function backfillOutcomes(options: TrustBackfillOptions, statuses: Map<string, number>, reasons: Map<string, number>): Promise<number> {
+  const rows = await query<OutcomeTrustBackfillRow>(OUTCOME_TRUST_SQL, [options.limit, options.sinceDays]);
   for (const row of rows.filter(isOutcomeTrustCandidate)) {
     const input = mapOutcomeTrustInput(row);
     const result = evaluateOutcomeTrust(input);
@@ -210,8 +242,8 @@ export async function main(): Promise<void> {
   const options = readTrustBackfillOptions();
   const statuses = new Map<Status, number>([['trusted', 0], ['hold', 0], ['quarantined', 0]]);
   const reasons = new Map<string, number>();
-  const listings = options.outcomesOnly ? 0 : await backfillListings(options.limit, statuses, reasons);
-  const outcomes = await backfillOutcomes(options.limit, statuses, reasons);
+  const listings = options.outcomesOnly ? 0 : await backfillListings(options, statuses, reasons);
+  const outcomes = await backfillOutcomes(options, statuses, reasons);
   const reasonSummary = [...reasons.entries()]
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
     .slice(0, 10)

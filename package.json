@@ -29,7 +29,8 @@
     "enrich:deonakchal": "tsx scripts/enrich-deonakchal.ts",
     "retry:outcomes": "tsx scripts/retry-outcome-results.ts",
     "trust:backfill": "tsx scripts/backfill-data-trust.ts",
-    "precision:backfill": "tsx scripts/backfill-precision.ts"
+    "precision:backfill": "tsx scripts/backfill-precision.ts",
+    "precision:audit": "tsx scripts/precision-audit.ts"
   },
   "engines": {
     "node": ">=22"
