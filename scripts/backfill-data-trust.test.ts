@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isOutcomeTrustCandidate,
   mapListingTrustInput,
   mapOutcomeTrustInput,
   readTrustBackfillOptions,
@@ -17,6 +18,16 @@ describe('readTrustBackfillOptions', () => {
 });
 
 describe('trust backfill mappings', () => {
+  it('filters outcomes without a sale date before trust-key mapping', () => {
+    const candidates = [{
+      case_no: '2026타경0', item_no: '1', sale_date: null,
+      appraisal_value: '100000000', sold_amount: null,
+      duplicate_result_count: 0, sale_date_matches: false, case_date_item_count: 0,
+    }].filter(isOutcomeTrustCandidate);
+
+    expect(candidates).toEqual([]);
+  });
+
   it('maps listing analyses and documents into ListingTrustInput', () => {
     const input = mapListingTrustInput({
       id: 7,

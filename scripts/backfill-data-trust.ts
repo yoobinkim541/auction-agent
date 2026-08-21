@@ -38,7 +38,7 @@ export interface ListingTrustBackfillRow {
 export interface OutcomeTrustBackfillRow {
   case_no: string;
   item_no: string | null;
-  sale_date: string | Date;
+  sale_date: string | Date | null;
   appraisal_value: string | number | null;
   sold_amount: string | number | null;
   duplicate_result_count: string | number;
@@ -115,7 +115,15 @@ export function mapListingTrustInput(row: ListingTrustBackfillRow): ListingTrust
   };
 }
 
-export function mapOutcomeTrustInput(row: OutcomeTrustBackfillRow): OutcomeTrustInput {
+export function isOutcomeTrustCandidate(
+  row: OutcomeTrustBackfillRow,
+): row is OutcomeTrustBackfillRow & { sale_date: string | Date } {
+  return row.sale_date !== null;
+}
+
+export function mapOutcomeTrustInput(
+  row: OutcomeTrustBackfillRow & { sale_date: string | Date },
+): OutcomeTrustInput {
   const appraisalValue = numberOrNull(row.appraisal_value);
   const soldAmount = numberOrNull(row.sold_amount);
   return {
@@ -160,7 +168,8 @@ const OUTCOME_TRUST_SQL = `
          (select count(distinct coalesce(nullif(r.item_no, ''), '1')) from gm_auction_results r
            where r.case_no = e.case_no and r.dxdy_date = e.sale_date) as case_date_item_count
     from gm_outcome_eval e
-   where not e.matched or e.sold
+   where e.sale_date is not null
+     and (not e.matched or e.sold)
    order by e.sale_date desc, e.case_no, e.item_no
    limit $1`;
 
@@ -188,7 +197,7 @@ async function backfillListings(limit: number, statuses: Map<string, number>, re
 
 async function backfillOutcomes(limit: number, statuses: Map<string, number>, reasons: Map<string, number>): Promise<number> {
   const rows = await query<OutcomeTrustBackfillRow>(OUTCOME_TRUST_SQL, [limit]);
-  for (const row of rows) {
+  for (const row of rows.filter(isOutcomeTrustCandidate)) {
     const input = mapOutcomeTrustInput(row);
     const result = evaluateOutcomeTrust(input);
     await saveOutcomeTrust(input.caseNo!, input.itemNo!, input.saleDate!, result);
