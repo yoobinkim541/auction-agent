@@ -6,7 +6,8 @@
 # 크롤이 실패해도(접속차단·로그인 폼 변경·네트워크 등) 분석은 항상 수행한다.
 #   분석은 DB(기존 등기/명세서 + gm_molit_cache 영구 캐시)만으로도 income·시세·리포트를 갱신하므로,
 #   크롤 한 번의 실패가 전체 분석 갱신을 막아선 안 된다. (과거: set -e + crawl 실패 → analyze 통째 스킵 버그)
-cd /home/ubuntu/projects/gyeongmae-agent || exit 1
+GYEONGMAE_PROJECT_DIR="${GYEONGMAE_PROJECT_DIR:-/home/ubuntu/projects/gyeongmae-agent}"
+cd "$GYEONGMAE_PROJECT_DIR" || exit 1
 export PATH="/home/ubuntu/.local/bin:$PATH"
 NOTIFY="scripts/notify-telegram.sh"   # 경매 전용 봇(GM_TELEGRAM_*) — 스톡봇(.hermes) 공용 스크립트 대체
 source deploy/precision-daily-gate.sh

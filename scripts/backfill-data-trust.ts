@@ -188,20 +188,23 @@ export const OUTCOME_TRUST_SQL = `
      on s.case_no = e.case_no
     and s.item_no = coalesce(nullif(e.item_no, ''), '1')
     and s.sale_date = e.sale_date
-   left join gm_auction_results r
-     on r.case_no = e.case_no
-    and coalesce(nullif(r.item_no, ''), '1') = coalesce(nullif(e.item_no, ''), '1')
-    and r.dxdy_date = e.sale_date
+   left join lateral (
+     select max(observed.captured_at) as captured_at
+       from gm_auction_results observed
+      where observed.case_no = e.case_no
+        and coalesce(nullif(observed.item_no, ''), '1') = coalesce(nullif(e.item_no, ''), '1')
+        and observed.dxdy_date = e.sale_date
+   ) observed_result on true
    left join gm_outcome_trust current_trust
      on current_trust.case_no = e.case_no
     and current_trust.item_no = coalesce(nullif(e.item_no, ''), '1')
     and current_trust.sale_date = e.sale_date
    where e.sale_date is not null
      and ($2::int is null
-       or (greatest(s.snapped_at, r.captured_at) >= now() - make_interval(days => $2::int)
+       or (greatest(s.snapped_at, observed_result.captured_at) >= now() - make_interval(days => $2::int)
          and (current_trust.evaluated_at is null
-           or current_trust.evaluated_at < greatest(s.snapped_at, r.captured_at))))
-   order by greatest(s.snapped_at, r.captured_at) desc, e.sale_date desc, e.case_no, e.item_no
+           or current_trust.evaluated_at < greatest(s.snapped_at, observed_result.captured_at))))
+   order by greatest(s.snapped_at, observed_result.captured_at) desc, e.sale_date desc, e.case_no, e.item_no
    limit $1`;
 
 type Status = 'trusted' | 'hold' | 'quarantined';

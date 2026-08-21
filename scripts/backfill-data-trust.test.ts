@@ -51,7 +51,8 @@ describe('trust backfill bounded selection', () => {
 
   it('bounds outcomes by their snapshot or result observation timestamp before limit', () => {
     expect(OUTCOME_TRUST_SQL).toContain('s.snapped_at');
-    expect(OUTCOME_TRUST_SQL).toContain('r.captured_at');
+    expect(OUTCOME_TRUST_SQL).toContain('max(observed.captured_at)');
+    expect(OUTCOME_TRUST_SQL).toContain('observed_result.captured_at');
     expect(OUTCOME_TRUST_SQL).toContain("make_interval(days => $2::int)");
   });
 
