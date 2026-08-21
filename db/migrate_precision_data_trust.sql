@@ -54,4 +54,26 @@ create or replace view gm_ml_price_calibration as
    group by property_type, region
   having count(*) >= 5;
 
+do $$
+begin
+  if to_regclass('gm_shadow_scores') is not null then
+    execute $shadow_score_eval$
+      create or replace view gm_shadow_score_eval as
+        select s.id, s.case_no, s.item_no, s.sale_date, s.model_name, s.model_version,
+               s.predicted_sale_ratio, s.confidence, s.feature_snapshot_hash, s.created_at,
+               e.property_type, e.court, e.address, e.appraisal_value, e.matched, e.sold,
+               e.sold_amount, e.sale_ratio, e.realized_bid_margin,
+               case when e.sale_ratio is not null then s.predicted_sale_ratio - e.sale_ratio end as sale_ratio_error,
+               case when e.sale_ratio is not null then abs(s.predicted_sale_ratio - e.sale_ratio) end as abs_sale_ratio_error,
+               (e.sale_date <= current_date - 14) as eligible_for_review
+          from gm_shadow_scores s
+          left join gm_trusted_outcome_eval e
+            on e.case_no = s.case_no
+           and coalesce(nullif(e.item_no,''),'1') = s.item_no
+           and e.sale_date = s.sale_date
+    $shadow_score_eval$;
+  end if;
+end
+$$;
+
 commit;
