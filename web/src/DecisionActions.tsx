@@ -63,8 +63,8 @@ export function DecisionActions({ listingId, onSaved }: { listingId: number; onS
         ...(note.trim() ? { note: note.trim() } : {}),
         ...(parsedBid !== undefined ? { targetBid: parsedBid } : {}),
       });
-      if (!requestGate.isCurrent(requestGeneration)) return;
       onSaved(saved);
+      if (!requestGate.isCurrent(requestGeneration)) return;
       try {
         const events = await fetchDecisions(listingId);
         applyIfCurrent(requestGate, requestGeneration, () => {

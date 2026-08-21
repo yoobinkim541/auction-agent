@@ -42,7 +42,7 @@ export function PrecisionInbox({ items, loading, error, onOpen, onLegacy, onRelo
           <button type="button" className="precision-legacy-link" onClick={onLegacy}>전체 사건 목록 보기</button>
         </div>
       )}
-      {!error && recommended.length > 0 && (
+      {!loading && !error && recommended.length > 0 && (
         <>
           <p className="precision-count">추천 {recommended.length}건 · 최대 7건까지만 표시</p>
           <div className="precision-list" aria-label="정밀 추천 사건 목록">

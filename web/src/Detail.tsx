@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { eok, won, pct, type DecisionEvent, type ListingItem, type RightsObj, type LocationObj } from './api.ts';
 import { RISK, TYPE_LABEL, KIND_LABEL } from './labels.ts';
 import { resolveRound } from './listing-utils.ts';
@@ -8,6 +8,7 @@ import { CostCalculator } from './CostCalculator.tsx';
 import { PrecisionVerdict } from './PrecisionVerdict.tsx';
 import { DecisionActions } from './DecisionActions.tsx';
 import { shouldShowLegacyBid } from './precision.ts';
+import { shouldIgnoreDrawerShortcut } from './detail-keyboard.ts';
 
 const CONF: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' };
 
@@ -23,11 +24,21 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
 
   const [copied, setCopied] = useState(false);
   const [fieldMode, setFieldMode] = useState(false);
+  const drawerRef = useRef<HTMLElement>(null);
+  const priorFocusRef = useRef<HTMLElement | null>(null);
   const fieldwork = loc?.report?.fieldwork;
   const courtCheckUrl = row.court_check_url ?? (row.source === 'courtauction' ? row.source_url : null) ?? 'https://www.courtauction.go.kr/pgj/index.on';
   const deonakchalCheckUrl = row.deonakchal_check_url ?? (row.source === 'deonakchal' ? row.source_url : null) ?? 'https://www.xn--b20bu5cuwtpue8ui.com/auction/list.html';
   const itemHint = row.item_no && row.item_no !== '1' ? ` · 물건 ${row.item_no}` : '';
   useEffect(() => { setFieldMode(false); }, [row.case_no]); // 매물 바뀌면 현장모드 해제
+  useEffect(() => {
+    priorFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    return () => { priorFocusRef.current?.focus(); };
+  }, []);
+  useEffect(() => {
+    const drawer = drawerRef.current;
+    if (drawer && !drawer.contains(document.activeElement)) drawer.focus();
+  }, [row.id]);
   const copyCase = () => {
     navigator.clipboard.writeText(row.case_no).then(() => {
       setCopied(true);
@@ -38,21 +49,21 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
-      if (e.key === 'ArrowLeft' && onPrev) { e.preventDefault(); onPrev(); }
-      if (e.key === 'ArrowRight' && onNext) { e.preventDefault(); onNext(); }
-      if (e.key === 'o' && courtCheckUrl && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as Element)?.tagName)) {
+      if (e.key === 'ArrowLeft' && onPrev && !shouldIgnoreDrawerShortcut(e.target)) { e.preventDefault(); onPrev(); }
+      if (e.key === 'ArrowRight' && onNext && !shouldIgnoreDrawerShortcut(e.target)) { e.preventDefault(); onNext(); }
+      if (e.key === 'o' && courtCheckUrl && !shouldIgnoreDrawerShortcut(e.target)) {
         e.preventDefault();
         window.open(courtCheckUrl, '_blank', 'noopener,noreferrer');
       }
-      if (e.key === 'd' && deonakchalCheckUrl && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as Element)?.tagName)) {
+      if (e.key === 'd' && deonakchalCheckUrl && !shouldIgnoreDrawerShortcut(e.target)) {
         e.preventDefault();
         window.open(deonakchalCheckUrl, '_blank', 'noopener,noreferrer');
       }
-      if (e.key === 'c' && !e.metaKey && !e.ctrlKey && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as Element)?.tagName)) {
+      if (e.key === 'c' && !e.metaKey && !e.ctrlKey && !shouldIgnoreDrawerShortcut(e.target)) {
         e.preventDefault();
         copyCase();
       }
-      if (e.key === 'f' && !e.metaKey && !e.ctrlKey && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as Element)?.tagName)) {
+      if (e.key === 'f' && !e.metaKey && !e.ctrlKey && !shouldIgnoreDrawerShortcut(e.target)) {
         e.preventDefault();
         onFav();
       }
@@ -68,7 +79,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
 
   return (
     <div className="drawer-bg" onClick={onClose}>
-      <aside className={`drawer${fieldMode ? ' drawer-fieldmode' : ''}`} onClick={(e) => e.stopPropagation()}>
+      <aside ref={drawerRef} className={`drawer${fieldMode ? ' drawer-fieldmode' : ''}`} role="dialog" aria-modal="true" aria-labelledby="detail-dialog-title" tabIndex={-1} onClick={(e) => e.stopPropagation()}>
         <div className="drawer-topbar">
           <div className="drawer-nav">
             <button className="nav-btn" disabled={!onPrev} onClick={onPrev} title="이전 (←)" aria-label="이전 매물">‹</button>
@@ -95,7 +106,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
           </div>
         )}
         {loading && <p className="detail-loading">상세 분석 불러오는 중…</p>}
-        <h2>
+        <h2 id="detail-dialog-title">
           <button type="button" className="star" onClick={onFav} title="관심 (단축키: f)" aria-label="관심 매물 토글">{row.is_favorite ? '★' : '☆'}</button>{' '}
           {row.case_no}{' '}
           <button className="copy-btn" onClick={copyCase} title="사건번호 복사 (단축키: c)">{copied ? '✓' : '⧉'}</button>{' '}
@@ -131,7 +142,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
 
         <div className="kv">
           <div><span>감정가</span><b>{eok(row.appraisal_value)}</b></div>
-          <div><span>최저매각가</span><b>{eok(row.min_bid_price)}</b></div>
+          {showLegacyBid && <div><span>일반 최저매각가 <small className="muted">(정밀 추천 아님)</small></span><b>{eok(row.min_bid_price)}</b></div>}
           {row.area_m2 != null && <div><span>전용면적</span><b>{row.area_m2.toFixed(2)}㎡{` (${(row.area_m2 / 3.3058).toFixed(1)}평)`}</b></div>}
           <div><span>매각기일</span><b>{row.sale_date ?? '-'}</b></div>
           {(row.inq_cnt != null || row.interest_cnt != null) && (
@@ -143,7 +154,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
           <div><span>추정시세</span><b>{loc?.market_price == null ? <span className="muted">미확보 — 안전마진 산정 불가</span> : <>{eok(loc.market_price)}{loc.market_confidence ? ` · 신뢰도 ${CONF[loc.market_confidence]}` : ''}</>}</b></div>
           {showLegacyBid && <div><span>일반 예상낙찰가 <small className="muted">(정밀 추천 아님)</small></span><b>{eok(loc?.expected_bid_price)}</b></div>}
           {showLegacyBid && row.ml_calibration?.reference_bid_price != null && (
-            <div><span title="지역×종류 과거 낙찰 중앙값 기반 — 운영 반영 전 참고용">ML 참고 보정가</span><b>{eok(row.ml_calibration.reference_bid_price)} <small className="muted">({row.ml_calibration.region} · n={row.ml_calibration.sample_size})</small></b></div>
+            <div><span title="지역×종류 과거 낙찰 중앙값 기반 — 운영 반영 전 참고용">일반 ML 참고 보정가 <small className="muted">(정밀 추천 아님)</small></span><b>{eok(row.ml_calibration.reference_bid_price)} <small className="muted">({row.ml_calibration.region} · n={row.ml_calibration.sample_size})</small></b></div>
           )}
           <div><span>안전마진(최저가)</span><b>{pct(loc?.safety_margin)}</b></div>
           <div><span title="시세 − 총취득비용(취득세·명도비·채권·인수 포함)">진짜 안전마진</span><b className={(loc?.acquisition_cost?.trueSafetyMargin ?? 0) < 0 ? 'danger' : ''}>{pct(loc?.acquisition_cost?.trueSafetyMargin)}</b></div>
@@ -199,7 +210,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
           )}
         </Section>
 
-        {showLegacyBid && loc?.acquisition_cost?.bidPrice && <CostCalculator row={row} loc={loc} />}
+        {showLegacyBid && loc?.acquisition_cost?.bidPrice && <div><p className="muted">일반 취득비용 계산기 (정밀 추천 아님)</p><CostCalculator row={row} loc={loc} /></div>}
         {loc?.income && <IncomeBlock income={loc.income} />}
         {loc?.eviction && <EvictionBlock ev={loc.eviction} />}
 
@@ -250,9 +261,9 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
               </table>
             </>
           )}
-          {loc?.sale_rounds && loc.sale_rounds.length > 0 && (
+        {showLegacyBid && loc?.sale_rounds && loc.sale_rounds.length > 0 && (
             <>
-              <h4>매각기일 차수</h4>
+              <h4>일반 매각기일 차수 (정밀 추천 아님)</h4>
               <div className="amen">{loc.sale_rounds.map((s, i) => <span key={i} className={i === 0 ? 'flag-high' : ''}>{s.round}차 {s.date} {eok(s.minPrice)}{s.ratioPct ? ` (${s.ratioPct}%↓)` : ''}</span>)}</div>
             </>
           )}
