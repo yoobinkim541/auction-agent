@@ -47,7 +47,7 @@ class ListingControllerTest {
   }
 
   @Test
-  void postDecisionCreatesAppendOnlyEvent() throws Exception {
+  void postDecisionAcceptsCanonicalCamelCaseFields() throws Exception {
     when(service.recordDecision(42L, "rejected", "price", "상한 초과", 230000000L))
         .thenReturn("{\"id\":9,\"listing_id\":42,\"decision\":\"rejected\",\"reason_code\":\"price\"}");
 
@@ -60,6 +60,72 @@ class ListingControllerTest {
         .andExpect(jsonPath("$.reason_code").value("price"));
 
     verify(service).recordDecision(42L, "rejected", "price", "상한 초과", 230000000L);
+  }
+
+  @Test
+  void postDecisionAcceptsSnakeCaseCompatibilityAliases() throws Exception {
+    when(service.recordDecision(42L, "rejected", "price", "", 230000000L))
+        .thenReturn("{\"id\":9,\"listing_id\":42,\"reason_code\":\"price\",\"target_bid\":230000000}");
+
+    mvc.perform(post("/api/listings/42/decisions")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"decision\":\"rejected\",\"reason_code\":\"price\",\"target_bid\":230000000}"))
+        .andExpect(status().isCreated())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+        .andExpect(jsonPath("$.reason_code").value("price"))
+        .andExpect(jsonPath("$.target_bid").value(230000000));
+
+    verify(service).recordDecision(42L, "rejected", "price", "", 230000000L);
+  }
+
+  @Test
+  void postDecisionRejectsConflictingFieldAliases() throws Exception {
+    mvc.perform(post("/api/listings/42/decisions")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"decision\":\"rejected\",\"reasonCode\":\"price\",\"reason_code\":\"rights\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON));
+
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void postDecisionRejectsDecimalTargetBid() throws Exception {
+    mvc.perform(post("/api/listings/42/decisions")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"decision\":\"reviewing\",\"targetBid\":230000000.5}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON));
+
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void postDecisionRejectsOverflowTargetBid() throws Exception {
+    mvc.perform(post("/api/listings/42/decisions")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"decision\":\"reviewing\",\"targetBid\":9223372036854775808}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON));
+
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void postDecisionRejectsNonPositiveTargetBid() throws Exception {
+    mvc.perform(post("/api/listings/42/decisions")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"decision\":\"reviewing\",\"targetBid\":0}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON));
+
+    mvc.perform(post("/api/listings/42/decisions")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"decision\":\"reviewing\",\"targetBid\":-1}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON));
+
+    verifyNoInteractions(service);
   }
 
   @Test

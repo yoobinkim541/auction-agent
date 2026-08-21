@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
@@ -65,7 +66,14 @@ public class ListingController {
       produces = MediaType.APPLICATION_JSON_VALUE)
   public ResponseEntity<?> recordDecision(@PathVariable long id, @RequestBody Map<String, Object> body) {
     String decision = stringValue(body.get("decision"));
-    String reasonCode = stringValue(body.get("reasonCode"));
+    String reasonCode;
+    Long targetBid;
+    try {
+      reasonCode = aliasedStringValue(body, "reasonCode", "reason_code");
+      targetBid = aliasedTargetBidValue(body, "targetBid", "target_bid");
+    } catch (IllegalArgumentException e) {
+      return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+    }
     if (decision == null || !DECISIONS.contains(decision)) {
       return ResponseEntity.badRequest().body(Map.of("error", "valid decision required"));
     }
@@ -76,12 +84,6 @@ public class ListingController {
       return ResponseEntity.badRequest().body(Map.of("error", "reasonCode required for hold or rejected"));
     }
 
-    Long targetBid;
-    try {
-      targetBid = longValue(body.get("targetBid"));
-    } catch (NumberFormatException e) {
-      return ResponseEntity.badRequest().body(Map.of("error", "targetBid must be an integer"));
-    }
     String note = stringValue(body.get("note"));
     String json = service.recordDecision(id, decision, reasonCode, note == null ? "" : note, targetBid);
     return json == null ? ResponseEntity.notFound().build() : ResponseEntity.status(201).body(json);
@@ -163,9 +165,40 @@ public class ListingController {
     return result.isEmpty() ? null : result;
   }
 
-  private static Long longValue(Object value) {
+  private static String aliasedStringValue(Map<String, Object> body, String canonicalKey, String aliasKey) {
+    boolean canonicalPresent = body.containsKey(canonicalKey);
+    boolean aliasPresent = body.containsKey(aliasKey);
+    String canonical = canonicalPresent ? stringValue(body.get(canonicalKey)) : null;
+    String alias = aliasPresent ? stringValue(body.get(aliasKey)) : null;
+    if (canonicalPresent && aliasPresent && !Objects.equals(canonical, alias)) {
+      throw new IllegalArgumentException(canonicalKey + " and " + aliasKey + " conflict");
+    }
+    return canonicalPresent ? canonical : alias;
+  }
+
+  private static Long aliasedTargetBidValue(Map<String, Object> body, String canonicalKey, String aliasKey) {
+    boolean canonicalPresent = body.containsKey(canonicalKey);
+    boolean aliasPresent = body.containsKey(aliasKey);
+    Long canonical = canonicalPresent ? targetBidValue(body.get(canonicalKey)) : null;
+    Long alias = aliasPresent ? targetBidValue(body.get(aliasKey)) : null;
+    if (canonicalPresent && aliasPresent && !Objects.equals(canonical, alias)) {
+      throw new IllegalArgumentException(canonicalKey + " and " + aliasKey + " conflict");
+    }
+    return canonicalPresent ? canonical : alias;
+  }
+
+  private static Long targetBidValue(Object value) {
     if (value == null) return null;
-    if (value instanceof Number number) return number.longValue();
-    return Long.valueOf(value.toString());
+    String text = value.toString().trim();
+    if (!text.matches("[0-9]+")) {
+      throw new IllegalArgumentException("targetBid must be a positive integer");
+    }
+    try {
+      long targetBid = Long.parseLong(text);
+      if (targetBid <= 0) throw new IllegalArgumentException("targetBid must be a positive integer");
+      return targetBid;
+    } catch (NumberFormatException e) {
+      throw new IllegalArgumentException("targetBid must be a positive integer");
+    }
   }
 }
