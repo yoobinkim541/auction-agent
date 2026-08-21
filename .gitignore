@@ -33,3 +33,6 @@ artifacts/ml/
 .vercel
 
 .superdesign/tmp/
+
+# Superpowers isolated implementation worktrees
+.worktrees/
