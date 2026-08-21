@@ -27,7 +27,8 @@
     "enrich:poi": "tsx pipeline/location/enrich-poi.ts",
     "geocode:bulk": "tsx scripts/geocode-bulk.ts",
     "enrich:deonakchal": "tsx scripts/enrich-deonakchal.ts",
-    "retry:outcomes": "tsx scripts/retry-outcome-results.ts"
+    "retry:outcomes": "tsx scripts/retry-outcome-results.ts",
+    "trust:backfill": "tsx scripts/backfill-data-trust.ts"
   },
   "engines": {
     "node": ">=22"

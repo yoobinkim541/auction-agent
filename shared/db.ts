@@ -7,6 +7,8 @@ import type {
   Listing, ListingDoc, RightsAnalysisResult, LocationAnalysis, Score,
 } from './types.ts';
 import type { CrawlRunRow } from './crawl-health.ts';
+import type { ListingTrustResult } from './data-trust.ts';
+import type { OutcomeTrustResult } from './outcome-trust.ts';
 
 let _pool: pg.Pool | null = null;
 
@@ -29,6 +31,35 @@ export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
 const j = (v: unknown): string | null => (v == null ? null : JSON.stringify(v));
 
 // ── 쓰기 ─────────────────────────────────────────────────────────
+export async function saveListingDataTrust(
+  listingId: number, result: ListingTrustResult, inputHash: string,
+): Promise<void> {
+  await query(
+    `insert into gm_data_trust
+       (listing_id,status,score,reason_codes,checks,evaluator_version,input_hash,evaluated_at)
+     values ($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,now())
+     on conflict (listing_id) do update set
+       status=excluded.status, score=excluded.score, reason_codes=excluded.reason_codes,
+       checks=excluded.checks, evaluator_version=excluded.evaluator_version,
+       input_hash=excluded.input_hash, evaluated_at=now()`,
+    [listingId, result.status, result.score, j(result.reasonCodes), j(result.checks), result.evaluatorVersion, inputHash],
+  );
+}
+
+export async function saveOutcomeTrust(
+  caseNo: string, itemNo: string, saleDate: string, result: OutcomeTrustResult,
+): Promise<void> {
+  await query(
+    `insert into gm_outcome_trust
+       (case_no,item_no,sale_date,status,sale_ratio,reason_codes,checks,evaluator_version,evaluated_at)
+     values ($1,$2,$3::date,$4,$5,$6::jsonb,$7::jsonb,$8,now())
+     on conflict (case_no,item_no,sale_date) do update set
+       status=excluded.status, sale_ratio=excluded.sale_ratio, reason_codes=excluded.reason_codes,
+       checks=excluded.checks, evaluator_version=excluded.evaluator_version, evaluated_at=now()`,
+    [caseNo, itemNo, saleDate, result.status, result.ratio, j(result.reasonCodes), j(result.checks), result.evaluatorVersion],
+  );
+}
+
 export async function upsertListing(l: Listing): Promise<number> {
   const rows = await query<{ id: number }>(
     `insert into gm_listings
