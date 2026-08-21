@@ -356,7 +356,7 @@ create or replace view gm_ml_price_calibration as
            end as region,
            sale_ratio,
            realized_bid_margin
-      from gm_outcome_eval
+      from gm_trusted_outcome_eval
      where sale_date < current_date
        and sold
        and sale_ratio is not null
@@ -385,7 +385,7 @@ create or replace view gm_rights_risk_eval as
             where coalesce((t->>'hasOpposition')::boolean, false)
          ) as has_opposition_tenant,
          jsonb_array_length(coalesce(r.red_flags, '[]'::jsonb)) as red_flag_count
-    from gm_outcome_eval e
+    from gm_trusted_outcome_eval e
     left join latest_listing l on l.case_no = e.case_no and l.item_no = coalesce(nullif(e.item_no,''),'1')
     left join gm_rights_analysis r on r.listing_id = l.listing_id
    where e.sale_date < current_date;
@@ -463,7 +463,7 @@ create or replace view gm_shadow_score_eval as
          case when e.sale_ratio is not null then abs(s.predicted_sale_ratio - e.sale_ratio) end as abs_sale_ratio_error,
          (e.sale_date <= current_date - 14) as eligible_for_review
     from gm_shadow_scores s
-    left join gm_outcome_eval e
+    left join gm_trusted_outcome_eval e
       on e.case_no = s.case_no
      and coalesce(nullif(e.item_no,''),'1') = s.item_no
      and e.sale_date = s.sale_date;
