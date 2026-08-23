@@ -128,8 +128,8 @@ export function formatReport(trustedRows: EvalRow[], gate: number, coverageRows:
     out.push('', `[가격] 낙찰 ${p.n}건 · 예상오차(MAPE) ${p.mapePct.toFixed(1)}% · 편향 ${p.biasPct >= 0 ? '+' : ''}${p.biasPct.toFixed(1)}%(+면 과소예측) · 낙찰가율(중앙) ${p.saleRatioMedPct.toFixed(0)}%`);
     if (p.missingResidual > 0) out.push(`[가격] 낙찰 ${p.soldRows}건 중 ${p.missingResidual}건은 예상가/낙찰가 누락으로 가격오차 집계 제외(expected 누락 ${p.missingExpected}, sold_amount 누락 ${p.missingSoldAmount})`);
   }
-  const q = qualityStats(trustedRows);
-  if (q) out.push(`[품질] 통과 매물 낙찰률 ${q.passedSoldRate != null ? (q.passedSoldRate * 100).toFixed(0) + '%' : '-'} vs 미통과 낙찰률 ${q.notPassedSoldRate != null ? (q.notPassedSoldRate * 100).toFixed(0) + '%' : '-'}`);
+  const q = qualityStats(coverageRows);
+  if (q) out.push(`[품질] 통과 매물 낙찰률 ${q.passedSoldRate != null ? (q.passedSoldRate * 100).toFixed(0) + '%' : '-'} vs 미통과 낙찰률 ${q.notPassedSoldRate != null ? (q.notPassedSoldRate * 100).toFixed(0) + '%' : '-'} (matched ${q.matched}건)`);
   const pr = profitStats(trustedRows);
   if (pr) out.push(`[수익성] 안전입찰가 이하 낙찰률 ${pr.wonUnderSafeBidRate != null ? (pr.wonUnderSafeBidRate * 100).toFixed(0) + '%' : '-'} (${pr.safeBidRows}/${pr.soldRows}) · 실현 bid 마진 양수 ${pr.positiveRealizedMarginRate != null ? (pr.positiveRealizedMarginRate * 100).toFixed(0) + '%' : '-'} · 중앙 ${(pr.realizedMarginMedianPct).toFixed(1)}%`);
   if (trustedRows.some((row) => row.sold)) {
