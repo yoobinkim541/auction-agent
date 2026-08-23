@@ -15,6 +15,7 @@
     "route": "tsx scripts/field-route.ts",
     "eval:report": "tsx scripts/eval-report.ts",
     "eval:calibrate": "tsx scripts/eval-report.ts",
+    "eval:postmortem": "tsx scripts/eval-postmortem.ts",
     "ml:export": "tsx scripts/export-ml-dataset.ts",
     "ml:eval": "npm run ml:export && sh -c 'PY=python3; if [ -x .venv-ml/bin/python ]; then PY=.venv-ml/bin/python; fi; exec $PY scripts/ml/offline_eval.py --input artifacts/ml/outcome_eval.csv --output docs/phase2/ml-offline-report.md'",
     "analyze": "tsx pipeline/run.ts",
