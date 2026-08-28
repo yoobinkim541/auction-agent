@@ -1,7 +1,8 @@
 /**
  * Phase2 결과 retry worker — gm_result_retry_queue의 미매칭 스냅샷을 bounded batch로 재수집한다.
  * 사용: npm run retry:outcomes
- * 옵션: OUTCOME_RETRY_LIMIT=50 OUTCOME_RETRY_COOLDOWN_HOURS=24 OUTCOME_RETRY_DRY_RUN=true
+ * 옵션: OUTCOME_RETRY_LIMIT=50 OUTCOME_RETRY_COOLDOWN_HOURS=24 OUTCOME_RETRY_DELAY_MS=300 OUTCOME_RETRY_DRY_RUN=true
+ * (2026-08-26 버스트 차단 사건 이후 기본 300ms 지연 추가 — 항목 간 무지연 연속요청이 courtauction IP 차단 원인이었음)
  */
 import 'dotenv/config';
 import { query, pool } from '../shared/db.ts';
@@ -161,11 +162,12 @@ async function collectOne(row: RetryQueueRow, courtCase: CourtCase, today: strin
 async function main(): Promise<void> {
   const limit = Math.max(1, Math.min(500, Number(process.env.OUTCOME_RETRY_LIMIT) || 50));
   const cooldownHours = Math.max(0, Math.min(24 * 30, Number(process.env.OUTCOME_RETRY_COOLDOWN_HOURS) || 24));
+  const delayMs = Math.max(0, Math.min(10_000, Number(process.env.OUTCOME_RETRY_DELAY_MS) || 300));
   const dryRun = process.env.OUTCOME_RETRY_DRY_RUN === 'true';
   const today = todayKst();
   const counters = emptyRetryCounters();
   const targets = await fetchTargets(limit, cooldownHours);
-  console.log(`[retry-outcomes] 대상 ${targets.length}건(limit=${limit}, cooldown=${cooldownHours}h, dryRun=${dryRun ? 'true' : 'false'})`);
+  console.log(`[retry-outcomes] 대상 ${targets.length}건(limit=${limit}, cooldown=${cooldownHours}h, delay=${delayMs}ms, dryRun=${dryRun ? 'true' : 'false'})`);
 
   if (dryRun) {
     for (const row of targets) console.log(`[retry-outcomes] dry-run ${row.case_no}#${row.item_no} sale=${row.sale_date} court=${row.court} priority=${row.retry_priority}`);
@@ -174,6 +176,7 @@ async function main(): Promise<void> {
   }
 
   for (const row of targets) {
+    if (counters.processed > 0 && delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
     counters.processed++;
     const cortOfcCd = courtCodeByName(row.court);
     if (!cortOfcCd) {
