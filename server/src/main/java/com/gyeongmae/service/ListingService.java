@@ -403,8 +403,8 @@ public class ListingService {
   public String detailJson(String caseNo, String itemNo) {
     String sql = "select row_to_json(t)::text from (\n" + SELECT_BODY
         + " where l.case_no = :caseNo\n"
-        + "   and ((:itemNo is not null and coalesce(nullif(l.item_no, ''), '1') = :itemNo)\n"
-        + "     or (:itemNo is null and 1 = (\n"
+        + "   and ((cast(:itemNo as text) is not null and coalesce(nullif(l.item_no, ''), '1') = cast(:itemNo as text))\n"
+        + "     or (cast(:itemNo as text) is null and 1 = (\n"
         + "       select count(distinct coalesce(nullif(sibling.item_no, ''), '1'))\n"
         + "         from gm_listings sibling where sibling.case_no = :caseNo)))\n"
         + " order by l.crawled_at desc nulls last, l.id desc limit 1) t";

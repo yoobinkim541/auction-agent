@@ -157,4 +157,39 @@ describe('persistPrecisionStages', () => {
       101, expect.objectContaining({ status: 'hold' }), expect.any(String),
     );
   });
+
+  it.each([
+    ['missing recommended bid', null, 250_000_000],
+    ['bid below the listing minimum', 170_000_000, 250_000_000],
+    ['bid above the hard cap', 260_000_000, 250_000_000],
+  ] as const)('fails closed before persistence for %s', async (_label, recommendedBid, hardCapBid) => {
+    setPrecisionEvaluatorForTesting(() => ({
+      status: 'recommended',
+      confidence: 'high',
+      conservativeValue: 300_000_000,
+      recommendedBid,
+      hardCapBid,
+      reasonCodes: [],
+      strengths: [],
+      risks: [],
+      requiredChecks: [],
+      evaluatorVersion: 'precision-v1',
+    }));
+
+    await persistPrecisionStages(persistenceInput());
+
+    expect(db.savePrecisionEvaluation).toHaveBeenCalledWith(
+      101,
+      expect.objectContaining({
+        status: 'hold',
+        confidence: 'low',
+        reasonCodes: ['INTERNAL_EVALUATION_ERROR'],
+      }),
+      expect.any(String),
+    );
+    expect(db.saveScore).toHaveBeenCalledWith(101, expect.objectContaining({
+      passedFilter: false,
+      reason: expect.stringContaining('정밀 평가 내부 오류'),
+    }));
+  });
 });

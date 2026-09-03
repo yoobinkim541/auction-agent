@@ -26,6 +26,23 @@ export function setPrecisionEvaluatorForTesting(evaluator: PrecisionEvaluator | 
   precisionEvaluator = evaluator ?? evaluatePrecision;
 }
 
+function persistenceSafePrecision(
+  evaluation: PrecisionEvaluation,
+  input: PrecisionInput,
+): PrecisionEvaluation {
+  if (evaluation.status !== 'recommended') return evaluation;
+  const recommendedBid = evaluation.recommendedBid;
+  const hardCapBid = evaluation.hardCapBid;
+  const minBidPrice = input.minBidPrice;
+  const valid = Number.isSafeInteger(recommendedBid)
+    && Number.isSafeInteger(hardCapBid)
+    && Number.isSafeInteger(minBidPrice)
+    && (recommendedBid as number) >= (minBidPrice as number)
+    && (recommendedBid as number) <= (hardCapBid as number);
+  if (valid) return evaluation;
+  return internalEvaluationHold();
+}
+
 export interface PrecisionPersistenceInput {
   listingId: number;
   listing: Listing;
@@ -75,7 +92,7 @@ export async function persistPrecisionStages(input: PrecisionPersistenceInput): 
   });
   let precision: PrecisionEvaluation;
   try {
-    precision = precisionEvaluator(precisionInput);
+    precision = persistenceSafePrecision(precisionEvaluator(precisionInput), precisionInput);
   } catch (error) {
     console.warn(`[precision] ${input.listing.caseNo} 평가 실패: ${error instanceof Error ? error.message : String(error)}`);
     precision = internalEvaluationHold();

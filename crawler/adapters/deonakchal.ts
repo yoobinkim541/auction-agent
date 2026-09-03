@@ -24,6 +24,7 @@ import {
 } from '../normalize.ts';
 import { parseResultRowText, normalizeItemNo, type ParsedRow } from './parse-row.ts';
 import { classifyEgress } from '../egress.ts';
+import { crawlFetch } from '../proxy.ts';
 
 const BASE = 'https://www.xn--b20bu5cuwtpue8ui.com'; // 더낙찰옥션.com (punycode)
 export const DEONAKCHAL_BASE_URL = BASE;
@@ -62,22 +63,24 @@ function blockCooldownRemainingMs(): number {
   } catch { return 0; }
 }
 
-/** egress IP가 등록 집 IP가 아니면 경고한다(개인 계정을 클라우드 IP로 로그인 = 계정 플래그 트리거).
- *  오케스트레이터(enrich)는 fail-closed로 중단하고, 일반 크롤 어댑터는 경고만 한다. */
+/** 로그인 브라우저를 열기 전에 등록 IP와 주거 ISP 증거를 모두 확인한다. */
 let _egressChecked = false;
-async function warnIfDatacenterEgress(): Promise<void> {
-  if (_egressChecked || process.env.CRAWL_ALLOW_DATACENTER === 'true') return;
-  _egressChecked = true;
+async function requireHomeEgress(): Promise<void> {
+  if (_egressChecked) return;
   try {
-    const res = await fetch('https://ipinfo.io/json', { signal: AbortSignal.timeout(4000) });
-    if (!res.ok) return;
+    const res = await crawlFetch('https://ipinfo.io/json', { signal: AbortSignal.timeout(4000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const j = (await res.json()) as { ip?: string; org?: string };
     const kind = classifyEgress(j);
     if (kind !== 'home') {
-      console.warn(`[deonakchal] ⚠️ egress IP(${j.ip ?? '?'} · ${j.org})가 등록 집 IP로 확인되지 않습니다(${kind}).`);
-      console.warn('[deonakchal] ⚠️ ISP 문자열만으로는 데이터센터 프록시를 배제할 수 없습니다. CRAWL_HOME_IPS에 실제 집 IP 등록 권장. (무시: CRAWL_ALLOW_DATACENTER=true)');
+      throw new Error(`안전한 집 회선이 아닙니다(${kind}, ${j.ip ?? '?'}, ${j.org ?? 'org unknown'})`);
     }
-  } catch { /* 네트워크 실패 무시 */ }
+    _egressChecked = true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.startsWith('안전한 집 회선이 아닙니다')) throw error;
+    throw new Error(`회선 검증 실패 — 로그인 중단: ${message}`);
+  }
 }
 
 /** 로그인 폼은 /members/login.html 의 #frmLogin (id/pw, action=javascript:tryLogin()) — 실제 확인됨.
@@ -207,6 +210,7 @@ export async function inspectAndDump(): Promise<string> {
 }
 
 async function launch(): Promise<Browser> {
+  await requireHomeEgress();
   const proxy = process.env.CRAWL_PROXY; // e.g. socks5://192.168.0.2:1080
   return chromium.launch({
     headless: process.env.CRAWL_HEADLESS !== 'false',
@@ -305,8 +309,6 @@ export class DeonakchalAdapter implements Adapter {
         `계정이 풀렸다고 확신하면 CRAWL_IGNORE_COOLDOWN=true 로 재시도하거나 ${BLOCK_MARKER} 삭제.`,
       );
     }
-    await warnIfDatacenterEgress();
-
     const browser = await launch();
     const collected: ParsedRow[] = [];
     const seen = new Set<string>();
@@ -784,7 +786,7 @@ export async function lookupCaseDetail(
 /**
  * [교차 보강용] 로그인된 페이지 1개 열기(세션 재사용 — 재로그인 최소화). 오케스트레이터가 이걸로 **직렬** lookup 후 close().
  *   서킷브레이커 쿨다운 중이면 null 반환(그날 건너뜀). 로그인 성공 시 쿨다운 해제.
- *   ⚠️ egress(집 IP) 검증은 오케스트레이터 책임(warnIfDatacenterEgress는 경고만이므로 abort는 상위에서).
+ *   로그인 브라우저 실행 전에 launch()가 egress를 fail-closed로 검증한다.
  */
 export async function openLoggedInPage(): Promise<{ page: Page; close: () => Promise<void> } | null> {
   const cd = blockCooldownRemainingMs();
