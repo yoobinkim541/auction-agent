@@ -337,11 +337,20 @@ export async function fetchListingsForAnalysis(limit = 200, onlyNew = false): Pr
     ? 'where not exists (select 1 from gm_scores s where s.listing_id = gm_listings.id)'
     : '';
   // 활성(미래 기일·기일미정) 우선 — 재고가 limit를 넘어도 지나간 물건이 활성 재분석을 밀어내지 않게.
+  // --all(재분석) 모드는 crawled_at desc로 정렬하면 오래된 crawled_at의 활성매물이 limit 밖으로
+  // 영구히 밀려 재분석을 못 받는 굶주림이 생김(순서가 매일 거의 고정이라 로테이션 안 됨).
+  // 그래서 --all일 때만 "미분석·오래 분석 안 된 순"으로 정렬해 매일 다른 꼬리가 처리되게 한다.
+  const orderBy = onlyNew
+    ? 'crawled_at desc'
+    : 'greatest(r.analyzed_at, loc.analyzed_at) asc nulls first';
+  const joins = onlyNew ? '' : `
+     left join gm_rights_analysis r on r.listing_id = gm_listings.id
+     left join gm_location_analysis loc on loc.listing_id = gm_listings.id`;
   return query<ListingRow>(
-    `select id, case_no, coalesce(item_no,'1') as item_no, court, address, road_address, lat, lng, property_type, appraisal_value,
+    `select gm_listings.id, case_no, coalesce(item_no,'1') as item_no, court, address, road_address, lat, lng, property_type, appraisal_value,
             min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url, crawled_at
-     from gm_listings ${where}
-     order by (sale_date is null or sale_date >= current_date) desc, crawled_at desc limit $1`,
+     from gm_listings ${joins} ${where}
+     order by (sale_date is null or sale_date >= current_date) desc, ${orderBy} limit $1`,
     [limit],
   );
 }
