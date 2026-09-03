@@ -19,6 +19,9 @@ export interface PrecisionAuditMetrics {
     recommendedNonTrusted: number;
     recommendedAssumedAmount: number;
     recommendedHardCapBelowMinBid: number;
+    recommendedBidMissing: number;
+    recommendedBidBelowMinBid: number;
+    recommendedBidAboveHardCap: number;
     duplicateCaseRepresentatives: number;
     shortlistCount: number;
   };
@@ -70,6 +73,15 @@ export function auditResult(metrics: PrecisionAuditMetrics): PrecisionAuditResul
   if (safety.recommendedHardCapBelowMinBid > 0) {
     failures.push(failure('RECOMMENDED_HARD_CAP_BELOW_MIN_BID', safety.recommendedHardCapBelowMinBid, 'recommended 행의 절대 상한이 최저가보다 낮습니다'));
   }
+  if (safety.recommendedBidMissing > 0) {
+    failures.push(failure('RECOMMENDED_BID_MISSING', safety.recommendedBidMissing, 'recommended 행의 권장 입찰가가 없습니다'));
+  }
+  if (safety.recommendedBidBelowMinBid > 0) {
+    failures.push(failure('RECOMMENDED_BID_BELOW_MIN_BID', safety.recommendedBidBelowMinBid, 'recommended 행의 권장 입찰가가 최저가보다 낮거나 최저가가 없습니다'));
+  }
+  if (safety.recommendedBidAboveHardCap > 0) {
+    failures.push(failure('RECOMMENDED_BID_ABOVE_HARD_CAP', safety.recommendedBidAboveHardCap, 'recommended 행의 권장 입찰가가 절대 상한보다 높습니다'));
+  }
   if (safety.duplicateCaseRepresentatives > 0) {
     failures.push(failure('DUPLICATE_CASE_REPRESENTATIVES', safety.duplicateCaseRepresentatives, '정밀 후보에 동일 사건 대표가 중복되었습니다'));
   }
@@ -100,6 +112,18 @@ with safety as (
        join gm_listings l on l.id = p.listing_id
       where p.status = 'recommended'
         and (p.hard_cap_bid is null or p.hard_cap_bid < l.min_bid_price)) as recommended_hard_cap_below_min_bid,
+    (select count(*)::int
+       from gm_precision_evaluations p
+      where p.status = 'recommended' and p.recommended_bid is null) as recommended_bid_missing,
+    (select count(*)::int
+       from gm_precision_evaluations p
+       join gm_listings l on l.id = p.listing_id
+      where p.status = 'recommended' and p.recommended_bid is not null
+        and (l.min_bid_price is null or p.recommended_bid < l.min_bid_price)) as recommended_bid_below_min_bid,
+    (select count(*)::int
+       from gm_precision_evaluations p
+      where p.status = 'recommended' and p.recommended_bid is not null
+        and (p.hard_cap_bid is null or p.recommended_bid > p.hard_cap_bid)) as recommended_bid_above_hard_cap,
     (select coalesce(sum(duplicates - 1), 0)::int
        from (select count(*)::int as duplicates from gm_precision_shortlist group by case_no having count(*) > 1) grouped) as duplicate_case_representatives,
     (select count(*)::int from gm_precision_shortlist) as shortlist_count
@@ -165,6 +189,9 @@ select jsonb_build_object(
     'recommendedNonTrusted', safety.recommended_non_trusted,
     'recommendedAssumedAmount', safety.recommended_assumed_amount,
     'recommendedHardCapBelowMinBid', safety.recommended_hard_cap_below_min_bid,
+    'recommendedBidMissing', safety.recommended_bid_missing,
+    'recommendedBidBelowMinBid', safety.recommended_bid_below_min_bid,
+    'recommendedBidAboveHardCap', safety.recommended_bid_above_hard_cap,
     'duplicateCaseRepresentatives', safety.duplicate_case_representatives,
     'shortlistCount', safety.shortlist_count
   ),

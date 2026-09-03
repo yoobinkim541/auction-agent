@@ -24,7 +24,8 @@ export function buildListingTrustInput(args: {
   rights: RightsAnalysisResult;
   location: LocationAnalysis;
   documents: readonly unknown[];
-  analysisAt: string;
+  rightsAnalyzedAt: string;
+  locationAnalyzedAt: string;
 }): ListingTrustInput {
   const itemNo = args.listing.itemNo?.trim() || '1';
   return {
@@ -42,7 +43,8 @@ export function buildListingTrustInput(args: {
     marketPrice: args.location.marketPrice,
     expectedBidPrice: args.location.expectedBidPrice ?? null,
     comparableCount: args.location.comps.length + (args.location.siteComps?.length ?? 0),
-    analysisAt: args.analysisAt,
+    rightsAnalyzedAt: args.rightsAnalyzedAt,
+    locationAnalyzedAt: args.locationAnalyzedAt,
   };
 }
 

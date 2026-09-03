@@ -10,6 +10,9 @@ const metrics = (overrides: Partial<PrecisionAuditMetrics> = {}): PrecisionAudit
     recommendedNonTrusted: 0,
     recommendedAssumedAmount: 0,
     recommendedHardCapBelowMinBid: 0,
+    recommendedBidMissing: 0,
+    recommendedBidBelowMinBid: 0,
+    recommendedBidAboveHardCap: 0,
     duplicateCaseRepresentatives: 0,
     shortlistCount: 5,
   },
@@ -39,6 +42,9 @@ describe('auditResult', () => {
     ['RECOMMENDED_NON_TRUSTED', { recommendedNonTrusted: 1 }],
     ['RECOMMENDED_ASSUMED_AMOUNT', { recommendedAssumedAmount: 1 }],
     ['RECOMMENDED_HARD_CAP_BELOW_MIN_BID', { recommendedHardCapBelowMinBid: 1 }],
+    ['RECOMMENDED_BID_MISSING', { recommendedBidMissing: 1 }],
+    ['RECOMMENDED_BID_BELOW_MIN_BID', { recommendedBidBelowMinBid: 1 }],
+    ['RECOMMENDED_BID_ABOVE_HARD_CAP', { recommendedBidAboveHardCap: 1 }],
     ['DUPLICATE_CASE_REPRESENTATIVES', { duplicateCaseRepresentatives: 1 }],
     ['SHORTLIST_ABOVE_WEEKLY_CAP', { shortlistCount: 8 }],
   ] as const)('fails the %s safety invariant', (code, safetyOverride) => {
@@ -71,5 +77,11 @@ describe('precision audit SQL safety coverage', () => {
 
   it('counts null hard caps and hard caps below minimum bid as failures', () => {
     expect(PRECISION_AUDIT_SQL).toContain('p.hard_cap_bid is null or p.hard_cap_bid < l.min_bid_price');
+  });
+
+  it('counts missing, below-minimum, and above-cap recommended bids as separate failures', () => {
+    expect(PRECISION_AUDIT_SQL).toContain('p.recommended_bid is null');
+    expect(PRECISION_AUDIT_SQL).toContain('p.recommended_bid < l.min_bid_price');
+    expect(PRECISION_AUDIT_SQL).toContain('p.recommended_bid > p.hard_cap_bid');
   });
 });

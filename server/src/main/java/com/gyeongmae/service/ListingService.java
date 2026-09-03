@@ -277,6 +277,9 @@ public class ListingService {
               ) slim
               join gm_precision_shortlist shortlist on shortlist.listing_id = slim.id
              and shortlist.status = 'recommended'
+             and shortlist.recommended_bid is not null
+             and shortlist.recommended_bid >= shortlist.min_bid_price
+             and shortlist.recommended_bid <= shortlist.hard_cap_bid
               left join gm_current_decisions decision on decision.listing_id = slim.id
              order by shortlist.conservative_margin desc nulls last, slim.sale_date asc nulls last, slim.id asc
              limit :limit

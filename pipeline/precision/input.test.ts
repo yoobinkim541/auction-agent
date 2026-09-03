@@ -44,7 +44,8 @@ describe('precision input mapping', () => {
       rights,
       location,
       documents: [{ itemNo: '2' }, { item_no: '2' }, {}],
-      analysisAt: '2026-08-21T10:00:00.000Z',
+      rightsAnalyzedAt: '2026-08-21T09:59:59.000Z',
+      locationAnalyzedAt: '2026-08-21T10:00:00.000Z',
     });
     const precisionInput = buildPrecisionInput({ listing, rights, location, trustStatus: 'trusted' });
 
@@ -52,6 +53,8 @@ describe('precision input mapping', () => {
       crawledAt: '2026-08-20T10:00:00.000Z', registryCount: 1, tenantCount: 0,
       moneyParseWarnings: 1, documentItemMismatch: false, marketPrice: 320_000_000,
       expectedBidPrice: 200_000_000, comparableCount: 2,
+      rightsAnalyzedAt: '2026-08-21T09:59:59.000Z',
+      locationAnalyzedAt: '2026-08-21T10:00:00.000Z',
     });
     expect(precisionInput).toEqual({
       trustStatus: 'trusted', registryOpinion: null, appraisalValue: 300_000_000, minBidPrice: 180_000_000,
@@ -74,7 +77,8 @@ describe('precision input mapping', () => {
       rights,
       location,
       documents: [{ itemNo: '3' }, {}, { item_no: ' ' }],
-      analysisAt: '2026-08-21T10:00:00.000Z',
+      rightsAnalyzedAt: '2026-08-21T09:59:59.000Z',
+      locationAnalyzedAt: '2026-08-21T10:00:00.000Z',
     });
 
     expect(input.documentItemMismatch).toBe(true);

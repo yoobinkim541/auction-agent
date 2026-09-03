@@ -53,7 +53,8 @@ export async function persistPrecisionStages(input: PrecisionPersistenceInput): 
     rights: input.rights,
     location: input.location,
     documents: input.documents,
-    analysisAt: input.analysisAt,
+    rightsAnalyzedAt: input.analysisAt,
+    locationAnalyzedAt: input.analysisAt,
   });
   const trust = evaluateListingTrust(trustInput);
   await saveListingDataTrust(input.listingId, trust, hashEvaluationInput(trustInput));

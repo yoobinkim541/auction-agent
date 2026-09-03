@@ -32,7 +32,8 @@ export interface ListingTrustBackfillRow {
   expected_bid_price: string | number | null;
   comps: unknown;
   site_comps: unknown;
-  analysis_at: string | Date | null;
+  rights_analyzed_at: string | Date | null;
+  location_analyzed_at: string | Date | null;
   documents: unknown;
 }
 
@@ -118,7 +119,8 @@ export function mapListingTrustInput(row: ListingTrustBackfillRow): ListingTrust
     marketPrice: numberOrNull(row.market_price),
     expectedBidPrice: numberOrNull(row.expected_bid_price),
     comparableCount: arrayLength(row.comps) + arrayLength(row.site_comps),
-    analysisAt: timestamp(row.analysis_at),
+    rightsAnalyzedAt: timestamp(row.rights_analyzed_at),
+    locationAnalyzedAt: timestamp(row.location_analyzed_at),
   };
 }
 
@@ -152,7 +154,8 @@ export const LISTING_TRUST_SQL = `
   select l.id, l.case_no, l.item_no, l.appraisal_value, l.min_bid_price, l.crawled_at,
          (r.id is not null) as rights_analyzed, r.classified, r.tenants, r.warnings,
          (loc.id is not null) as location_analyzed, loc.market_price, loc.expected_bid_price,
-         loc.comps, loc.site_comps, greatest(r.analyzed_at, loc.analyzed_at) as analysis_at,
+         loc.comps, loc.site_comps, r.analyzed_at as rights_analyzed_at,
+         loc.analyzed_at as location_analyzed_at,
          docs.documents
     from gm_listings l
     left join gm_rights_analysis r on r.listing_id = l.id

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { readFileSync } from 'node:fs';
 import { Client } from 'pg';
 import { describe, expect, it } from 'vitest';
 import { LISTING_TRUST_SQL, OUTCOME_TRUST_SQL } from './backfill-data-trust.ts';
@@ -35,8 +36,11 @@ async function createTemporaryRelations(client: Client): Promise<void> {
       listing_id bigint, status text, reason_codes jsonb, evaluated_at timestamptz
     ) on commit drop;
     create temp table gm_precision_evaluations (
-      listing_id bigint, status text, confidence text, hard_cap_bid bigint,
-      reason_codes jsonb, evaluated_at timestamptz
+      listing_id bigint, status text, confidence text, conservative_value bigint,
+      recommended_bid bigint, hard_cap_bid bigint, reason_codes jsonb,
+      strengths jsonb default '[]'::jsonb, risks jsonb default '[]'::jsonb,
+      required_checks jsonb default '[]'::jsonb, evaluator_version text default 'test',
+      input_hash text default 'test', evaluated_at timestamptz
     ) on commit drop;
     create temp table gm_precision_shortlist (listing_id bigint, case_no text) on commit drop;
     create temp table gm_outcome_eval (
@@ -74,6 +78,10 @@ async function withTemporaryDatabase(run: (client: Client) => Promise<void>): Pr
 
 const ids = (rows: Array<{ id: string | number }>): number[] => rows.map(({ id }) => Number(id));
 
+const precisionMigration = readFileSync(new URL('../db/migrate_precision_recommendations.sql', import.meta.url), 'utf8');
+const precisionMigrationSetup = precisionMigration.split('create or replace view gm_precision_shortlist as')[0]!;
+const precisionShortlistQuery = precisionMigration.match(/create or replace view gm_precision_shortlist as\s+([\s\S]+);\s*$/)?.[1];
+
 describeDatabase('precision production SQL against temporary PostgreSQL fixtures', () => {
   it('returns exact audit metrics for every safety invariant and report distribution', async () => {
     await withTemporaryDatabase(async (client) => {
@@ -85,11 +93,13 @@ describeDatabase('precision production SQL against temporary PostgreSQL fixtures
                0, 'courtauction', current_date + 1, now()
           from generate_series(1, 13) id;
         insert into gm_precision_evaluations
-          (listing_id, status, confidence, hard_cap_bid, reason_codes, evaluated_at)
+          (listing_id, status, confidence, conservative_value, recommended_bid, hard_cap_bid, reason_codes, evaluated_at)
         select id,
                case when id <= 10 then 'recommended' when id = 11 then 'hold'
                     when id = 12 then 'conditional' else 'rejected' end,
-               'high', case when id = 6 then null when id = 7 then 90 else 120 end,
+               'high', 150,
+               case when id = 8 then null when id = 9 then 90 when id = 10 then 130 else 110 end,
+               case when id = 6 then null when id = 7 then 90 else 120 end,
                case when id = 11 then '["PRECISION_HOLD"]'::jsonb else '[]'::jsonb end,
                now()
           from generate_series(1, 13) id;
@@ -126,6 +136,9 @@ describeDatabase('precision production SQL against temporary PostgreSQL fixtures
         recommendedNonTrusted: 2,
         recommendedAssumedAmount: 3,
         recommendedHardCapBelowMinBid: 2,
+        recommendedBidMissing: 1,
+        recommendedBidBelowMinBid: 1,
+        recommendedBidAboveHardCap: 3,
         duplicateCaseRepresentatives: 1,
         shortlistCount: 8,
       });
@@ -155,7 +168,9 @@ describeDatabase('precision production SQL against temporary PostgreSQL fixtures
       });
       expect(auditResult(metrics).failures.map(({ code }) => code)).toEqual([
         'RECOMMENDED_NON_TRUSTED', 'RECOMMENDED_ASSUMED_AMOUNT',
-        'RECOMMENDED_HARD_CAP_BELOW_MIN_BID', 'DUPLICATE_CASE_REPRESENTATIVES',
+        'RECOMMENDED_HARD_CAP_BELOW_MIN_BID', 'RECOMMENDED_BID_MISSING',
+        'RECOMMENDED_BID_BELOW_MIN_BID', 'RECOMMENDED_BID_ABOVE_HARD_CAP',
+        'DUPLICATE_CASE_REPRESENTATIVES',
         'SHORTLIST_ABOVE_WEEKLY_CAP',
       ]);
     });
@@ -168,6 +183,8 @@ describeDatabase('precision production SQL against temporary PostgreSQL fixtures
         safety: {
           recommendedNonTrusted: 0, recommendedAssumedAmount: 0,
           recommendedHardCapBelowMinBid: 0, duplicateCaseRepresentatives: 0,
+          recommendedBidMissing: 0, recommendedBidBelowMinBid: 0,
+          recommendedBidAboveHardCap: 0,
           shortlistCount: 0,
         },
         precisionStatusDistribution: [], listingTrustStatusDistribution: [],
@@ -180,6 +197,63 @@ describeDatabase('precision production SQL against temporary PostgreSQL fixtures
       expect(auditResult(metrics)).toMatchObject({
         ok: true, failures: [], warnings: [{ code: 'ZERO_RECOMMENDATIONS' }],
       });
+    });
+  });
+
+  it('exposes only recommended bids bounded by minimum bid and hard cap', async () => {
+    await withTemporaryDatabase(async (client) => {
+      if (!precisionShortlistQuery) throw new Error('precision shortlist view SQL not found');
+      await client.query(`
+        insert into gm_listings
+          (id, case_no, item_no, court, address, property_type, appraisal_value,
+           min_bid_price, fail_count, source, sale_date, crawled_at)
+        select id, 'shortlist-' || id, '1', 'court', 'address', 'apartment', 200,
+               100, 0, 'courtauction', current_date + 1, now()
+          from generate_series(1, 4) id;
+        insert into gm_data_trust
+        select id, 'trusted', '[]', now() from generate_series(1, 4) id;
+        insert into gm_rights_analysis
+          (id, listing_id, classified, tenants, warnings, assumed_amount, max_safe_bid,
+           red_flags, risk_grade, analyzed_at)
+        select id, id, '[]', '[]', '[]', 0, 120, '[]', 'clean', now()
+          from generate_series(1, 4) id;
+        insert into gm_precision_evaluations
+          (listing_id, status, confidence, conservative_value, recommended_bid, hard_cap_bid,
+           reason_codes, evaluated_at)
+        values
+          (1, 'recommended', 'high', 150, 110, 120, '[]', now()),
+          (2, 'recommended', 'high', 150, null, 120, '[]', now()),
+          (3, 'recommended', 'high', 150, 90, 120, '[]', now()),
+          (4, 'recommended', 'high', 150, 130, 120, '[]', now());
+        drop table gm_precision_shortlist;
+        create temp view gm_precision_shortlist as ${precisionShortlistQuery};
+      `);
+
+      expect((await client.query<{ listing_id: string | number }>('select listing_id from gm_precision_shortlist order by listing_id')).rows)
+        .toEqual([{ listing_id: '1' }]);
+    });
+  });
+
+  it('adds an idempotent fail-closed check without rewriting legacy invalid rows', async () => {
+    await withTemporaryDatabase(async (client) => {
+      await client.query(`
+        insert into gm_precision_evaluations
+          (listing_id, status, confidence, conservative_value, recommended_bid, hard_cap_bid,
+           reason_codes, evaluated_at)
+        values (99, 'recommended', 'high', 150, null, 120, '[]', now());
+      `);
+      await client.query(precisionMigrationSetup);
+      await client.query(precisionMigrationSetup);
+      expect((await client.query('select count(*)::int as count from gm_precision_evaluations where listing_id = 99')).rows[0]!.count).toBe(1);
+
+      await client.query('savepoint invalid_bid');
+      await expect(client.query(`
+        insert into gm_precision_evaluations
+          (listing_id, status, confidence, conservative_value, recommended_bid, hard_cap_bid,
+           reason_codes, evaluated_at)
+        values (100, 'recommended', 'high', 150, 130, 120, '[]', now())
+      `)).rejects.toThrow(/gm_precision_recommended_bid_bounds/);
+      await client.query('rollback to savepoint invalid_bid');
     });
   });
 
@@ -276,13 +350,21 @@ describeDatabase('precision production SQL against temporary PostgreSQL fixtures
           (1, 'trusted', '[]', now() - interval '5 minutes'),
           (2, 'trusted', '[]', now() - interval '10 minutes'),
           (3, 'trusted', '[]', now() - interval '15 minutes');
-        insert into gm_precision_evaluations values
-          (2, 'hold', 'low', null, '[]', now() - interval '1 hour'),
-          (3, 'hold', 'low', null, '[]', now());
+        insert into gm_precision_evaluations
+          (listing_id, status, confidence, conservative_value, recommended_bid, hard_cap_bid,
+           reason_codes, evaluated_at)
+        values
+          (2, 'hold', 'low', null, null, null, '[]', now() - interval '1 hour'),
+          (3, 'hold', 'low', null, null, null, '[]', now());
       `);
 
       expect(ids((await client.query<{ id: string | number }>(PRECISION_BACKFILL_SQL, [10, 2])).rows)).toEqual([1, 2]);
-      await client.query("insert into gm_precision_evaluations values (1, 'hold', 'low', null, '[]', now())");
+      await client.query(`
+        insert into gm_precision_evaluations
+          (listing_id, status, confidence, conservative_value, recommended_bid, hard_cap_bid,
+           reason_codes, evaluated_at)
+        values (1, 'hold', 'low', null, null, null, '[]', now())
+      `);
       expect(ids((await client.query<{ id: string | number }>(PRECISION_BACKFILL_SQL, [1, 2])).rows)).toEqual([2]);
     });
   });

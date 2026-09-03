@@ -8,7 +8,8 @@ const complete = (over: Partial<ListingTrustInput> = {}): ListingTrustInput => (
   moneyParseWarnings: 0, documentItemMismatch: false,
   locationAnalyzed: true, marketPrice: 350_000_000,
   expectedBidPrice: 230_000_000, comparableCount: 3,
-  analysisAt: '2026-08-21T00:00:00Z',
+  rightsAnalyzedAt: '2026-08-21T00:00:00Z',
+  locationAnalyzedAt: '2026-08-21T00:00:00Z',
   ...over,
 });
 
@@ -29,24 +30,59 @@ describe('evaluateListingTrust', () => {
   });
   it('does not mark analysis exactly seven days old as stale', () => {
     const result = evaluateListingTrust(
-      complete({ crawledAt: '2026-08-14T12:00:00Z', analysisAt: '2026-08-14T12:00:00Z' }),
+      complete({
+        crawledAt: '2026-08-14T12:00:00Z',
+        rightsAnalyzedAt: '2026-08-14T12:00:00Z',
+        locationAnalyzedAt: '2026-08-14T12:00:00Z',
+      }),
       new Date('2026-08-21T12:00:00Z'),
     );
-    expect(result.reasonCodes).not.toContain('STALE_ANALYSIS');
+    expect(result.reasonCodes).not.toContain('STALE_RIGHTS_ANALYSIS');
+    expect(result.reasonCodes).not.toContain('STALE_LOCATION_ANALYSIS');
   });
   it('marks analysis more than seven days old as stale', () => {
     const result = evaluateListingTrust(
-      complete({ crawledAt: '2026-08-14T11:59:59.999Z', analysisAt: '2026-08-14T11:59:59.999Z' }),
+      complete({
+        crawledAt: '2026-08-14T11:59:59.999Z',
+        rightsAnalyzedAt: '2026-08-14T11:59:59.999Z',
+        locationAnalyzedAt: '2026-08-14T11:59:59.999Z',
+      }),
       new Date('2026-08-21T12:00:00Z'),
     );
-    expect(result.reasonCodes).toContain('STALE_ANALYSIS');
+    expect(result.reasonCodes).toEqual(expect.arrayContaining(['STALE_RIGHTS_ANALYSIS', 'STALE_LOCATION_ANALYSIS']));
     expect(result.status).toBe('hold');
   });
   it('marks analysis older than crawl as stale', () => {
     const result = evaluateListingTrust(
-      complete({ crawledAt: '2026-08-21T12:00:00Z', analysisAt: '2026-08-21T11:59:59.999Z' }),
+      complete({
+        crawledAt: '2026-08-21T12:00:00Z',
+        rightsAnalyzedAt: '2026-08-21T11:59:59.999Z',
+        locationAnalyzedAt: '2026-08-21T11:59:59.999Z',
+      }),
       new Date('2026-08-21T12:00:00Z'),
     );
-    expect(result.reasonCodes).toContain('STALE_ANALYSIS');
+    expect(result.reasonCodes).toEqual(expect.arrayContaining(['STALE_RIGHTS_ANALYSIS', 'STALE_LOCATION_ANALYSIS']));
+  });
+  it('holds stale rights even when location analysis is fresh', () => {
+    const result = evaluateListingTrust(complete({
+      crawledAt: '2026-08-14T00:00:00Z',
+      rightsAnalyzedAt: '2026-08-14T00:00:00Z',
+      locationAnalyzedAt: '2026-08-21T00:00:00Z',
+    }), new Date('2026-08-22T00:00:00Z'));
+
+    expect(result.status).toBe('hold');
+    expect(result.reasonCodes).toContain('STALE_RIGHTS_ANALYSIS');
+    expect(result.reasonCodes).not.toContain('STALE_LOCATION_ANALYSIS');
+  });
+  it('holds stale location even when rights analysis is fresh', () => {
+    const result = evaluateListingTrust(complete({
+      crawledAt: '2026-08-14T00:00:00Z',
+      rightsAnalyzedAt: '2026-08-21T00:00:00Z',
+      locationAnalyzedAt: '2026-08-14T00:00:00Z',
+    }), new Date('2026-08-22T00:00:00Z'));
+
+    expect(result.status).toBe('hold');
+    expect(result.reasonCodes).not.toContain('STALE_RIGHTS_ANALYSIS');
+    expect(result.reasonCodes).toContain('STALE_LOCATION_ANALYSIS');
   });
 });

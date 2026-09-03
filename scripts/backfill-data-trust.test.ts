@@ -40,6 +40,9 @@ describe('trust backfill bounded selection', () => {
     expect(LISTING_TRUST_SQL).toContain('loc.analyzed_at');
     expect(LISTING_TRUST_SQL).toContain('docs.updated_at');
     expect(LISTING_TRUST_SQL).toContain("make_interval(days => $2::int)");
+    expect(LISTING_TRUST_SQL).toContain('r.analyzed_at as rights_analyzed_at');
+    expect(LISTING_TRUST_SQL).toContain('loc.analyzed_at as location_analyzed_at');
+    expect(LISTING_TRUST_SQL).not.toContain('greatest(r.analyzed_at, loc.analyzed_at) as analysis_at');
   });
 
   it('selects only missing or source-stale listing trust rows in since-days mode', () => {
@@ -98,7 +101,8 @@ describe('trust backfill mappings', () => {
       expected_bid_price: '90000000',
       comps: [{ price: 1 }],
       site_comps: [{ price: 2 }, { price: 3 }],
-      analysis_at: '2026-08-21T00:00:00.000Z',
+      rights_analyzed_at: '2026-08-20T12:00:00.000Z',
+      location_analyzed_at: '2026-08-21T00:00:00.000Z',
       documents: [{ itemNo: '3' }, { item_no: '2' }],
     });
 
@@ -107,7 +111,8 @@ describe('trust backfill mappings', () => {
       crawledAt: '2026-08-20T00:00:00.000Z', rightsAnalyzed: true, registryCount: 2, tenantCount: 1,
       moneyParseWarnings: 1, documentItemMismatch: true, locationAnalyzed: true,
       marketPrice: 120000000, expectedBidPrice: 90000000, comparableCount: 3,
-      analysisAt: '2026-08-21T00:00:00.000Z',
+      rightsAnalyzedAt: '2026-08-20T12:00:00.000Z',
+      locationAnalyzedAt: '2026-08-21T00:00:00.000Z',
     });
   });
 

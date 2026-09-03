@@ -11,10 +11,29 @@ create table if not exists gm_precision_evaluations (
   required_checks jsonb not null default '[]'::jsonb,
   evaluator_version text not null,
   input_hash text not null,
-  evaluated_at timestamptz not null default now()
+  evaluated_at timestamptz not null default now(),
+  constraint gm_precision_recommended_bid_bounds check (
+    status <> 'recommended'
+    or (recommended_bid is not null and hard_cap_bid is not null and recommended_bid <= hard_cap_bid)
+  )
 );
 create index if not exists gm_precision_evaluations_status_idx
   on gm_precision_evaluations (status, confidence, evaluated_at desc);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'gm_precision_evaluations'::regclass
+       and conname = 'gm_precision_recommended_bid_bounds'
+  ) then
+    alter table gm_precision_evaluations
+      add constraint gm_precision_recommended_bid_bounds check (
+        status <> 'recommended'
+        or (recommended_bid is not null and hard_cap_bid is not null and recommended_bid <= hard_cap_bid)
+      ) not valid;
+  end if;
+end $$;
 
 create or replace view gm_precision_shortlist as
 with eligible as (
@@ -57,6 +76,9 @@ with eligible as (
     and t.status = 'trusted'
     and r.assumed_amount = 0
     and p.hard_cap_bid >= l.min_bid_price
+    and p.recommended_bid is not null
+    and p.recommended_bid >= l.min_bid_price
+    and p.recommended_bid <= p.hard_cap_bid
 )
 select
   listing_id, case_no, item_no, address, property_type, sale_date, min_bid_price,
