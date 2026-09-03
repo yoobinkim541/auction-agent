@@ -39,23 +39,25 @@ const marginVsMinBid = (price: number, minBid: number): number | null =>
   minBid > 0 ? Math.round(((price - minBid) / price) * 1e5) / 1e5 : null;
 
 /**
- * 매각물건명세서 "매각효력" 노트에서 임차인 정보 추출.
- * 임차권등기 유형의 임차인은 구조화 테이블(임차인현황) 대신 매각효력 자연어 문장에
- * 보증금·전입일·확정일이 기재되는 경우가 많음. 이를 보완 파싱하여 엔진에 전달한다.
+ * 매각물건명세서 비고 노트에서 임차인 정보 추출.
+ * 임차권등기 유형의 임차인은 구조화 테이블(임차인현황) 대신 "매각효력"·"인수권리" 등
+ * 제목이 다른 자연어 문장(비고란 표기가 사건마다 다름)에 보증금·전입일·확정일이
+ * 기재되는 경우가 많음. 이를 보완 파싱하여 엔진에 전달한다.
  * — 출처 표기(raw 필드)로 구분, 크롤러 파싱 결과가 있으면 이 함수는 호출되지 않음.
+ * 오탐 방지는 "대항할 수 있는" + 보증금/전입일 중 최소 하나(하단)로 충분해 제목 단어를
+ * 요구하지 않는다(제목 요구 시 실제 표기 다양성 때문에 대다수를 놓침).
  */
-function extractTenantsFromNotes(notes: string[]): Tenant[] {
+export function extractTenantsFromNotes(notes: string[]): Tenant[] {
   const tenants: Tenant[] = [];
   for (const note of notes) {
-    if (!/매각효력/.test(note)) continue;
     if (!/대항할\s*수\s*있는/.test(note)) continue;
     // 단일 메모에 복수 임차인이 기재될 수 있으므로 블록 단위로 분리
     // "매수인에게 대항할 수 있는 ..." 또는 "대항할 수 있는 임차인이 있음 ..."
     const blocks = note.split(/(?=매수인에게\s*대항할|대항할\s*수\s*있는\s*임차인)/);
     for (const block of blocks) {
       if (!/대항할\s*수\s*있는/.test(block)) continue;
-      const deposit = extractLabeledKoreanMoney(block, '(?:임차보증금|임대차보증금)', ['전입일자', '주민등록일자', '확정일자', '배당요구', '점유']);
-      const moveInM = block.match(/(?:전입일자|주민등록일자)\s*(\d{4}[.년-]\d{1,2}[.월-]\d{1,2})/);
+      const deposit = extractLabeledKoreanMoney(block, '(?:임차보증금|임대차보증금)', ['전입일자', '전입일', '주민등록일자', '확정일자', '배당요구', '점유']);
+      const moveInM = block.match(/(?:전입일자|전입일|주민등록일자)\s*(\d{4}[.년-]\d{1,2}[.월-]\d{1,2})/);
       const fixedM = block.match(/확정일자\s*(?:\(\s*1차\s*\))?\s*(\d{4}[.년-]\d{1,2}[.월-]\d{1,2})/);
       if (deposit == null && !moveInM) continue; // 최소 하나 이상의 정량 정보 필요
       tenants.push({
