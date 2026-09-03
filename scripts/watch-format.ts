@@ -30,7 +30,7 @@ export function diffFavorite(prev: FavSnapshot, cur: FavSnapshot): string[] {
   return out;
 }
 
-export interface FavChangeBlock { caseNo: string; address: string; lines: string[] }
+export interface FavChangeBlock { caseNo: string; itemNo: string; address: string; lines: string[] }
 
 /** 텔레그램용 변동 알림 텍스트 — 변동 블록이 없으면 빈 문자열(발송 생략 신호). */
 export function formatWatch(blocks: FavChangeBlock[], dashboardBase?: string | null): string {
@@ -40,7 +40,7 @@ export function formatWatch(blocks: FavChangeBlock[], dashboardBase?: string | n
   for (const b of withLines) {
     out.push(`★${b.caseNo} · ${b.address.slice(0, 22)}`);
     for (const l of b.lines) out.push(`   ${l}`);
-    if (dashboardBase) out.push(`   ${dashboardBase.replace(/\/+$/, '')}/#case=${encodeURIComponent(b.caseNo)}`);
+    if (dashboardBase) out.push(`   ${dashboardBase.replace(/\/+$/, '')}/#case=${encodeURIComponent(b.caseNo)}&item=${encodeURIComponent(b.itemNo || '1')}`);
   }
   return out.join('\n');
 }

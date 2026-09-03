@@ -2,8 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { classifyEgress, configuredHomeIps } from './egress.ts';
 
 describe('classifyEgress', () => {
-  it('등록 집 IP는 org와 무관하게 home', () => {
-    expect(classifyEgress({ ip: '1.2.3.4', org: 'Oracle Cloud' }, configuredHomeIps('1.2.3.4'))).toBe('home');
+  it('등록 IP여도 데이터센터 조직이면 datacenter로 차단', () => {
+    expect(classifyEgress({ ip: '1.2.3.4', org: 'Oracle Cloud' }, configuredHomeIps('1.2.3.4'))).toBe('datacenter');
+  });
+
+  it('등록 IP와 주거용 ISP 증거가 모두 있을 때만 home', () => {
+    expect(classifyEgress({ ip: '1.2.3.4', org: 'KT Corporation residential broadband' }, configuredHomeIps('1.2.3.4'))).toBe('home');
+  });
+
+  it('등록 IP여도 조직이 불명이면 unknown으로 fail closed', () => {
+    expect(classifyEgress({ ip: '1.2.3.4', org: 'Example Networks' }, configuredHomeIps('1.2.3.4'))).toBe('unknown');
   });
 
   it('데이터센터 org는 datacenter', () => {

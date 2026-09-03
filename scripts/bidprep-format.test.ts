@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { depositWon, formatBidPrep, type BidPrepRow } from './bidprep-format.ts';
 
 const row = (over: Partial<BidPrepRow> = {}): BidPrepRow => ({
-  case_no: '2025타경507294', property_type: 'villa', address: '인천광역시 중구 송월동3가 1-1',
+  case_no: '2025타경507294', item_no: '2', property_type: 'villa', address: '인천광역시 중구 송월동3가 1-1',
   court: '인천지방법원', min_bid_price: 1_4000_0000, total_score: 100, is_favorite: false, ...over,
 });
 
@@ -23,7 +23,7 @@ describe('formatBidPrep', () => {
     expect(s).toContain('★');
     expect(s).toContain('인천지방법원');
     expect(s).toContain('보증금 1,400만원 (10%)');
-    expect(s).toContain('https://dash.example/#case=');
+    expect(s).toContain('https://dash.example/#case=2025%ED%83%80%EA%B2%BD507294&item=2');
     expect(s).toContain('준비물');
     expect(s).toContain('특별매각조건');
   });

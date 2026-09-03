@@ -49,10 +49,19 @@ public class ListingController {
     return ResponseEntity.ok(service.precisionRecommendationsJson(clampPrecisionLimit(limit)));
   }
 
-  /** 매물 상세 (사건번호) */
+  /** 매물 상세 (listing id) */
+  @GetMapping(value = "/listings/by-id/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
+  public ResponseEntity<String> detailById(@PathVariable long id) {
+    String json = service.detailByIdJson(id);
+    return json == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(json);
+  }
+
+  /** 매물 상세 (사건번호 + 선택 물건번호). itemNo 없는 기존 링크는 단일물건 사건만 조회한다. */
   @GetMapping(value = "/listings/{caseNo}", produces = MediaType.APPLICATION_JSON_VALUE)
-  public ResponseEntity<String> detail(@PathVariable String caseNo) {
-    String json = service.detailJson(caseNo);
+  public ResponseEntity<String> detail(
+      @PathVariable String caseNo,
+      @RequestParam(required = false) String itemNo) {
+    String json = service.detailJson(caseNo, itemNo);
     return json == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(json);
   }
 

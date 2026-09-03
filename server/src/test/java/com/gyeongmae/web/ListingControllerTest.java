@@ -47,6 +47,30 @@ class ListingControllerTest {
   }
 
   @Test
+  void detailByListingIdUsesAnUnambiguousRoute() throws Exception {
+    when(service.detailByIdJson(42L)).thenReturn("{\"id\":42,\"item_no\":\"2\"}");
+
+    mvc.perform(get("/api/listings/by-id/42"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id").value(42))
+        .andExpect(jsonPath("$.item_no").value("2"));
+
+    verify(service).detailByIdJson(42L);
+  }
+
+  @Test
+  void detailByCasePassesTheSelectedItemNumber() throws Exception {
+    when(service.detailJson("2026타경1", "2")).thenReturn("{\"id\":42,\"item_no\":\"2\"}");
+
+    mvc.perform(get("/api/listings/2026타경1").param("itemNo", "2"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id").value(42))
+        .andExpect(jsonPath("$.item_no").value("2"));
+
+    verify(service).detailJson("2026타경1", "2");
+  }
+
+  @Test
   void postDecisionAcceptsCanonicalCamelCaseFields() throws Exception {
     when(service.recordDecision(42L, "rejected", "price", "상한 초과", 230000000L))
         .thenReturn("{\"id\":9,\"listing_id\":42,\"decision\":\"rejected\",\"reason_code\":\"price\"}");

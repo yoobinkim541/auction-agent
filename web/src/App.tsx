@@ -3,8 +3,9 @@ import { FLAG_LABEL, TYPE_LABEL, RISK, RECO } from './labels.ts';
 import { SkeletonList, Notice, ThSort, DDay, FieldProgress } from './ui.tsx';
 import {
   fetchDetail, triggerJob, fetchJobStatus, setFavorite, fetchMlReview,
-  apiBase, eok, pct, fetchPrecisionRecommendations,
-  type ListingItem, type MlReview, type MlSurpriseRow, type DecisionEvent,
+  apiBase, eok, pct, fetchPrecisionRecommendations, detailIdentityKey,
+  detailResponseMatches, listingDetailTarget, mergeDetailSelection, parseDetailHash,
+  type ListingItem, type MlReview, type MlSurpriseRow, type DecisionEvent, type ListingDetailTarget,
 } from './api.ts';
 import { scoreClient, scoreBreakdown, type ScoreConfig, type ClientScore } from './scoring.ts';
 // 코드 스플릿 — 지도(leaflet)·비교·상세·설정·도움말은 열 때만 로드(초기 번들·첫 페인트 단축).
@@ -103,6 +104,7 @@ export default function App() {
   const jobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const precisionRequestGateRef = useRef(createRequestGate());
+  const detailRequestGateRef = useRef(createRequestGate());
 
   const loadPrecision = useCallback(() => {
     const requestGate = precisionRequestGateRef.current;
@@ -116,11 +118,17 @@ export default function App() {
   }, []);
 
   // 데이터 로드(rows·lastCrawl·load)는 useListings()로 이동(위 destructure)
-  // 딥링크: URL #case=<사건번호> 로 진입하면 해당 매물 상세를 자동으로 연다(다이제스트/봇 링크용).
+  // 딥링크: listing id 또는 사건/물건번호로 정확한 매물 상세를 연다. 기존 단일사건 #case 링크도 유지한다.
   useEffect(() => {
-    const m = window.location.hash.match(/#case=(.+)/);
-    if (!m) return;
-    fetchDetail(decodeURIComponent(m[1]!)).then((full) => { if (full) setSelected(full); }).catch(() => {});
+    const target = parseDetailHash(window.location.hash);
+    if (!target) return;
+    const requestGate = detailRequestGateRef.current;
+    const requestGeneration = requestGate.begin();
+    fetchDetail(target).then((full) => {
+      if (!detailResponseMatches(target, full)) return;
+      detailCacheRef.current.set(detailIdentityKey(listingDetailTarget(full)), full);
+      applyIfCurrent(requestGate, requestGeneration, () => setSelected(full));
+    }).catch(() => {});
   }, []);
   useEffect(() => { saveConfig(cfg); }, [cfg]);
   useEffect(() => { saveUIState({ sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete, groupByCase }); }, [sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete, groupByCase]);
@@ -136,8 +144,9 @@ export default function App() {
     // 함수형 업데이트 — 상세 로드로 교체된 최신 selected(전체 데이터)를 slim 으로 덮어쓰지 않도록
     setSelected((cur) => (cur && cur.id === item.id ? { ...cur, is_favorite: nv } : cur));
     // 상세 캐시도 동기화 — 재오픈 시 별 상태가 토글 이전 값으로 되돌아가는 문제 방지
-    const cached = detailCacheRef.current.get(item.case_no);
-    if (cached) detailCacheRef.current.set(item.case_no, { ...cached, is_favorite: nv });
+    const cacheKey = detailIdentityKey(listingDetailTarget(item));
+    const cached = detailCacheRef.current.get(cacheKey);
+    if (cached) detailCacheRef.current.set(cacheKey, { ...cached, is_favorite: nv });
     setFavorite(item.id, nv).catch(() => load());
   }, [setRows, load]);
 
@@ -185,24 +194,28 @@ export default function App() {
   };
 
   const handleSelect = useCallback((item: ListingItem) => {
-    const cached = detailCacheRef.current.get(item.case_no);
+    const target = listingDetailTarget(item);
+    const cacheKey = detailIdentityKey(target);
+    const requestGate = detailRequestGateRef.current;
+    const requestGeneration = requestGate.begin();
+    const cached = detailCacheRef.current.get(cacheKey);
     if (cached) {
-      setSelected(item.precision ? { ...cached, precision: item.precision, current_decision: item.current_decision ?? null } : { ...cached, precision: null, current_decision: null });
+      setSelected(mergeDetailSelection(cached, item));
       return;
     }
     setSelected(item);
-    setDetailLoading(item.case_no);
-    fetchDetail(item.case_no)
+    setDetailLoading(cacheKey);
+    fetchDetail(target)
       .then((full) => {
-        detailCacheRef.current.set(item.case_no, full);
-        setSelected((cur) => (cur?.case_no === item.case_no ? {
-          ...full,
-          precision: item.precision ?? null,
-          current_decision: item.current_decision ?? null,
-        } : cur));
+        if (!detailResponseMatches(target, full)) return;
+        const merged = mergeDetailSelection(full, item);
+        detailCacheRef.current.set(cacheKey, merged);
+        applyIfCurrent(requestGate, requestGeneration, () => {
+          setSelected((cur) => (cur?.id === item.id ? merged : cur));
+        });
       })
       .catch(() => {})
-      .finally(() => setDetailLoading((cur) => (cur === item.case_no ? null : cur)));
+      .finally(() => setDetailLoading((cur) => (cur === cacheKey ? null : cur)));
   }, []);
 
   const updateCurrentDecision = useCallback((event: DecisionEvent) => {
@@ -210,14 +223,22 @@ export default function App() {
     setSelected((item) => item?.id === event.listing_id ? { ...item, current_decision: event } : item);
   }, []);
 
-  const openCaseFromReview = useCallback((caseNo: string) => {
-    const cached = detailCacheRef.current.get(caseNo);
+  const openCaseFromReview = useCallback((target: ListingDetailTarget) => {
+    const cacheKey = detailIdentityKey(target);
+    const requestGate = detailRequestGateRef.current;
+    const requestGeneration = requestGate.begin();
+    const cached = detailCacheRef.current.get(cacheKey);
     if (cached) { setSelected(cached); return; }
-    setDetailLoading(caseNo);
-    fetchDetail(caseNo)
-      .then((full) => { detailCacheRef.current.set(caseNo, full); setSelected(full); })
+    setDetailLoading(cacheKey);
+    fetchDetail(target)
+      .then((full) => {
+        if (!detailResponseMatches(target, full)) return;
+        detailCacheRef.current.set(cacheKey, full);
+        detailCacheRef.current.set(detailIdentityKey(listingDetailTarget(full)), full);
+        applyIfCurrent(requestGate, requestGeneration, () => setSelected(full));
+      })
       .catch(() => {})
-      .finally(() => setDetailLoading((cur) => (cur === caseNo ? null : cur)));
+      .finally(() => setDetailLoading((cur) => (cur === cacheKey ? null : cur)));
   }, []);
 
   // 단일 패스 스코어링 — rows·cfg 변경 시에만 1회. (과거: view/stats/allScored 3중 패스가 매 상호작용 재계산)
@@ -715,7 +736,7 @@ export default function App() {
 
       {selected && <Suspense fallback={null}><Detail
         row={selected} onClose={() => setSelected(null)} onFav={() => toggleFav(selected)}
-        loading={detailLoading === selected.case_no}
+        loading={detailLoading === detailIdentityKey(listingDetailTarget(selected))}
         onPrev={selNavPrev} onNext={selNavNext} position={selNavPos}
         onDecisionSaved={updateCurrentDecision}
       /></Suspense>}
@@ -790,7 +811,7 @@ function CalibrationChip({ row }: { row: ListingItem }) {
   return <span className={`ml-ref-chip${cls}`} title={`${hint} · 운영 반영 전 참고용`}>{caution ? '과다주의' : 'ML'} {eok(row.ml_calibration.reference_bid_price)}</span>;
 }
 
-function ReviewPanel({ onOpenCase }: { onOpenCase: (caseNo: string) => void }) {
+function ReviewPanel({ onOpenCase }: { onOpenCase: (target: ListingDetailTarget) => void }) {
   const [data, setData] = useState<MlReview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -864,7 +885,7 @@ function ReviewPanel({ onOpenCase }: { onOpenCase: (caseNo: string) => void }) {
         <div className="review-card">
           <h3>결과 미매칭 재시도 큐</h3>
           <table className="mini-table"><thead><tr><th>사건</th><th>D+</th><th>우선</th><th>점수</th></tr></thead><tbody>
-            {data.retryQueue.slice(0, 12).map((r) => <tr key={`${r.case_no}-${r.item_no}`}><td><button className="link-btn mono" onClick={() => onOpenCase(r.case_no)}>{r.case_no}{r.item_no !== '1' ? `-${r.item_no}` : ''}</button></td><td>{r.days_overdue}</td><td>{r.retry_priority}</td><td>{r.total_score ?? '-'}</td></tr>)}
+            {data.retryQueue.slice(0, 12).map((r) => <tr key={`${r.case_no}-${r.item_no}`}><td><button className="link-btn mono" onClick={() => onOpenCase({ caseNo: r.case_no, itemNo: r.item_no })}>{r.case_no}{r.item_no !== '1' ? `-${r.item_no}` : ''}</button></td><td>{r.days_overdue}</td><td>{r.retry_priority}</td><td>{r.total_score ?? '-'}</td></tr>)}
           </tbody></table>
         </div>
         <div className="review-card">
@@ -900,14 +921,14 @@ function surpriseMetric(row: MlSurpriseRow): string {
   return `점수 ${row.total_score ?? '-'}`;
 }
 
-function SurpriseTable({ title, rows, onOpenCase }: { title: string; rows: MlSurpriseRow[]; onOpenCase: (caseNo: string) => void }) {
+function SurpriseTable({ title, rows, onOpenCase }: { title: string; rows: MlSurpriseRow[]; onOpenCase: (target: ListingDetailTarget) => void }) {
   return (
     <div className="surprise-box">
       <h4>{title}</h4>
       {rows.length === 0 ? <p className="muted">케이스 없음</p> : (
         <table className="mini-table surprise-table"><thead><tr><th>사건</th><th>주소</th><th>핵심</th><th>마진</th></tr></thead><tbody>
           {rows.map((r) => <tr key={`${r.surprise_kind}-${r.case_no}-${r.item_no}`}>
-            <td><button className="link-btn mono" onClick={() => onOpenCase(r.case_no)}>{r.case_no}{r.item_no !== '1' ? `-${r.item_no}` : ''}</button></td>
+            <td><button className="link-btn mono" onClick={() => onOpenCase({ caseNo: r.case_no, itemNo: r.item_no })}>{r.case_no}{r.item_no !== '1' ? `-${r.item_no}` : ''}</button></td>
             <td title={r.address}>{r.address.slice(0, 18)}</td>
             <td>{surpriseMetric(r)}</td>
             <td>{fmtRate(r.realized_bid_margin ?? r.true_margin)}</td>

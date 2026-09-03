@@ -37,6 +37,20 @@ public class ListingService {
                          || '&sno=' || substring(l.case_no from '타경([0-9]+)')
                     else 'https://www.xn--b20bu5cuwtpue8ui.com/auction/list.html' end
              ) as deonakchal_check_url,
+             case when p.listing_id is null then null
+                  else jsonb_build_object(
+                    'status', p.status,
+                    'confidence', p.confidence,
+                    'conservative_value', p.conservative_value,
+                    'recommended_bid', p.recommended_bid,
+                    'hard_cap_bid', p.hard_cap_bid,
+                    'reason_codes', p.reason_codes,
+                    'strengths', p.strengths,
+                    'risks', p.risks,
+                    'required_checks', p.required_checks,
+                    'evaluator_version', p.evaluator_version,
+                    'evaluated_at', p.evaluated_at
+                  ) end as precision,
              case when cal.sample_size is null then null
                   else jsonb_build_object(
                     'method', 'group_median_v1',
@@ -55,6 +69,7 @@ public class ListingService {
       left join gm_rights_analysis   r   on r.listing_id   = l.id
       left join gm_location_analysis loc on loc.listing_id = l.id
       left join gm_scores            s   on s.listing_id   = l.id
+      left join gm_precision_evaluations p on p.listing_id = l.id
 
       left join lateral (
         select case
@@ -373,12 +388,32 @@ public class ListingService {
     return jdbc.queryForObject(sql, new MapSqlParameterSource(), String.class);
   }
 
-  /** 단일 매물 상세(JSON 객체 문자열 또는 null) */
-  public String detailJson(String caseNo) {
+  /** listing id로 식별한 단일 매물 상세(JSON 객체 문자열 또는 null) */
+  public String detailByIdJson(long listingId) {
     String sql = "select row_to_json(t)::text from (\n" + SELECT_BODY
-        + " where l.case_no = :caseNo limit 1) t";
-    List<String> rows = jdbc.queryForList(sql, new MapSqlParameterSource("caseNo", caseNo), String.class);
+        + " where l.id = :listingId) t";
+    List<String> rows = jdbc.queryForList(sql, new MapSqlParameterSource("listingId", listingId), String.class);
     return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  /** 사건/물건번호 상세. 물건번호 없는 레거시 요청은 단일물건 사건에만 허용한다. */
+  public String detailJson(String caseNo, String itemNo) {
+    String sql = "select row_to_json(t)::text from (\n" + SELECT_BODY
+        + " where l.case_no = :caseNo\n"
+        + "   and ((:itemNo is not null and coalesce(nullif(l.item_no, ''), '1') = :itemNo)\n"
+        + "     or (:itemNo is null and 1 = (\n"
+        + "       select count(distinct coalesce(nullif(sibling.item_no, ''), '1'))\n"
+        + "         from gm_listings sibling where sibling.case_no = :caseNo)))\n"
+        + " order by l.crawled_at desc nulls last, l.id desc limit 1) t";
+    var params = new MapSqlParameterSource()
+        .addValue("caseNo", caseNo)
+        .addValue("itemNo", itemNo == null || itemNo.isBlank() ? null : itemNo.trim());
+    List<String> rows = jdbc.queryForList(sql, params, String.class);
+    return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  public String detailJson(String caseNo) {
+    return detailJson(caseNo, null);
   }
 
   /** 관심(즐겨찾기) 토글 */

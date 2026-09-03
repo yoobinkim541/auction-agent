@@ -102,7 +102,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
   const detailRounds = loc?.sale_rounds ?? [];
   const detailResolvedRound = resolveRound(detailRounds, row.sale_date, row.fail_count);
   const currentRound = detailResolvedRound?.n ?? null;
-  const showLegacyBid = shouldShowLegacyBid(row.precision);
+  const showLegacyBid = !loading && shouldShowLegacyBid(row.precision);
 
   return (
     <div className="drawer-bg" onClick={onClose}>

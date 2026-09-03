@@ -1,4 +1,4 @@
-import type { TodayAction, TodayActionType } from './api.ts';
+import type { ListingDetailTarget, TodayAction, TodayActionType } from './api.ts';
 
 const LABELS: Record<TodayActionType, string> = {
   recrawl_needed: '재수집',
@@ -18,7 +18,7 @@ export function TodayActions({ actions, loading, error, onOpenCase }: {
   actions: TodayAction[];
   loading: boolean;
   error: string | null;
-  onOpenCase: (caseNo: string) => void;
+  onOpenCase: (target: ListingDetailTarget) => void;
 }) {
   const visible = actions.slice(0, 8);
   const hidden = Math.max(0, actions.length - visible.length);
@@ -42,7 +42,7 @@ export function TodayActions({ actions, loading, error, onOpenCase }: {
             <button
               key={`${action.action_type}:${action.listing_id}:${action.due_date ?? ''}`}
               className={`today-action-card today-action-${action.severity}`}
-              onClick={() => onOpenCase(action.case_no)}
+              onClick={() => onOpenCase({ id: action.listing_id, caseNo: action.case_no, itemNo: action.item_no })}
               title={action.reason}
             >
               <span className="today-action-type">{LABELS[action.action_type]}</span>

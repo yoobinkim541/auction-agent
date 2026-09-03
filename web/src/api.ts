@@ -219,6 +219,12 @@ export interface DecisionInput {
   targetBid?: number;
 }
 
+export interface ListingDetailTarget {
+  id?: number;
+  caseNo?: string;
+  itemNo?: string | null;
+}
+
 
 export type TodayActionType = 'recrawl_needed' | 'rights_enrichment' | 'bid_soon' | 'fieldwork' | 'review_result';
 export type TodayActionSeverity = 'danger' | 'warn' | 'info';
@@ -355,8 +361,50 @@ export async function saveDecision(id: number, input: DecisionInput): Promise<De
   });
 }
 
-export async function fetchDetail(caseNo: string): Promise<ListingItem> {
-  return apiJson<ListingItem>(`/api/listings/${encodeURIComponent(caseNo)}`);
+export function detailIdentityKey(target: ListingDetailTarget): string {
+  if (target.id != null && Number.isInteger(target.id) && target.id > 0) return `listing:${target.id}`;
+  const itemNo = target.itemNo?.trim() || '1';
+  return `case:${target.caseNo ?? ''}/item:${itemNo}`;
+}
+
+export function listingDetailTarget(item: Pick<ListingItem, 'id' | 'case_no' | 'item_no'>): ListingDetailTarget {
+  return { id: item.id, caseNo: item.case_no, itemNo: item.item_no };
+}
+
+export function parseDetailHash(hash: string): ListingDetailTarget | null {
+  const params = new URLSearchParams(hash.replace(/^#/, ''));
+  const rawId = params.get('listing');
+  const id = rawId != null && /^[1-9][0-9]*$/.test(rawId) ? Number(rawId) : undefined;
+  const caseNo = params.get('case')?.trim() || undefined;
+  const itemNo = params.get('item')?.trim() || undefined;
+  if (id !== undefined) return { id, ...(caseNo ? { caseNo } : {}), ...(itemNo ? { itemNo } : {}) };
+  if (caseNo) return { caseNo, ...(itemNo ? { itemNo } : {}) };
+  return null;
+}
+
+export function detailResponseMatches(target: ListingDetailTarget, response: ListingItem): boolean {
+  if (target.id != null) return response.id === target.id;
+  if (response.case_no !== target.caseNo) return false;
+  return !target.itemNo || (response.item_no?.trim() || '1') === (target.itemNo.trim() || '1');
+}
+
+export function mergeDetailSelection(full: ListingItem, summary?: ListingItem): ListingItem {
+  if (!summary || summary.id !== full.id) return full;
+  return {
+    ...full,
+    ...(summary.precision !== undefined ? { precision: summary.precision } : {}),
+    ...(summary.current_decision !== undefined ? { current_decision: summary.current_decision } : {}),
+  };
+}
+
+export async function fetchDetail(target: string | ListingDetailTarget): Promise<ListingItem> {
+  if (typeof target === 'string') {
+    return apiJson<ListingItem>(`/api/listings/${encodeURIComponent(target)}`);
+  }
+  if (target.id != null) return apiJson<ListingItem>(`/api/listings/by-id/${target.id}`);
+  if (!target.caseNo) throw new Error('상세 조회 식별자가 없습니다');
+  const itemQuery = target.itemNo ? `?itemNo=${encodeURIComponent(target.itemNo)}` : '';
+  return apiJson<ListingItem>(`/api/listings/${encodeURIComponent(target.caseNo)}${itemQuery}`);
 }
 
 export async function triggerJob(job: 'crawl' | 'analyze' | 'eval' | 'ingest-legal'): Promise<void> {

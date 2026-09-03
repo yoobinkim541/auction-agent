@@ -29,15 +29,15 @@ describe('diffFavorite', () => {
 describe('formatWatch', () => {
   it('변동 블록 없으면 빈 문자열(발송 생략)', () => {
     expect(formatWatch([])).toBe('');
-    expect(formatWatch([{ caseNo: 'a', address: 'b', lines: [] }])).toBe('');
+    expect(formatWatch([{ caseNo: 'a', itemNo: '1', address: 'b', lines: [] }])).toBe('');
   });
   it('블록·딥링크 포함 텍스트', () => {
     const s = formatWatch(
-      [{ caseNo: '2024타경14666', address: '인천광역시 미추홀구 매소홀로 262', lines: ['유찰 발생 (3→4회)'] }],
+      [{ caseNo: '2024타경14666', itemNo: '3', address: '인천광역시 미추홀구 매소홀로 262', lines: ['유찰 발생 (3→4회)'] }],
       'https://dash.example/',
     );
     expect(s).toContain('🔔 관심물건 변동 1건');
     expect(s).toContain('★2024타경14666');
-    expect(s).toContain('https://dash.example/#case=2024%ED%83%80%EA%B2%BD14666');
+    expect(s).toContain('https://dash.example/#case=2024%ED%83%80%EA%B2%BD14666&item=3');
   });
 });

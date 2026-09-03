@@ -10,7 +10,7 @@ export function clampDigestTopN(value: string | undefined): number {
 }
 
 export const TOP_RECOMMENDATIONS_SQL = `
-  select l.case_no, l.property_type, l.address,
+  select l.case_no, l.item_no, l.property_type, l.address,
          l.appraisal_value::float8, l.min_bid_price::float8, l.sale_date::text,
          l.source_url, l.inq_cnt, l.interest_cnt, l.crawled_at::text,
          r.risk_grade, loc.safety_margin::float8,
@@ -41,7 +41,7 @@ export const HISTORICAL_RESULTS_SQL = `
    order by r.sold desc, sale_ratio desc nulls last`;
 
 export const UPCOMING_RECOMMENDATIONS_SQL = `
-  select l.case_no, l.property_type, l.address, l.appraisal_value::float8, l.min_bid_price::float8,
+  select l.case_no, l.item_no, l.property_type, l.address, l.appraisal_value::float8, l.min_bid_price::float8,
          l.sale_date::text, l.source_url, l.inq_cnt, l.interest_cnt, l.crawled_at::text,
          r.risk_grade, loc.safety_margin::float8, (loc.acquisition_cost->>'trueSafetyMargin')::float8 as true_margin,
          null::int as total_score, null as memo
