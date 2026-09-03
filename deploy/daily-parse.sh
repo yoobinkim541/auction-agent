@@ -38,11 +38,16 @@ npm run collect:results 2>&1 || echo "[collect:results] 실패(무시)"
 #   400 = 2026-08-26 버스트 차단 사건 이전 단일 실행 기준 무지연 500건까지 무차단 확인됨 + 이후 항목간 300ms 지연 추가로 여유 확보.
 OUTCOME_RETRY_LIMIT="${OUTCOME_RETRY_LIMIT:-400}" npm run retry:outcomes 2>&1 || echo "[retry:outcomes] 실패(무시)"
 
-# 최근 2일에 실제 갱신된 원천만 제한 처리하고, 정밀 안전 감사를 통과해야 정밀 다이제스트를 허용한다.
-# 실패해도 analyze rc와 레거시 분석/사진 데이터는 그대로 보존한다.
-PRECISION_DIGEST_ALLOWED=1
-if ! run_precision_refresh_and_audit; then
-  PRECISION_DIGEST_ALLOWED=0
+# 분석과 정밀 감사를 모두 통과해야 정밀 다이제스트를 허용한다.
+# 분석 실패 시 오래된 평가를 행동 가능한 추천으로 보내지 않고, analyze rc와 레거시 데이터는 보존한다.
+PRECISION_DIGEST_ALLOWED=0
+if [ "$rc" = "0" ]; then
+  PRECISION_DIGEST_ALLOWED=1
+  if ! run_precision_refresh_and_audit; then
+    PRECISION_DIGEST_ALLOWED=0
+  fi
+else
+  echo "[precision] analyze 실패(rc=$rc) — 정밀 갱신·다이제스트 생략"
 fi
 
 # 학습 부가 배치(전부 bounded·claude CLI는 스크립트 내부 백오프). 실패해도 본 배치 무관.

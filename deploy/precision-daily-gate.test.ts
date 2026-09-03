@@ -176,5 +176,7 @@ describe('precision daily safety gate', () => {
 
     expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(7);
     expect(new Set(readFileSync(testFixture.pwdLog, 'utf8').trim().split('\n'))).toEqual(new Set([project]));
+    expect(readFileSync(testFixture.calls, 'utf8')).not.toContain('run --silent digest');
+    expect(readFileSync(testFixture.notifyLog, 'utf8')).not.toContain('정밀 추천 다이제스트 완료');
   });
 });
