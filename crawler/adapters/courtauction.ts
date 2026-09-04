@@ -586,10 +586,11 @@ export function parseCourtDetail(dma: any): CourtDetailParsed {
   addNote('인수권리', info.ndstrcRghCtt);
   addNote('법정지상권', info.sprfcExstcDts);
 
-  // 최선순위 설정(말소기준권리) — "… : YYYY.MM.DD. 근저당권" 류에서 날짜+종류 추출
+  // 최선순위 설정(말소기준권리) — "… : YYYY.MM.DD. 근저당권" 류에서 날짜+종류 추출.
+  // 구분자 뒤 공백 유무가 사건마다 다름("2022.7.5."/"2022. 7. 5.") — \s*로 둘 다 인식.
   const registry: RegistryEntry[] = [];
   const senior = String(info.tprtyRnkHypthcStngDts ?? '');
-  const dre = /(\d{4})[.\-](\d{1,2})[.\-](\d{1,2})/g;
+  const dre = /(\d{4})\s*[.\-]\s*(\d{1,2})\s*[.\-]\s*(\d{1,2})/g;
   let dm: RegExpExecArray | null;
   while ((dm = dre.exec(senior))) {
     const iso = parseKoreanDate(`${dm[1]}.${dm[2]}.${dm[3]}`);

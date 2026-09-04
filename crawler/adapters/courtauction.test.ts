@@ -182,6 +182,14 @@ describe('parseCourtDetail', () => {
     expect(d.siteAssumedAmount).toBeNull(); // 유치권 등 자동 인수 처리 안 함(보수적)
   });
 
+  it('최선순위설정 날짜의 구분자 뒤 공백("2022. 7. 5.")도 인식한다', () => {
+    const d = parseCourtDetail({
+      dspslGdsDxdyInfo: { tprtyRnkHypthcStngDts: '최선순위설정: 2022. 7. 5. 가압류', gdsSpcfcRmk: '' },
+    });
+    expect(d.registry.length).toBe(1);
+    expect(d.registry[0]?.receiptDate).toBe('2022-07-05');
+  });
+
   it('빈/누락 dma_result → 빈 결과(throw 없음)', () => {
     const d = parseCourtDetail({});
     expect(d.registry).toEqual([]);
