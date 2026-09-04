@@ -33,8 +33,31 @@ describe('evaluatePrecision', () => {
     ['unknown occupancy', { occupantLabel: '점유관계 미상' }, 'conditional'],
     ['caution grade', { riskGrade: 'caution' }, 'conditional'],
     ['no comparables', { comparablePrices: [] }, 'hold'],
+    // EMPTY_REGISTRY 전용 AI 1차 소견(pipeline/legal/registry-opinion.ts) — hold를 conditional로만 완화.
+    ['trust hold, no registry opinion', { trustStatus: 'hold', registryOpinion: null }, 'hold'],
+    ['trust hold, registry opinion without clue', { trustStatus: 'hold', registryOpinion: { hasClue: false, requiredChecks: [] } }, 'hold'],
+    ['trust hold, registry opinion has clue', { trustStatus: 'hold', registryOpinion: { hasClue: true, requiredChecks: ['등기부 직접 열람 필요'] } }, 'conditional'],
   ] as const)('%s has status %s', (_, overrides, status) => {
     expect(evaluatePrecision(precisionInput(overrides)).status).toBe(status);
+  });
+
+  it('quarantined(데이터 무결성 문제)는 등기 AI 소견이 있어도 완화하지 않는다', () => {
+    // EMPTY_REGISTRY 단독일 때 persist.ts가 채우는 값은 trustStatus='hold'뿐이라 실제로 겹치지
+    // 않지만, 평가함수 자체도 quarantined는 hold로만 한정된 완화 경로를 타지 않게 방어적으로 확인.
+    const result = evaluatePrecision(precisionInput({
+      trustStatus: 'quarantined', registryOpinion: { hasClue: true, requiredChecks: ['등기부 직접 열람 필요'] },
+    }));
+    expect(result.status).toBe('hold');
+  });
+
+  it('등기 AI 소견은 recommended로 절대 승격시키지 않는다(다른 조건이 전부 완벽해도 conditional 상한)', () => {
+    const result = evaluatePrecision(precisionInput({
+      trustStatus: 'hold', registryOpinion: { hasClue: true, requiredChecks: ['등기부 직접 열람 필요'] },
+    }));
+    expect(result.status).toBe('conditional');
+    expect(result.status).not.toBe('recommended');
+    expect(result.reasonCodes).toContain('REGISTRY_AI_OPINION_UNCONFIRMED');
+    expect(result.requiredChecks).toContain('등기부 직접 열람 필요');
   });
 
   it('uses nearest-rank p25 and the conservative price basis', () => {

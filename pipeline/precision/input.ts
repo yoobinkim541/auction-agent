@@ -51,10 +51,12 @@ export function buildPrecisionInput(args: {
   rights: RightsAnalysisResult;
   location: LocationAnalysis;
   trustStatus: PrecisionTrustStatus;
+  registryOpinion?: { hasClue: boolean; requiredChecks: readonly string[] } | null;
 }): PrecisionInput {
   const cost = args.location.acquisitionCost;
   return {
     trustStatus: args.trustStatus,
+    registryOpinion: args.registryOpinion ?? null,
     appraisalValue: args.listing.appraisalValue,
     minBidPrice: args.listing.minBidPrice,
     marketPrice: args.location.marketPrice,

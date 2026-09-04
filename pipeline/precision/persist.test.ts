@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Listing, LocationAnalysis, RightsAnalysisResult, Score } from '../../shared/types.ts';
+import type { RegistryOpinionRow } from '../../shared/db.ts';
 
 const db = vi.hoisted(() => ({
   saveRightsAnalysis: vi.fn(),
@@ -8,6 +9,7 @@ const db = vi.hoisted(() => ({
   saveListingDataTrust: vi.fn(),
   savePrecisionEvaluation: vi.fn(),
   saveScore: vi.fn(),
+  fetchRegistryOpinion: vi.fn<(listingId: number) => Promise<RegistryOpinionRow | null>>(async () => null),
 }));
 
 vi.mock('../../shared/db.ts', () => db);
@@ -115,5 +117,44 @@ describe('persistPrecisionStages', () => {
       passedFilter: false,
       reason: expect.stringContaining('정밀 평가 내부 오류'),
     }));
+  });
+
+  it('EMPTY_REGISTRY 단독 hold + 캐시된 AI 소견(hasClue) → conditional로 완화한다', async () => {
+    db.fetchRegistryOpinion.mockResolvedValueOnce({
+      has_clue: true, tentative_kind: 'geunjeodang', tentative_date: '2023-05-01',
+      explanation: '소견', citations: [], required_checks: ['등기부 직접 열람 필요'],
+      confidence: 'medium', model_version: 'claude-cli(subscription)', input_hash: 'h',
+    });
+    const registryOnlyInput = {
+      ...persistenceInput(),
+      rights: { ...rights, classified: [] } as unknown as RightsAnalysisResult, // registryCount=0 → EMPTY_REGISTRY
+      location: { ...location, comps: [...location.comps, { areaM2: 80, dealAmount: 312_000_000, dealDate: '2026-08-03' }] } as unknown as LocationAnalysis, // comparableCount=3 → INSUFFICIENT_COMPS 회피(EMPTY_REGISTRY 단독화)
+    };
+
+    await persistPrecisionStages(registryOnlyInput);
+
+    expect(db.saveListingDataTrust).toHaveBeenCalledWith(
+      101, expect.objectContaining({ status: 'hold', reasonCodes: ['EMPTY_REGISTRY'] }), expect.any(String),
+    );
+    expect(db.fetchRegistryOpinion).toHaveBeenCalledWith(101);
+    expect(db.savePrecisionEvaluation).toHaveBeenCalledWith(
+      101,
+      expect.objectContaining({ status: 'conditional', reasonCodes: expect.arrayContaining(['REGISTRY_AI_OPINION_UNCONFIRMED']) }),
+      expect.any(String),
+    );
+  });
+
+  it('EMPTY_REGISTRY 외 다른 사유도 섞이면 AI 소견을 조회하지 않고 정상 hold를 유지한다', async () => {
+    const mixedReasonInput = {
+      ...persistenceInput(),
+      rights: { ...rights, classified: [] } as unknown as RightsAnalysisResult, // EMPTY_REGISTRY + 기존 comps(2건)로 INSUFFICIENT_COMPS도 겹침
+    };
+
+    await persistPrecisionStages(mixedReasonInput);
+
+    expect(db.fetchRegistryOpinion).not.toHaveBeenCalled();
+    expect(db.savePrecisionEvaluation).toHaveBeenCalledWith(
+      101, expect.objectContaining({ status: 'hold' }), expect.any(String),
+    );
   });
 });

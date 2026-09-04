@@ -54,12 +54,18 @@ describe('precision input mapping', () => {
       expectedBidPrice: 200_000_000, comparableCount: 2,
     });
     expect(precisionInput).toEqual({
-      trustStatus: 'trusted', appraisalValue: 300_000_000, minBidPrice: 180_000_000,
+      trustStatus: 'trusted', registryOpinion: null, appraisalValue: 300_000_000, minBidPrice: 180_000_000,
       marketPrice: 320_000_000, marketConfidence: 'high',
       comparablePrices: [310_000_000, 315_000_000], expectedBidPrice: 200_000_000,
       maxSafeBid: 220_000_000, assumedAmount: 0, riskGrade: 'clean', dangerFlagCount: 1,
       occupantLabel: '소유자·채무자 점유', trueSafetyMargin: 0.25, fixedCosts: 7_500_000,
     });
+  });
+
+  it('registryOpinion을 전달하면 그대로 precisionInput에 실린다', () => {
+    const opinion = { hasClue: true, requiredChecks: ['등기부 직접 열람 필요'] };
+    const precisionInput = buildPrecisionInput({ listing, rights, location, trustStatus: 'hold', registryOpinion: opinion });
+    expect(precisionInput.registryOpinion).toEqual(opinion);
   });
 
   it('flags only explicit embedded item numbers that differ from the listing item', () => {

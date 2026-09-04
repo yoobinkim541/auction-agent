@@ -69,6 +69,49 @@ export async function savePrecisionEvaluation(
   );
 }
 
+export interface RegistryOpinionRow {
+  has_clue: boolean;
+  tentative_kind: string | null;
+  tentative_date: string | null;
+  explanation: string;
+  citations: unknown;
+  required_checks: string[];
+  confidence: 'high' | 'medium' | 'low';
+  model_version: string;
+  input_hash: string;
+}
+
+/** EMPTY_REGISTRY 물건 전용 AI 1차 소견 저장(pipeline/legal/registry-opinion.ts 결과). */
+export async function saveRegistryOpinion(
+  listingId: number,
+  opinion: { hasClue: boolean; tentativeKind: string | null; tentativeDate: string | null; explanation: string; citations: unknown; requiredChecks: string[]; confidence: 'high' | 'medium' | 'low' },
+  modelVersion: string,
+  inputHash: string,
+): Promise<void> {
+  await query(
+    `insert into gm_registry_opinions
+       (listing_id,has_clue,tentative_kind,tentative_date,explanation,citations,required_checks,confidence,model_version,input_hash,evaluated_at)
+     values ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10,now())
+     on conflict (listing_id) do update set
+       has_clue=excluded.has_clue, tentative_kind=excluded.tentative_kind, tentative_date=excluded.tentative_date,
+       explanation=excluded.explanation, citations=excluded.citations, required_checks=excluded.required_checks,
+       confidence=excluded.confidence, model_version=excluded.model_version, input_hash=excluded.input_hash,
+       evaluated_at=now()`,
+    [listingId, opinion.hasClue, opinion.tentativeKind, opinion.tentativeDate, opinion.explanation,
+      j(opinion.citations), j(opinion.requiredChecks), opinion.confidence, modelVersion, inputHash],
+  );
+}
+
+/** listing_id로 기존 AI 1차 소견 조회(캐시 — 배치가 미리 채워둔 값을 precision 평가에서 읽기만 함). */
+export async function fetchRegistryOpinion(listingId: number): Promise<RegistryOpinionRow | null> {
+  const rows = await query<RegistryOpinionRow>(
+    `select has_clue, tentative_kind, tentative_date, explanation, citations, required_checks, confidence, model_version, input_hash
+       from gm_registry_opinions where listing_id = $1`,
+    [listingId],
+  );
+  return rows[0] ?? null;
+}
+
 export async function saveOutcomeTrust(
   caseNo: string, itemNo: string, saleDate: string, result: OutcomeTrustResult,
 ): Promise<void> {

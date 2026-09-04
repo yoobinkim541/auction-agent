@@ -1,5 +1,6 @@
 import {
   backfillFailCountFromSaleRounds,
+  fetchRegistryOpinion,
   saveListingDataTrust,
   saveLocationAnalysis,
   savePrecisionEvaluation,
@@ -57,11 +58,19 @@ export async function persistPrecisionStages(input: PrecisionPersistenceInput): 
   const trust = evaluateListingTrust(trustInput);
   await saveListingDataTrust(input.listingId, trust, hashEvaluationInput(trustInput));
 
+  // EMPTY_REGISTRY가 신뢰 실패의 유일한 사유일 때만 AI 1차 소견을 조회한다(다른 사유가 섞이면
+  // 무시 — 그 물건은 여전히 정상 hold). 여기서는 배치(scripts/registry-opinion-backfill.ts)가
+  // 미리 채워둔 값을 읽기만 한다 — 매 분석마다 Claude를 부르지 않는다.
+  const registryOnlyHold = trust.status !== 'trusted' && trust.reasonCodes.length === 1
+    && trust.reasonCodes[0] === 'EMPTY_REGISTRY';
+  const registryOpinion = registryOnlyHold ? await fetchRegistryOpinion(input.listingId) : null;
+
   const precisionInput = buildPrecisionInput({
     listing: input.listing,
     rights: input.rights,
     location: input.location,
     trustStatus: trust.status,
+    registryOpinion: registryOpinion ? { hasClue: registryOpinion.has_clue, requiredChecks: registryOpinion.required_checks } : null,
   });
   let precision: PrecisionEvaluation;
   try {

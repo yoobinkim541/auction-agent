@@ -20,6 +20,12 @@ export interface PrecisionInput {
   trueSafetyMargin: number | null;
   fixedCosts: number;
   targetMarginPct?: number;
+  /**
+   * EMPTY_REGISTRY(등기 미확보)로만 trustStatus가 hold인 물건에 한해 채워짐(pipeline/precision/persist.ts).
+   * AI 1차 소견 — hasClue=true여도 hold를 conditional로만 완화할 뿐 recommended 승격은 절대 불가
+   * (registryGapCoverable 참고). 다른 사유까지 겹친 hold에는 null로 전달돼 영향 없음.
+   */
+  registryOpinion?: { hasClue: boolean; requiredChecks: readonly string[] } | null;
 }
 
 export interface PrecisionEvaluation {
@@ -193,11 +199,17 @@ export const evaluatePrecision = (input: PrecisionInput): PrecisionEvaluation =>
   const unresolvedEvidence = !validEvidence || reasonCodes.includes('PRICE_BASIS_DIVERGENCE');
   const unknownOccupancy = input.occupantLabel.includes('미상');
   const caution = input.riskGrade === 'caution';
+  // 등기 미확보(EMPTY_REGISTRY)가 유일한 신뢰 실패 사유이고 AI 1차 소견이 단서를 찾았을 때만
+  // trust hold를 conditional로 완화한다. trustStatus==='hold'로만 한정(quarantined는 데이터
+  // 무결성 문제라 성격이 다름 — persist.ts 게이팅상 실제로 겹치지 않지만 방어적으로 명시).
+  // 다른 사유가 섞여있으면 registryOpinion이 null로 전달돼 여기 영향 없음(정상 hold 유지)
+  // — recommended 승격 경로는 아예 없음(위 status enum 참고).
+  const registryGapCoverable = input.trustStatus === 'hold' && input.registryOpinion?.hasClue === true;
 
   let status: PrecisionStatus;
   if (hardReject) status = 'rejected';
-  else if (unresolvedTrust || reviewRequired || unresolvedEvidence) status = 'hold';
-  else if (unknownOccupancy || caution) status = 'conditional';
+  else if ((unresolvedTrust && !registryGapCoverable) || reviewRequired || unresolvedEvidence) status = 'hold';
+  else if (unknownOccupancy || caution || registryGapCoverable) status = 'conditional';
   else status = 'recommended';
 
   if (status === 'recommended') {
@@ -207,6 +219,10 @@ export const evaluatePrecision = (input: PrecisionInput): PrecisionEvaluation =>
   if (unresolvedTrust) {
     reasonCodes.push('TRUST_STATUS_UNRESOLVED');
     requiredChecks.push('목록 신뢰성 상태와 원천 자료를 재검토하세요.');
+  }
+  if (registryGapCoverable) {
+    reasonCodes.push('REGISTRY_AI_OPINION_UNCONFIRMED');
+    requiredChecks.push(...(input.registryOpinion?.requiredChecks ?? []));
   }
   if (reviewRequired) {
     reasonCodes.push('RIGHTS_REVIEW_REQUIRED');
