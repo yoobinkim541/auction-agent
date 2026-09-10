@@ -20,16 +20,22 @@ const median = (xs: number[]): number | null => {
   return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
 };
 
-/** 매칭/커버리지 감사 — Phase 2a. 매일 폴링이 결과를 충분히 잡는지(missRate) = 전용캡처 필요여부 판단. */
-export function coverage(rows: EvalRow[]) {
+/** 매칭/커버리지 감사 — Phase 2a. 매일 폴링이 결과를 충분히 잡는지(missRate) = 전용캡처 필요여부 판단.
+ *  missRate는 매각 후 2일 버퍼를 제외하고 계산한다 — courtauction이 결과를 매각 1~2일 뒤 게시하므로
+ *  최근 건을 분모에 넣으면 '아직 안 올라온 것'을 '놓친 것'으로 오분류해 실제보다 높게 나온다. */
+export function coverage(rows: EvalRow[], now = new Date()) {
   const matched = rows.filter((r) => r.matched);
   const sold = matched.filter((r) => r.sold);
+  const cutoff = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const settled = rows.filter((r) => r.sale_date < cutoff);
+  const settledMatched = settled.filter((r) => r.matched).length;
   return {
     pastSnapshots: rows.length,
     matched: matched.length,
     sold: sold.length,
     unsold: matched.length - sold.length, // 유찰/변경 등
-    missRate: rows.length ? 1 - matched.length / rows.length : 0,
+    settledSnapshots: settled.length,
+    missRate: settled.length ? 1 - settledMatched / settled.length : 0,
   };
 }
 
@@ -122,7 +128,7 @@ export function formatReport(trustedRows: EvalRow[], gate: number, coverageRows:
     out.push('', '아직 매각기일이 지난 예측 스냅샷이 없습니다. 매일 축적 중 — 매각이 발생하면 채워집니다.');
     return out.join('\n');
   }
-  if (c.missRate > 0.3) out.push(`⚠️ 결과 미매칭률 ${(c.missRate * 100).toFixed(0)}% — 매각결과를 자주 놓치면 '매각결과 전용검색' 캡처 검토(plan 2a).`);
+  if (c.missRate > 0.3) out.push(`⚠️ 결과 미매칭률 ${(c.missRate * 100).toFixed(0)}%(매각 후 2일 버퍼 제외 ${c.settledSnapshots}건 기준) — 매각결과를 자주 놓치면 '매각결과 전용검색' 캡처 검토(plan 2a).`);
   const p = priceStats(trustedRows);
   if (p) {
     out.push('', `[가격] 낙찰 ${p.n}건 · 예상오차(MAPE) ${p.mapePct.toFixed(1)}% · 편향 ${p.biasPct >= 0 ? '+' : ''}${p.biasPct.toFixed(1)}%(+면 과소예측) · 낙찰가율(중앙) ${p.saleRatioMedPct.toFixed(0)}%`);

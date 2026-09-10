@@ -25,6 +25,15 @@ describe('coverage', () => {
   it('빈 입력 안전', () => {
     expect(coverage([])).toMatchObject({ pastSnapshots: 0, matched: 0, missRate: 0 });
   });
+  it('missRate는 매각 후 2일 이내 건을 분모에서 제외한다(courtauction 게시 지연)', () => {
+    const now = new Date('2026-09-10T00:00:00Z');
+    const settledMiss = row({ sale_date: '2026-09-01', matched: false });   // 확실히 놓침
+    const recentMiss = row({ sale_date: '2026-09-09', matched: false });    // 아직 안 올라온 것일 뿐
+    const c = coverage([settledMiss, recentMiss], now);
+    expect(c.pastSnapshots).toBe(2);       // 전체 카운트는 유지
+    expect(c.settledSnapshots).toBe(1);    // 버퍼 제외하면 1건
+    expect(c.missRate).toBe(1);            // 그 1건이 미매칭 → 100% (recentMiss는 분모에서 빠져 희석 안 됨)
+  });
 });
 
 describe('priceStats', () => {

@@ -187,7 +187,7 @@ async function main() {
   const ids = idsArg ? idsArg.split('=')[1]!.split(',').map((x) => parseInt(x, 10)).filter(Number.isFinite) : null;
   let listings = ids && ids.length
     ? await fetchListingsByIds(ids)
-    : await fetchListingsForAnalysis(6000, !reanalyzeAll); // 증분 스윕으로 재고 4천+ — 2000이면 --all이 절반을 놓침(활성 우선 정렬과 세트)
+    : await fetchListingsForAnalysis(7500, !reanalyzeAll); // 활성 매물풀(~6.5천)+헤드룸. --all은 미분석·오래된 순 정렬이라 이 한도가 활성풀보다 커야 굶주림이 안 남음(2026-09-10 6000→7500).
   if (limit) listings = listings.slice(0, limit); // 소규모 검증/점진 적재용
   const concurrency = Math.max(1, parseInt(process.env.ANALYZE_CONCURRENCY ?? '6', 10));
   console.log(`분석 대상 매물: ${listings.length}건 ${ids ? `[--ids ${ids.length}건]` : reanalyzeAll ? '(전체 재분석)' : '(신규만 — 전체는 --all)'}${limit ? ` [--limit ${limit}]` : ''} | 병렬 ${concurrency}`);

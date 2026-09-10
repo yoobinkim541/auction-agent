@@ -51,7 +51,10 @@
   회차밴드는 최저가/감정가 비율로 근사(신건≥95% / 1회≥72% / 2회≥55% / 3회+<55%). 소스도
   gm_trusted_outcome_eval(이상치 격리)로 교체. 계층조회는 회차밴드를 지역보다 우선 유지.
   시간분할 백테스트(`npm run backtest:sale-ratio`): 현행 expected_bid MAPE 29%·편향+26.5% →
-  신규 MAPE 16.5%·편향+3.1%. MAE 45%↓.
+  신규 MAPE 16.5%·편향+3.1%. MAE 45%↓. (편향+ = 예측 낙찰가율이 실제보다 높음 = **과대예측**.
+  `expected_bid/sold_amount` 평균 1.27 — 현행이 낙찰가를 27% 높게 잡아 true_margin을 과소평가 →
+  수익 나는 물건을 과소추천하고 있었음. 커밋 bc5ed5d 메시지의 '과소평가/마진 부풀림' 표현은 방향 오기.
+  재평가 후 recommended 4→8건으로 증가한 것이 근거.)
 - **다음**: 표본 더 늘면 GBM 회귀(offline_eval.py의 XGBoost가 이미 MAE 0.075로 그룹중앙값 0.087보다 우수 —
   단 report-only, 운영 반영은 shadow 검증 후). 면적대·관심수 피처 추가.
 
