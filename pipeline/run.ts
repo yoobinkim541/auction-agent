@@ -16,7 +16,7 @@ import { analyzeRights } from './rights/engine.ts';
 import { analyzeLocation } from './location/index.ts';
 import { scoreListing, maxSafeBid, DEFAULT_SCORE_CONFIG } from './select/score.ts';
 import { computeAcquisitionCost, expectedBid, marketFromSiteComps, classifyLandUseFlags, decideBidForCost } from './cost/acquisition.ts';
-import { loadSaleRatioTable } from './cost/sale-ratio-table.ts';
+import { loadSaleRatioTable, roundBandFromMinBid } from './cost/sale-ratio-table.ts';
 import { buildReport } from './report/build.ts';
 import { bandLine, compsStats, fetchCompsWithFallback, regionKey, recentSalesLines, type CompSale } from './predict/comps.ts';
 import { attachGlossary } from './report/glossary.ts';
@@ -203,7 +203,7 @@ async function main() {
 
   // 실증 낙찰가율 테이블(우리 낙찰결과 기반) — 실거래 낙찰사례 없는 물건의 예상낙찰가 폴백 근거.
   //   배치 시작 시 1회 로드 → 워커가 재사용(prevMarket과 동일 패턴).
-  const saleRatioTable = await loadSaleRatioTable(query as (sql: string, params?: unknown[]) => Promise<{ property_type: string; address: string; ratio: number }[]>);
+  const saleRatioTable = await loadSaleRatioTable(query as Parameters<typeof loadSaleRatioTable>[0]);
   {
     const top = saleRatioTable.summary().slice(0, 6).map((s) => `${s.key}:${s.medianPct}%(${s.n})`).join(' · ');
     console.log(`[analyze] 실증 낙찰가율 테이블 로드 — ${top}`);
@@ -304,8 +304,10 @@ async function main() {
         }
       }
 
-      // 예상낙찰가(감정가×낙찰가율) — 실거래 낙찰사례 없으면 실증 낙찰가율(종류×지역) 폴백
-      const empRatio = saleRatioTable.lookup(listing.propertyType, listing.address);
+      // 예상낙찰가(감정가×낙찰가율) — 실거래 낙찰사례 없으면 실증 낙찰가율(종류×지역×회차밴드) 폴백
+      const empRatio = saleRatioTable.lookup(
+        listing.propertyType, listing.address, roundBandFromMinBid(listing.minBidPrice, listing.appraisalValue),
+      );
       const eb = expectedBid(listing.appraisalValue, siteMetrics.sameBuildingSaleRatios, siteMetrics.nearbySaleRatios, listing.minBidPrice, empRatio);
       loc.expectedBidPrice = eb.price;
       loc.expectedBidBasis = eb.basis;
