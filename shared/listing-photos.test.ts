@@ -81,6 +81,18 @@ describe('listing photo cache download', () => {
 
     expect(urls[0]).toMatch(/^\/api\/listings\/88\/photos\/[a-f0-9]+\.webp$/);
   });
+
+  it('외부 이미지 fetch에 타임아웃 중단 신호를 전달한다', async () => {
+    let receivedSignal: AbortSignal | undefined;
+    const fetchImpl = async (_url: string | URL | Request, init?: RequestInit) => {
+      receivedSignal = init?.signal ?? undefined;
+      return new Response(TINY_JPEG, { headers: { 'content-type': 'image/jpeg' } });
+    };
+
+    await cacheListingPhotos(89, '2026타경3', '1', ['https://example.test/slow.jpg'], fetchImpl as typeof fetch);
+
+    expect(receivedSignal).toBeInstanceOf(AbortSignal);
+  });
 });
 
 describe('listing photo deletion', () => {

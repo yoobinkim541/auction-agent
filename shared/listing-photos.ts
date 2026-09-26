@@ -9,6 +9,7 @@ import {
 } from './db.ts';
 
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+const PHOTO_FETCH_TIMEOUT_MS = 15_000;
 
 export function photoCacheRoot(): string {
   return resolve(process.env.PHOTO_CACHE_DIR ?? 'artifacts/listing-photos');
@@ -78,7 +79,10 @@ async function loadPhotoPayload(sourceUrl: string, fetchImpl: typeof fetch): Pro
   const dataUrlPhoto = decodeDataUrlPhoto(sourceUrl);
   if (dataUrlPhoto) return dataUrlPhoto;
 
-  const response = await fetchImpl(sourceUrl, { redirect: 'follow' });
+  const response = await fetchImpl(sourceUrl, {
+    redirect: 'follow',
+    signal: AbortSignal.timeout(PHOTO_FETCH_TIMEOUT_MS),
+  });
   if (!response.ok) return null;
   const ext = normalizePhotoExtension(response.headers.get('content-type'), sourceUrl);
   if (!ext) return null;
