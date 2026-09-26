@@ -13,7 +13,7 @@ NOTIFY="scripts/notify-telegram.sh"   # 경매 전용 봇(GM_TELEGRAM_*) — 스
 source deploy/precision-daily-gate.sh
 echo "[$(date '+%F %T')] === parse start ==="
 
-COURT_BID_DAYS="${COURT_BID_DAYS:-180}" npm run crawl -- --source=courtauction --incremental --max=10000 --max-new=500 --all-types --region=서울,경기
+COURT_BID_DAYS="${COURT_BID_DAYS:-180}" npm run crawl -- --source=courtauction --incremental --max=10000 --max-new=500 --all-types --region=서울,경기,인천
 CRAWL_RC=$?
 if [ "$CRAWL_RC" = "0" ]; then
   echo "[$(date '+%F %T')] crawl ok"

@@ -22,7 +22,7 @@ import { upsertListing, upsertListingDoc, deleteListingDocs, startCrawlRun, fini
 import { changedDocTypes } from '../shared/doc-fingerprint.ts';
 
 const DEFAULT_FILTER: CrawlFilter = {
-  regions: ['서울', '경기'],
+  regions: ['서울', '경기', '인천'],
   propertyTypes: [] as PropertyType[],
   maxItems: 1000,
 };
