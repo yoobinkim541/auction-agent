@@ -32,3 +32,5 @@ npm run crawl -- --source=courtauction --photos-only --photo-max=50 --max=1000
 ```
 
 `--photo-max`를 낮게 유지해 법원 원천의 요청량과 차단 위험을 통제한다. 신규 상세 결과는 수집 단계에서 바로 사진 캐시로 연결되며, 목록 API에는 대표사진 한 장만 포함된다.
+
+운영 서버에는 `gyeongmae-photo-backfill.timer`를 설치해 매일 03:30 전후 50건씩 자동 보강한다. 사진이 이미 있는 사건은 `photoKeys`로 건너뛴다.
