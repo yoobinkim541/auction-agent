@@ -41,7 +41,7 @@ class ListingServiceIntegrationTest {
       for (String table : new String[] {
           "gm_listings", "gm_rights_analysis", "gm_location_analysis", "gm_scores",
           "gm_precision_evaluations", "gm_ml_price_calibration", "gm_listing_docs",
-          "gm_decision_events", "gm_listing_photos"
+          "gm_decision_events", "gm_listing_photos", "gm_fieldwork_notes"
       }) {
         statement.execute("create temporary table " + table
             + " as select * from public." + table + " with no data");
@@ -95,6 +95,15 @@ class ListingServiceIntegrationTest {
     JsonNode byId = JSON.readTree(service.detailByIdJson(ITEM_TWO_ID));
     assertEquals(ITEM_TWO_ID, byId.path("id").asLong());
     assertEquals("2", byId.path("item_no").asText());
+  }
+
+  @Test
+  void listSearchNormalizesCaseNumberSeparators() throws Exception {
+    JsonNode spaced = JSON.readTree(service.listSlimJson(false, "all", "2099 타경 9100"));
+    JsonNode dashed = JSON.readTree(service.listSlimJson(false, "all", "2099-9100"));
+
+    assertEquals(2, spaced.size());
+    assertEquals(2, dashed.size());
   }
 
   @Test

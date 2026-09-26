@@ -229,7 +229,9 @@ public class ListingService {
         + SELECT_SLIM
         + " where (:passedOnly = false or s.passed_filter = true)\n"
         + "   and (:type = 'all' or l.property_type = :type)\n"
-        + "   and (:q = '' or l.address ilike '%'||:q||'%' or l.case_no ilike '%'||:q||'%')\n"
+        + "   and (:q = '' or l.address ilike '%'||:q||'%' or l.case_no ilike '%'||:q||'%'\n"
+        + "        or (regexp_replace(lower(:q), '[^0-9]', '', 'g') <> ''\n"
+        + "            and regexp_replace(l.case_no, '[^0-9]', '', 'g') like '%'||regexp_replace(lower(:q), '[^0-9]', '', 'g')||'%'))\n"
         // 정지/경과 매물 제외: 최근 7일 내 수집된 것만(차단으로 굳은 deonakchal 등 제외) + 매각기일 경과(D+) 제외(2일 유예).
         // 목록·페이로드 정리용. 차단 해제·재수집 시 crawled_at 갱신으로 자동 복귀. 상세/다이제스트/학습 쿼리는 무관.
         + "   and l.crawled_at >= current_date - 7\n"
