@@ -33,7 +33,8 @@
     "retry:outcomes": "tsx scripts/retry-outcome-results.ts",
     "trust:backfill": "tsx scripts/backfill-data-trust.ts",
     "precision:backfill": "tsx scripts/backfill-precision.ts",
-    "precision:audit": "tsx scripts/precision-audit.ts"
+    "precision:audit": "tsx scripts/precision-audit.ts",
+    "photos:migrate-webp": "tsx scripts/migrate-listing-photos-webp.ts"
   },
   "engines": {
     "node": ">=22"
@@ -44,6 +45,7 @@
     "fetch-socks": "^1.3.3",
     "pg": "^8.21.0",
     "playwright": "^1.60.0",
+    "sharp": "^0.35.4",
     "undici": "^8.5.0",
     "zod": "^4.4.3"
   },

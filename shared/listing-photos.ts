@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import sharp from 'sharp';
 import {
   markListingPhotosDeletedByCase,
   saveListingPhotoMetadata,
@@ -60,7 +61,6 @@ function describePhotoSource(sourceUrl: string): string {
 
 type PhotoPayload = {
   bytes: Uint8Array;
-  ext: string;
 };
 
 function decodeDataUrlPhoto(sourceUrl: string): PhotoPayload | null {
@@ -70,7 +70,7 @@ function decodeDataUrlPhoto(sourceUrl: string): PhotoPayload | null {
   const ext = normalizePhotoExtension(contentType, sourceUrl);
   if (!ext) return null;
   const bytes = new Uint8Array(Buffer.from((match[2] ?? '').replace(/\s+/g, ''), 'base64'));
-  return { bytes, ext };
+  return { bytes };
 }
 
 async function loadPhotoPayload(sourceUrl: string, fetchImpl: typeof fetch): Promise<PhotoPayload | null> {
@@ -82,7 +82,14 @@ async function loadPhotoPayload(sourceUrl: string, fetchImpl: typeof fetch): Pro
   const ext = normalizePhotoExtension(response.headers.get('content-type'), sourceUrl);
   if (!ext) return null;
   const bytes = new Uint8Array(await response.arrayBuffer());
-  return { bytes, ext };
+  return { bytes };
+}
+
+export async function convertPhotoToWebp(bytes: Uint8Array): Promise<Uint8Array> {
+  const converted = await sharp(bytes, { failOn: 'error' })
+    .webp({ quality: 82, effort: 4 })
+    .toBuffer();
+  return new Uint8Array(converted);
 }
 
 export async function cacheListingPhotos(
@@ -100,14 +107,16 @@ export async function cacheListingPhotos(
     try {
       const payload = await loadPhotoPayload(sourceUrl, fetchImpl);
       if (!payload) continue;
-      const { bytes, ext } = payload;
+      const { bytes } = payload;
       if (!bytes.length || bytes.byteLength > MAX_PHOTO_BYTES) continue;
-      const contentHash = createHash('sha256').update(bytes).digest('hex');
-      const cachePath = photoCachePath(listingId, contentHash, ext);
-      const publicUrl = photoPublicUrl(listingId, contentHash, ext);
+      const webpBytes = await convertPhotoToWebp(bytes);
+      if (!webpBytes.length || webpBytes.byteLength > MAX_PHOTO_BYTES) continue;
+      const contentHash = createHash('sha256').update(webpBytes).digest('hex');
+      const cachePath = photoCachePath(listingId, contentHash, '.webp');
+      const publicUrl = photoPublicUrl(listingId, contentHash, '.webp');
       const metadataSourceUrl = sourceUrl.startsWith('data:') ? `data:${contentHash}` : sourceUrl;
       await mkdir(join(photoCacheRoot(), String(listingId)), { recursive: true });
-      await writeFile(cachePath, bytes);
+      await writeFile(cachePath, webpBytes);
       try {
         await saveListingPhotoMetadata(listingId, {
           caseNo,
