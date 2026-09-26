@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped, parseCourtDetail, isKnownForIncremental, shouldFetchDetailNow, detailDecision, extractCourtPhotoUrls } from './courtauction.ts';
+import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped, parseCourtDetail, isKnownForIncremental, shouldFetchDetailNow, detailDecision, shouldFetchPhotoDetail, extractCourtPhotoUrls } from './courtauction.ts';
 
 describe('filterCourts', () => {
   it('빈 regions → 수도권 전체(16개) 반환', () => {
@@ -258,6 +258,20 @@ describe('shouldFetchDetailNow (신규 상세 예산)', () => {
   });
   it('신규 + 예산 소진 → false(메타만, 다음 실행 이월)', () => {
     expect(shouldFetchDetailNow(false, 200, 200)).toBe(false);
+  });
+});
+
+describe('shouldFetchPhotoDetail (사진 보강 예산)', () => {
+  const filter = { photosOnly: true, photoKeys: new Set(['2024타경1|1']), maxPhotoDetails: 2 };
+
+  it('활성 사진이 없는 사건만 bounded 상세를 받는다', () => {
+    expect(shouldFetchPhotoDetail(filter, '2024타경2|1', 0)).toBe(true);
+    expect(shouldFetchPhotoDetail(filter, '2024타경2|1', 2)).toBe(false);
+  });
+
+  it('이미 사진이 있거나 일반 모드면 받지 않는다', () => {
+    expect(shouldFetchPhotoDetail(filter, '2024타경1|1', 0)).toBe(false);
+    expect(shouldFetchPhotoDetail({ photosOnly: false }, '2024타경2|1', 0)).toBe(false);
   });
 });
 

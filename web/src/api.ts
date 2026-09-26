@@ -159,6 +159,7 @@ export interface ListingItem {
   area_m2: number | null;
   source: string;
   source_url: string | null;
+  cover_photo_url?: string | null;
   court_check_url?: string | null;
   deonakchal_check_url?: string | null;
   ml_calibration?: MlCalibrationObj | null;

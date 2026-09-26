@@ -3,6 +3,7 @@ import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import sharp from 'sharp';
 import {
+  activeListingPhotoSourceUrls,
   markListingPhotosDeletedByCase,
   saveListingPhotoMetadata,
 } from './db.ts';
@@ -101,9 +102,16 @@ export async function cacheListingPhotos(
 ): Promise<string[]> {
   const publicUrls: string[] = [];
   const seen = new Set<string>();
+  let existingSources = new Set<string>();
+  try {
+    existingSources = new Set(await activeListingPhotoSourceUrls(listingId));
+  } catch {
+    // 테스트·DB 장애 시에도 파일 캐시는 계속 시도하고 메타데이터 저장에서 재시도한다.
+  }
   for (const sourceUrl of sourceUrls) {
     if (seen.has(sourceUrl)) continue;
     seen.add(sourceUrl);
+    if (!sourceUrl.startsWith('data:') && existingSources.has(sourceUrl)) continue;
     try {
       const payload = await loadPhotoPayload(sourceUrl, fetchImpl);
       if (!payload) continue;

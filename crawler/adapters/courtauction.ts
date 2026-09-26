@@ -90,6 +90,16 @@ export function isKnownForIncremental(filter: Pick<CrawlFilter, 'incremental' | 
   return filter.incremental === true && filter.knownKeys?.has(key) === true;
 }
 
+export function shouldFetchPhotoDetail(
+  filter: Pick<CrawlFilter, 'photosOnly' | 'photoKeys' | 'maxPhotoDetails'>,
+  key: string,
+  fetched: number,
+): boolean {
+  return filter.photosOnly === true
+    && filter.photoKeys?.has(key) !== true
+    && (filter.maxPhotoDetails == null || fetched < filter.maxPhotoDetails);
+}
+
 /** 이번 실행에서 이 신규 물건의 상세를 지금 받을지 — 신규 상세 예산(maxNewDetails) 내에서만.
  *  예산 소진 시 메타만 저장(권리분석 없음 → 다음 실행에서 다시 신규로 잡혀 이어짐). 미설정이면 무제한. */
 export function shouldFetchDetailNow(known: boolean, nNewDetail: number, maxNewDetails?: number): boolean {
@@ -665,6 +675,7 @@ export class CourtAuctionAdapter implements Adapter {
     let nKnownSkip = 0;    // 증분: 기존 물건 상세 건너뛰고 메타만
     let nNewDetail = 0;    // 증분: 신규라 상세까지 받은 건수
     let nRefreshDetail = 0; // 증분: 임박 기존 물건 상세 재수집(명세서 변경감지용)
+    let nPhotoDetail = 0; // 사진 보강: 활성 사진이 없는 물건 상세 재수집
     let nDeferred = 0;     // 신규지만 상세 예산(maxNewDetails) 소진 — 메타만 저장, 다음 실행에서 이어감
 
     // 임박 기존 물건 상세 재수집 창(명세서 변경감지). KST 기준 오늘 ~ 오늘+refreshDays.
@@ -743,16 +754,20 @@ export class CourtAuctionAdapter implements Adapter {
           const known = isKnownForIncremental(filter, key);
           const decision: 'new' | 'refresh' | 'skip' = !fetchDetail_
             ? 'skip'
-            : !filter.incremental
-              ? 'new'
-              : detailDecision(known, scraped.listing.saleDate ?? null, todayStr, thresholdStr,
-                  { nNew: nNewDetail, nRefresh: nRefreshDetail },
-                  { maxNew: filter.maxNewDetails, maxRefresh, refreshDays });
+            : filter.photosOnly
+              ? (shouldFetchPhotoDetail(filter, key, nPhotoDetail) ? 'refresh' : 'skip')
+              : !filter.incremental
+                ? 'new'
+                : detailDecision(known, scraped.listing.saleDate ?? null, todayStr, thresholdStr,
+                    { nNew: nNewDetail, nRefresh: nRefreshDetail },
+                    { maxNew: filter.maxNewDetails, maxRefresh, refreshDays });
           if (decision !== 'skip') {
             try {
               const detail = await fetchDetail(scraped.listing.caseNo, court.code, scraped.listing.itemNo ?? '1', srchInfo, cookies);
               applyDetail(scraped, detail); // scraped.docs 채움 → runAdapter가 이전 문서와 비교해 명세서 변경 감지
-              if (decision === 'new') {
+              if (filter.photosOnly) {
+                nPhotoDetail++;
+              } else if (decision === 'new') {
                 nNewDetail++;
                 if (filter.maxNewDetails != null && nNewDetail === filter.maxNewDetails) {
                   console.log(`[courtauction] 신규 상세 예산 ${filter.maxNewDetails}건 소진 — 이후 신규는 메타만(다음 실행에서 이어감)`);

@@ -26,6 +26,7 @@ public class ListingService {
       select l.id, l.case_no, l.item_no, l.court, l.address, l.property_type,
              l.appraisal_value, l.min_bid_price, l.fail_count, l.sale_date, l.area_m2, l.source,
              l.source_url, l.is_favorite, l.inq_cnt, l.interest_cnt,
+             listing_photos.cover_photo_url,
              coalesce(case when l.source = 'courtauction' then l.source_url end, 'https://www.courtauction.go.kr/pgj/index.on') as court_check_url,
              coalesce(
                case when l.source = 'deonakchal' then l.source_url end,
@@ -63,7 +64,9 @@ public class ListingService {
                     'delta_vs_expected_bid', case when loc.expected_bid_price is null or l.appraisal_value is null then null else round(l.appraisal_value * cal.median_sale_ratio)::bigint - loc.expected_bid_price end
                   ) end as ml_calibration,
              (to_jsonb(r)   - 'id' - 'listing_id') as rights,
-             (to_jsonb(loc) - 'id' - 'listing_id') as location,
+             case when loc.id is null and listing_photos.photos = '[]'::jsonb then null
+                  else jsonb_set(coalesce(to_jsonb(loc) - 'id' - 'listing_id', '{}'::jsonb), '{photos}', listing_photos.photos, true)
+             end as location,
              s.total_score, s.passed_filter, s.safety_margin_score, s.clean_rights_score, s.reason
       from gm_listings l
       left join gm_rights_analysis   r   on r.listing_id   = l.id
@@ -100,6 +103,12 @@ public class ListingService {
         order by d.created_at desc
         limit 1
       ) deonak_doc on true
+      left join lateral (
+        select min(p.public_url) filter (where p.status = 'active') as cover_photo_url,
+               coalesce(jsonb_agg(p.public_url order by p.captured_at, p.id) filter (where p.status = 'active'), '[]'::jsonb) as photos
+          from gm_listing_photos p
+         where p.listing_id = l.id
+      ) listing_photos on true
       """;
 
 
@@ -126,6 +135,7 @@ public class ListingService {
       select l.id, l.case_no, l.item_no, l.court, l.address, l.property_type,
              l.appraisal_value, l.min_bid_price, l.fail_count, l.sale_date, l.area_m2, l.source,
              l.source_url, l.is_favorite, l.crawled_at, l.lat, l.lng, l.inq_cnt, l.interest_cnt,
+             listing_photos.cover_photo_url,
              coalesce(case when l.source = 'courtauction' then l.source_url end, 'https://www.courtauction.go.kr/pgj/index.on') as court_check_url,
              coalesce(
                case when l.source = 'deonakchal' then l.source_url end,
@@ -221,6 +231,13 @@ public class ListingService {
         order by d.created_at desc
         limit 1
       ) deonak_doc on true
+      left join lateral (
+        select p.public_url as cover_photo_url
+          from gm_listing_photos p
+         where p.listing_id = l.id and p.status = 'active'
+         order by p.captured_at, p.id
+         limit 1
+      ) listing_photos on true
       """;
 
   /** 매물 목록(JSON 배열 문자열) — 경량(목록 뷰용) */

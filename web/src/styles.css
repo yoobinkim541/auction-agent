@@ -209,6 +209,7 @@ table.grid th {
   white-space: nowrap;
 }
 table.grid th:first-child { width: 32px; }
+table.grid th.photo-head { width: 58px; }
 table.grid th.sortable { cursor: pointer; user-select: none; }
 table.grid th.sortable:hover { color: var(--muted-2); }
 table.grid th.sorted { color: var(--text); }
@@ -226,6 +227,10 @@ table.grid td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertica
 .reco-badge { font-size: 9px !important; padding: 1px 4px !important; margin-left: 4px; vertical-align: middle; }
 .pass-avoid-badge { font-weight: 700 !important; }
 .addr { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-2); font-size: 12.5px; }
+.listing-photo { width: 52px; height: 38px; overflow: hidden; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); color: var(--muted); font-size: 16px; }
+.listing-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.row-photo-cell { padding: 4px 8px !important; }
+.row-photo-cell .listing-photo { width: 52px; height: 38px; }
 
 /* ── Numbers / Monospace ── */
 .num { text-align: right; font-family: var(--mono); font-size: 12.5px; }
@@ -1335,6 +1340,7 @@ table.mini td.num { text-align: right; font-family: var(--mono); }
   transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease;
 }
 .deal-card-ui::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--line-2); }
+.deal-card-ui .deal-photo { width: 100%; height: 116px; border-radius: 12px; }
 .deal-card-ui:hover { transform: translateY(-2px); border-color: var(--accent); box-shadow: 0 18px 34px -26px rgba(0,0,0,.8); }
 .deal-consider::before { background: var(--clean); }
 .deal-caution::before { background: var(--caution); }
@@ -1351,6 +1357,7 @@ table.mini td.num { text-align: right; font-family: var(--mono); }
 .deal-metrics b { font-family: var(--mono); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .deal-foot { min-height: 22px; justify-content: flex-start; flex-wrap: wrap; }
 .deal-score { margin-left: auto; color: var(--accent); font-family: var(--mono); font-size: 18px; line-height: 1; }
+.card-photo { width: 100%; height: 150px; border-radius: 12px; margin-bottom: 2px; }
 @media (max-width: 1280px) {
   .deal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

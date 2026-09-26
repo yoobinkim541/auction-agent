@@ -675,6 +675,7 @@ export default function App() {
               const assumed = item.rights?.assumed_amount ?? 0;
               return (
                 <button key={`deal:${item.id}`} className={`deal-card-ui deal-${reco ?? 'none'}${assumed > 0 ? ' deal-assumed' : ''}`} onClick={() => handleSelect(item)}>
+                  <ListingPhoto item={item} className="deal-photo" />
                   <span className="deal-topline">
                     <b>{TYPE_LABEL[item.property_type] ?? item.property_type}</b>
                     <DDay dateStr={item.sale_date} />
@@ -702,7 +703,7 @@ export default function App() {
         <table className="grid">
           <thead>
             <tr>
-              <th></th><th>사건번호</th><th>종류</th><th>소재지</th>
+              <th></th><th className="photo-head">사진</th><th>사건번호</th><th>종류</th><th>소재지</th>
               <ThSort col="appraisal" cur={sort} dir={sortDir} onSort={handleSort}>감정가</ThSort>
               <ThSort col="price" cur={sort} dir={sortDir} onSort={handleSort}>최저가</ThSort>
               <ThSort col="safety" cur={sort} dir={sortDir} onSort={handleSort}><span title="안전마진 / 진짜마진(취득비용 반영)">마진</span></ThSort>
@@ -947,11 +948,22 @@ interface RowBaseProps {
   groupByCase: boolean; caseSize: number;
 }
 
+function ListingPhoto({ item, className = '' }: { item: ListingItem; className?: string }) {
+  return (
+    <div className={`listing-photo ${className}`.trim()} title={item.cover_photo_url ? '대표사진' : '사진 준비 중'}>
+      {item.cover_photo_url
+        ? <img src={item.cover_photo_url} loading="lazy" decoding="async" alt={`${item.case_no} 대표사진`} />
+        : <span aria-hidden="true">📷</span>}
+    </div>
+  );
+}
+
 const ListingRow = memo(function ListingRow({ item: r, sc, onSelect, onFav, today, groupByCase, caseSize }: RowBaseProps & { today: string }) {
   const risk = RISK[r.rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
   return (
     <tr className={`row${r.location?.report?.recommendation === 'consider' ? ' row-consider' : ''}${sc.passed && r.location?.report?.recommendation === 'avoid' ? ' row-pass-avoid' : ''}`}>
       <td className="star" onClick={() => onFav(r)} title="관심">{r.is_favorite ? '★' : '☆'}</td>
+      <td className="row-photo-cell" onClick={() => onSelect(r)}><ListingPhoto item={r} /></td>
       <td className="mono" onClick={() => onSelect(r)}>
         {r.case_no}
         {r.crawled_at && r.crawled_at.slice(0, 10) >= today && <span className="new-chip" title={`신규 수집: ${r.crawled_at.slice(0, 10)}`}>NEW</span>}
@@ -1026,6 +1038,7 @@ const ListingCard = memo(function ListingCard({ item: r, sc, onSelect, onFav, gr
       style={{ animationDelay: `${Math.min(index, 12) * 28}ms` }}
       onClick={() => onSelect(r)}
     >
+      <ListingPhoto item={r} className="card-photo" />
       <div className="card-top">
         <span className="card-addr">{r.address}</span>
         <span className="card-star" onClick={(e) => { e.stopPropagation(); onFav(r); }}>{r.is_favorite ? '★' : '☆'}</span>

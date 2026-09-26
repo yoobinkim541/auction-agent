@@ -4,6 +4,7 @@
  *   npm run crawl -- --source=courtauction     # 법원경매 어댑터
  *   npm run crawl -- --max=30                  # 건수 제한
  *   npm run crawl -- --inspect                 # 셀렉터 점검용 HTML 덤프
+ *   npm run crawl -- --source=courtauction --photos-only --photo-max=50  # 사진 없는 기존 물건만 bounded 보강
  *   CRAWL_HEADLESS=false npm run crawl         # 브라우저 띄워 디버깅
  *
  * ─ 멀티프록시 폴백 ───────────────────────────────────────────────────
@@ -20,6 +21,7 @@ import { DeonakchalAdapter, SiteBlockedError, inspectAndDump } from './adapters/
 import { CourtAuctionAdapter, CourtAuctionBlockedError } from './adapters/courtauction.ts';
 import { upsertListing, upsertListingDoc, deleteListingDocs, startCrawlRun, finishCrawlRun, fetchListingDocs, recordDocChange, query } from '../shared/db.ts';
 import { changedDocTypes } from '../shared/doc-fingerprint.ts';
+import { cacheListingPhotos } from '../shared/listing-photos.ts';
 
 const DEFAULT_FILTER: CrawlFilter = {
   regions: ['서울', '경기', '인천'],
@@ -38,6 +40,18 @@ function resolveProxies(): (string | undefined)[] {
 
 async function saveScrapedListing(s: ScrapedListing): Promise<void> {
   const id = await upsertListing(s.listing);
+  const photoDoc = s.docs?.find((doc) => doc.docType === 'site_metrics');
+  const photoValues = (photoDoc?.parsedJson as { photos?: unknown } | undefined)?.photos;
+  if (Array.isArray(photoValues)) {
+    const photoSources = photoValues.filter((value): value is string => typeof value === 'string' && value.length > 0);
+    if (photoSources.length) {
+      try {
+        await cacheListingPhotos(id, s.listing.caseNo, s.listing.itemNo ?? '1', photoSources);
+      } catch (error) {
+        console.warn(`[crawl] 사진 캐시 실패 ${s.listing.caseNo}/${s.listing.itemNo ?? '1'}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
   if (s.docs?.length) {
     // 문서 내용 변경 감지(발품절감 ⑤) — 기존 문서가 있고 내용이 달라졌으면 이력 기록(★알림용).
     try {
@@ -85,10 +99,13 @@ async function main() {
 
   const maxArg = args.find((a) => a.startsWith('--max='));
   const perCourtArg = args.find((a) => a.startsWith('--per-court='));
+  const photosOnly = args.includes('--photos-only');
+  const photoMaxArg = args.find((a) => a.startsWith('--photo-max='));
   const filter: CrawlFilter = {
     ...DEFAULT_FILTER,
     maxItems: maxArg ? parseInt(maxArg.split('=')[1]!, 10) : DEFAULT_FILTER.maxItems,
     ...(perCourtArg ? { perCourt: parseInt(perCourtArg.split('=')[1]!, 10) } : {}),
+    ...(photosOnly ? { photosOnly: true, maxPhotoDetails: photoMaxArg ? parseInt(photoMaxArg.split('=')[1]!, 10) : 50 } : {}),
     // --all-types: 물건종류 필터 해제(토지·상가·단독·기타 포함) — 전 지역 "하나도 빠짐없이" 수집용
     ...(args.includes('--all-types') ? { propertyTypes: [] } : {}),
     // --all-types-courts=B000214,...: 지정 법원만 전종류(집 근처 남양주 일대=의정부만 완전 수집, 나머지는 주거용 유지)
@@ -122,6 +139,18 @@ async function main() {
       filter.refreshImminentDays = refreshDaysArg ? parseInt(refreshDaysArg.split('=')[1]!, 10) : 14;
       filter.maxRefreshDetails = maxRefreshArg ? parseInt(maxRefreshArg.split('=')[1]!, 10) : 250;
       console.log(`[courtauction] 증분 모드: 기존 문서보유 ${filter.knownKeys.size}건 → 상세 skip(임박 ${filter.refreshImminentDays}일 내는 재수집), 신규 파싱 예산 ${filter.maxNewDetails}건/회`);
+    }
+    if (photosOnly) {
+      const photos = await query<{ k: string }>(
+        `select case_no || '|' || coalesce(nullif(item_no,''),'1') as k
+           from gm_listing_photos
+          where status='active'
+          group by case_no, coalesce(nullif(item_no,''),'1')`,
+      );
+      filter.photosOnly = true;
+      filter.photoKeys = new Set(photos.map((row) => row.k));
+      filter.incremental = true;
+      console.log(`[courtauction] 사진 보강 모드: 활성 사진 보유 ${filter.photoKeys.size}건, 상세 예산 ${filter.maxPhotoDetails ?? 50}건`);
     }
     const runId = await startCrawlRun('courtauction', filter.regions.join(','));
     try {

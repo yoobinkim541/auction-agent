@@ -350,9 +350,14 @@ export class DeonakchalAdapter implements Adapter {
       const concurrency = Math.max(1, parseInt(process.env.CRAWL_CONCURRENCY ?? '1', 10));
       console.log(`[deonakchal] 목록 ${collected.length}건 수집, 상세 파싱 시작 (사람처럼 ${concurrency === 1 ? '1건씩 순차' : `동시 ${concurrency}`}, 읽기지연·중간휴식)...`);
 
+      const targets = filter.photosOnly
+        ? collected.filter((row) => !filter.photoKeys?.has(`${row.listing.caseNo}|${row.listing.itemNo ?? '1'}`)).slice(0, filter.maxPhotoDetails ?? 50)
+        : collected;
+      console.log(`[deonakchal] 상세 대상 ${targets.length}건${filter.photosOnly ? ' (사진 미보유 보강)' : ''}`);
+
       const ctx = page.context();
-      const results: ScrapedListing[] = new Array(collected.length);
-      const workerCount = Math.min(concurrency, collected.length) || 1;
+      const results: ScrapedListing[] = new Array(targets.length);
+      const workerCount = Math.min(concurrency, targets.length) || 1;
       const pages: Page[] = [page];
       for (let i = 1; i < workerCount; i++) pages.push(await ctx.newPage());
 
@@ -364,9 +369,9 @@ export class DeonakchalAdapter implements Adapter {
         for (;;) {
           if (blocked) break;
           const i = cursor++;
-          if (i >= collected.length) break;
+          if (i >= targets.length) break;
           try {
-            results[i] = await scrapeOne(wp, collected[i]!);
+            results[i] = await scrapeOne(wp, targets[i]!);
           } catch (e) {
             if (e instanceof SiteBlockedError) {
               blocked = true;
@@ -378,8 +383,8 @@ export class DeonakchalAdapter implements Adapter {
             throw e;
           }
           done++;
-          if (done % 10 === 0 || done === collected.length) console.log(`[deonakchal] 상세 ${done}/${collected.length}`);
-          if (done >= nextBreakAt && done < collected.length) {
+          if (done % 10 === 0 || done === targets.length) console.log(`[deonakchal] 상세 ${done}/${targets.length}`);
+          if (done >= nextBreakAt && done < targets.length) {
             const br = rnd(60000, 150000);
             console.log(`[deonakchal] ☕ 잠시 휴식 ${Math.round(br / 1000)}s (사람처럼)...`);
             await wait(br);

@@ -107,6 +107,32 @@ class ListingServiceIntegrationTest {
   }
 
   @Test
+  void listIncludesOnlyTheSelectedListingCoverPhoto() throws Exception {
+    String photoName = "a".repeat(64) + ".webp";
+    try (Statement statement = connection.createStatement()) {
+      statement.execute("""
+          insert into gm_listing_photos (
+            id, listing_id, case_no, item_no, source, source_url, cache_path,
+            public_url, content_hash, status, captured_at
+          ) values (
+            3, 9100001, '2099타경9100', '1', 'courtauction', 'fixture-cover', '/tmp/cover.webp',
+            '/api/listings/9100001/photos/%s', '%s', 'active', now())
+          """.formatted(photoName, "a".repeat(64)));
+    }
+
+    JsonNode rows = JSON.readTree(service.listSlimJson(false, "all", ""));
+    JsonNode itemOne = null;
+    JsonNode itemTwo = null;
+    for (JsonNode row : rows) {
+      if (row.path("id").asLong() == ITEM_ONE_ID) itemOne = row;
+      if (row.path("id").asLong() == ITEM_TWO_ID) itemTwo = row;
+    }
+
+    assertEquals("/api/listings/9100001/photos/" + photoName, itemOne.path("cover_photo_url").asText());
+    assertTrue(itemTwo.path("cover_photo_url").isMissingNode() || itemTwo.path("cover_photo_url").isNull());
+  }
+
+  @Test
   void decisionsAndPhotosRemainScopedToTheSelectedListingId(@TempDir Path tempDir) throws Exception {
     JsonNode decisions = JSON.readTree(service.decisionHistoryJson(ITEM_TWO_ID));
     assertEquals(1, decisions.size());

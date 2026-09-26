@@ -278,6 +278,14 @@ export async function activeListingPhotoUrls(listingId: number): Promise<string[
   return rows.map((r) => r.public_url);
 }
 
+export async function activeListingPhotoSourceUrls(listingId: number): Promise<string[]> {
+  const rows = await query<{ source_url: string }>(
+    `select source_url from gm_listing_photos where listing_id=$1 and status='active' order by captured_at, id`,
+    [listingId],
+  );
+  return rows.map((r) => r.source_url);
+}
+
 export async function photoCachePathForPublicFile(listingId: number, filename: string): Promise<string | null> {
   const rows = await query<{ cache_path: string }>(
     `select cache_path
