@@ -29,13 +29,15 @@ ML is report-only until it beats the current rule-based pipeline on time-split b
 1. Group median baseline: `property_type × region`.
 2. scikit-learn: `HistGradientBoostingRegressor`, `LogisticRegression`, `RandomForestClassifier`.
 3. XGBoost: optional challenger after sklearn baseline is stable; currently installed in `.venv-ml` and included by `npm run ml:eval`.
-4. PyTorch: defer until there is image/text/OCR/embedding data or much larger labels.
+4. Non-negative time-window blend: `HistGradientBoostingRegressor` + XGBoost + group median + current expected-bid baseline.
+5. PyTorch: defer until there is image/text/OCR/embedding data or much larger labels.
 
 ## Commands
 
 ```bash
 npm run ml:export
 python3 scripts/ml/offline_eval.py --input artifacts/ml/outcome_eval.csv --output docs/phase2/ml-offline-report.md
+npm run ml:shadow -- --dry-run
 ```
 
 With ML packages:
@@ -52,6 +54,7 @@ npm run ml:eval
 - Trusted sold rows with sale-ratio labels >= 150.
 - Time-split holdout beats current expected-bid MAE.
 - No automatic bid/recommendation changes before manual review.
+- `npm run ml:shadow` stores only report-only predictions in `gm_shadow_scores`; it never updates `gm_scores`, bids, filters, or recommendations.
 
 ## Reference-Only Display
 
@@ -71,3 +74,5 @@ npm run ml:eval
 - `Reference Price Performance` compares reference median price error against current expected-bid error.
 - `Rights Risk Review` groups matched outcomes by rights-risk grade.
 - XGBoost appears as a challenger only in the report; no bids, filters, or recommendations are changed automatically.
+- `ensemble_blend` learns non-negative weights on an inner time-ordered validation window and is evaluated only on the outer holdout.
+- The shadow command trains from `gm_trusted_outcome_eval`, predicts the next `ML_SHADOW_LEAD_DAYS` listings (default 30), and preserves feature hashes/components for later review.

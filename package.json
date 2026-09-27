@@ -20,6 +20,7 @@
     "backtest:sale-ratio": "tsx scripts/backtest-sale-ratio.ts",
     "ml:export": "tsx scripts/export-ml-dataset.ts",
     "ml:eval": "npm run ml:export && sh -c 'PY=python3; if [ -x .venv-ml/bin/python ]; then PY=.venv-ml/bin/python; fi; exec $PY scripts/ml/offline_eval.py --input artifacts/ml/outcome_eval.csv --output docs/phase2/ml-offline-report.md'",
+    "ml:shadow": "tsx scripts/ml-shadow-ensemble.ts",
     "analyze": "tsx pipeline/run.ts",
     "ingest:legal": "tsx pipeline/legal/ingest.ts",
     "eval": "tsx pipeline/eval/run.ts",

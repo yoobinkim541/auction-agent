@@ -38,8 +38,9 @@
 
 7. Keep ML challengers report-only. ✅
    - XGBoost is installed in `.venv-ml` and included in `npm run ml:eval`.
-   - Current XGBoost regression MAE is tracked in `docs/phase2/ml-offline-report.md`.
-   - Do not write model predictions back to DB until manual review approves a shadow-score phase.
+   - `ensemble_blend` learns weights only from an inner time-ordered validation window and is compared on the outer holdout.
+   - `npm run ml:shadow -- --dry-run` previews current shadow predictions; normal execution writes only `gm_shadow_scores`.
+   - Model predictions remain isolated from bids, filters, `gm_scores`, and recommendations until manual review approves adoption.
 
 ## Later
 
@@ -51,6 +52,7 @@
 9. Add shadow score table. ✅
    - Store `model_name`, `model_version`, `predicted_sale_ratio`, `confidence`, and `feature_snapshot_hash` in `gm_shadow_scores`.
    - Compare shadow scores against later outcomes with `gm_shadow_score_eval`, with `eligible_for_review` only after a two-week observation window.
+   - `npm run ml:shadow` trains from trusted outcomes and upserts the next 30 days of ensemble predictions with feature/component snapshots.
    - Keep shadow scores report-only; they do not update bids, filters, `gm_scores`, or recommendations.
 
 ## Keep Disabled
