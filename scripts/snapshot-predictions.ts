@@ -11,9 +11,9 @@ async function main(): Promise<void> {
   const lead = Number(process.env.SNAPSHOT_LEAD_DAYS) || 3;
   const rows = await query<{ n: number }>(
     `insert into gm_prediction_snapshots
-       (case_no,item_no,sale_date,expected_bid,market_price,min_bid_price,total_score,passed_filter,recommendation,true_margin,max_safe_bid,inq_cnt,interest_cnt,snapped_at)
+       (case_no,item_no,sale_date,appraisal_value,expected_bid,market_price,min_bid_price,total_score,passed_filter,recommendation,true_margin,max_safe_bid,inq_cnt,interest_cnt,snapped_at)
      select l.case_no, coalesce(l.item_no,'1'), l.sale_date,
-            loc.expected_bid_price::bigint, loc.market_price::bigint, l.min_bid_price::bigint,
+            l.appraisal_value::bigint, loc.expected_bid_price::bigint, loc.market_price::bigint, l.min_bid_price::bigint,
             s.total_score::int, s.passed_filter, loc.report->>'recommendation',
             (loc.acquisition_cost->>'trueSafetyMargin')::float8, r.max_safe_bid, l.inq_cnt, l.interest_cnt, now()
        from gm_listings l
@@ -22,7 +22,7 @@ async function main(): Promise<void> {
        left join gm_rights_analysis r on r.listing_id = l.id
       where l.sale_date >= current_date and l.sale_date <= current_date + $1::int
      on conflict (case_no,item_no,sale_date) do update set
-       expected_bid=excluded.expected_bid, market_price=excluded.market_price, min_bid_price=excluded.min_bid_price,
+       appraisal_value=excluded.appraisal_value, expected_bid=excluded.expected_bid, market_price=excluded.market_price, min_bid_price=excluded.min_bid_price,
        total_score=excluded.total_score, passed_filter=excluded.passed_filter, recommendation=excluded.recommendation,
        true_margin=excluded.true_margin, max_safe_bid=excluded.max_safe_bid, inq_cnt=excluded.inq_cnt, interest_cnt=excluded.interest_cnt, snapped_at=now()
      returning 1 as n`,

@@ -41,6 +41,8 @@
    - `ensemble_blend` learns weights only from an inner time-ordered validation window and is compared on the outer holdout.
    - `npm run ml:shadow -- --dry-run` previews current shadow predictions; normal execution writes only `gm_shadow_scores`.
    - Model predictions remain isolated from bids, filters, `gm_scores`, and recommendations until manual review approves adoption.
+   - Outcome labels are snapshot-value checked; matched unsold rows are available for sale-outcome classification.
+   - Rolling case/item-purged validation and a conservative downside buffer are included in the report-only lane.
 
 ## Later
 

@@ -17,7 +17,7 @@ try:
         NUMERIC_FEATURES,
         SKLEARN_AVAILABLE,
         ensemble_components,
-        fit_ensemble_weights,
+        fit_ensemble_validation,
         load_dataset,
         time_split,
     )
@@ -28,7 +28,7 @@ except ImportError:
         NUMERIC_FEATURES,
         SKLEARN_AVAILABLE,
         ensemble_components,
-        fit_ensemble_weights,
+        fit_ensemble_validation,
         load_dataset,
         time_split,
     )
@@ -61,7 +61,7 @@ def train_and_predict(
     train_frame: pd.DataFrame,
     predict_frame: pd.DataFrame,
     random_state: int,
-) -> tuple[pd.DataFrame, dict[str, float]]:
+) -> tuple[pd.DataFrame, dict[str, float], float]:
     if not SKLEARN_AVAILABLE:
         raise RuntimeError("scikit-learn이 설치되어 있지 않습니다")
     labelled = train_frame[train_frame["sold"] & train_frame["sale_ratio"].notna()].copy()
@@ -71,10 +71,11 @@ def train_and_predict(
     inner_train, inner_validation = time_split(labelled, test_ratio=0.25)
     if len(inner_train) < 30 or len(inner_validation) < 10:
         raise RuntimeError("앙상블 가중치를 학습할 내부 시간순 검증창이 부족합니다")
-    weights = fit_ensemble_weights(inner_train, inner_validation, random_state)
+    weights, downside_buffer = fit_ensemble_validation(inner_train, inner_validation, random_state)
     components = ensemble_components(labelled, predict_frame, random_state)
     selected_components = {name: components[name] for name in weights if name in components}
     prediction = np.clip(blend_predictions(selected_components, weights), 0.001, 2.5)
+    conservative_prediction = np.clip(prediction - downside_buffer, 0.001, 2.5)
     confidence = ensemble_confidence(selected_components, weights)
 
     output_rows: list[dict[str, object]] = []
@@ -85,6 +86,7 @@ def train_and_predict(
             "item_no": str(row.get("item_no", "1")),
             "sale_date": row["sale_date"].strftime("%Y-%m-%d") if isinstance(row.get("sale_date"), pd.Timestamp) else str(row.get("sale_date", "")),
             "predicted_sale_ratio": float(prediction[row_index]),
+            "conservative_sale_ratio": float(conservative_prediction[row_index]),
             "confidence": float(confidence[row_index]),
             "feature_snapshot_hash": snapshot_hash(snapshot),
             "features_json": json.dumps({
@@ -93,9 +95,10 @@ def train_and_predict(
                     name: json_value(values[row_index]) for name, values in selected_components.items()
                 },
                 "blend_weights": weights,
+                "downside_buffer": downside_buffer,
             }, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False),
         })
-    return pd.DataFrame(output_rows), weights
+    return pd.DataFrame(output_rows), weights, downside_buffer
 
 
 def main() -> None:
@@ -111,17 +114,18 @@ def main() -> None:
     if predict_frame.empty:
         pd.DataFrame(columns=[
             "case_no", "item_no", "sale_date", "predicted_sale_ratio", "confidence",
-            "feature_snapshot_hash", "features_json",
+            "conservative_sale_ratio", "feature_snapshot_hash", "features_json",
         ]).to_csv(args.output, index=False)
         print("[ml:shadow] 예측 대상이 없습니다")
         return
 
-    predictions, weights = train_and_predict(train_frame, predict_frame, args.random_state)
+    predictions, weights, downside_buffer = train_and_predict(train_frame, predict_frame, args.random_state)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     predictions.to_csv(args.output, index=False)
     weight_text = ", ".join(f"{name}={value:.3f}" for name, value in weights.items())
     print(f"[ml:shadow] {len(predictions)} rows -> {args.output}")
     print(f"[ml:shadow] weights: {weight_text}")
+    print(f"[ml:shadow] downside buffer: {downside_buffer:.4f}")
 
 
 if __name__ == "__main__":

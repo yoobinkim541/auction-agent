@@ -14,6 +14,7 @@ export interface TrustBackfillOptions {
   limit: number;
   outcomesOnly: boolean;
   sinceDays: number | null;
+  force: boolean;
 }
 
 export interface ListingTrustBackfillRow {
@@ -43,7 +44,9 @@ export interface OutcomeTrustBackfillRow {
   sale_date: string | Date | null;
   appraisal_value: string | number | null;
   sold_amount: string | number | null;
+  sold: boolean | null;
   duplicate_result_count: string | number;
+  result_known: boolean;
   sale_date_matches: boolean;
   case_date_item_count: string | number;
 }
@@ -99,6 +102,7 @@ export function readTrustBackfillOptions(
     limit: Number.isInteger(parsedLimit) && parsedLimit >= 0 ? parsedLimit : DEFAULT_LIMIT,
     outcomesOnly: args.includes('--outcomes-only'),
     sinceDays,
+    force: args.includes('--force'),
   };
 }
 
@@ -141,7 +145,9 @@ export function mapOutcomeTrustInput(
     saleDate: saleDate(row.sale_date),
     appraisalValue,
     soldAmount,
+    sold: row.sold === true,
     duplicateResultCount: Number(row.duplicate_result_count),
+    resultKnown: row.result_known,
     saleDateMatches: row.sale_date_matches,
     batchSaleSuspected: Number(row.case_date_item_count) > 1
       && appraisalValue !== null
@@ -168,7 +174,8 @@ export const LISTING_TRUST_SQL = `
        where d.listing_id = l.id
     ) docs on true
    where $2::int is null
-      or (greatest(l.crawled_at, r.analyzed_at, loc.analyzed_at, docs.updated_at)
+     or ($3::boolean)
+     or (greatest(l.crawled_at, r.analyzed_at, loc.analyzed_at, docs.updated_at)
             >= now() - make_interval(days => $2::int)
           and (current_trust.evaluated_at is null
             or current_trust.evaluated_at < greatest(
@@ -179,6 +186,7 @@ export const LISTING_TRUST_SQL = `
 
 export const OUTCOME_TRUST_SQL = `
   select e.case_no, e.item_no, e.sale_date, e.appraisal_value, e.sold_amount,
+         e.sold, e.matched as result_known,
          (select count(*) from gm_auction_results duplicate_result
            where duplicate_result.case_no = e.case_no
              and coalesce(nullif(duplicate_result.item_no, ''), '1') = coalesce(nullif(e.item_no, ''), '1')
@@ -204,7 +212,8 @@ export const OUTCOME_TRUST_SQL = `
     and current_trust.sale_date = e.sale_date
    where e.sale_date is not null
      and ($2::int is null
-       or (greatest(s.snapped_at, observed_result.captured_at) >= now() - make_interval(days => $2::int)
+     or ($3::boolean)
+     or (greatest(s.snapped_at, observed_result.captured_at) >= now() - make_interval(days => $2::int)
          and (current_trust.evaluated_at is null
            or current_trust.evaluated_at < greatest(s.snapped_at, observed_result.captured_at))))
    order by greatest(s.snapped_at, observed_result.captured_at) desc, e.sale_date desc, e.case_no, e.item_no
@@ -221,7 +230,7 @@ const inputHash = (input: ListingTrustInput): string => (
 );
 
 async function backfillListings(options: TrustBackfillOptions, statuses: Map<string, number>, reasons: Map<string, number>): Promise<number> {
-  const rows = await query<ListingTrustBackfillRow>(LISTING_TRUST_SQL, [options.limit, options.sinceDays]);
+  const rows = await query<ListingTrustBackfillRow>(LISTING_TRUST_SQL, [options.limit, options.sinceDays, options.force]);
   for (const row of rows) {
     const input = mapListingTrustInput(row);
     const result = evaluateListingTrust(input);
@@ -233,11 +242,11 @@ async function backfillListings(options: TrustBackfillOptions, statuses: Map<str
 }
 
 async function backfillOutcomes(options: TrustBackfillOptions, statuses: Map<string, number>, reasons: Map<string, number>): Promise<number> {
-  const rows = await query<OutcomeTrustBackfillRow>(OUTCOME_TRUST_SQL, [options.limit, options.sinceDays]);
+  const rows = await query<OutcomeTrustBackfillRow>(OUTCOME_TRUST_SQL, [options.limit, options.sinceDays, options.force]);
   for (const row of rows.filter(isOutcomeTrustCandidate)) {
     const input = mapOutcomeTrustInput(row);
     const result = evaluateOutcomeTrust(input);
-    await saveOutcomeTrust(input.caseNo!, input.itemNo!, input.saleDate!, result);
+    await saveOutcomeTrust(input.caseNo!, input.itemNo!, input.saleDate!, input, result);
     record(statuses, result.status);
     result.reasonCodes.forEach((reason) => record(reasons, reason));
   }

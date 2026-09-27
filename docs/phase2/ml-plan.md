@@ -8,6 +8,8 @@ ML is report-only until it beats the current rule-based pipeline on time-split b
 
 - `gm_outcome_eval` is retained only for raw snapshot coverage, matched counts, and miss-rate reporting.
 - `gm_trusted_outcome_eval` is the sole source for price/profit/error metrics, calibration groups, rights replay, surprise cases, and ML CSV labels.
+- Outcome trust stores the checked `sold`, `appraisal_value`, and `sold_amount`; a later source-value change automatically removes that row from trusted metrics.
+- Known matched unsold results are trusted with `sale_ratio = null`, so sale-outcome classification is no longer trained on sold-only data.
 - Review summaries report raw, trusted, held, and quarantined row counts so data-quality exclusions remain visible.
 
 ## First Targets
@@ -30,7 +32,8 @@ ML is report-only until it beats the current rule-based pipeline on time-split b
 2. scikit-learn: `HistGradientBoostingRegressor`, `LogisticRegression`, `RandomForestClassifier`.
 3. XGBoost: optional challenger after sklearn baseline is stable; currently installed in `.venv-ml` and included by `npm run ml:eval`.
 4. Non-negative time-window blend: `HistGradientBoostingRegressor` + XGBoost + group median + current expected-bid baseline.
-5. PyTorch: defer until there is image/text/OCR/embedding data or much larger labels.
+5. Robust absolute-error regressor and validation-derived downside buffer for precision-first review.
+6. PyTorch: defer until there is image/text/OCR/embedding data or much larger labels.
 
 ## Commands
 
@@ -53,6 +56,7 @@ npm run ml:eval
 - Raw `gm_outcome_eval` miss rate < 30%.
 - Trusted sold rows with sale-ratio labels >= 150.
 - Time-split holdout beats current expected-bid MAE.
+- Three rolling, case/item-purged forward windows should show the same direction before adoption.
 - No automatic bid/recommendation changes before manual review.
 - `npm run ml:shadow` stores only report-only predictions in `gm_shadow_scores`; it never updates `gm_scores`, bids, filters, or recommendations.
 
@@ -75,4 +79,5 @@ npm run ml:eval
 - `Rights Risk Review` groups matched outcomes by rights-risk grade.
 - XGBoost appears as a challenger only in the report; no bids, filters, or recommendations are changed automatically.
 - `ensemble_blend` learns non-negative weights on an inner time-ordered validation window and is evaluated only on the outer holdout.
+- `ensemble_conservative` subtracts a validation-derived downside buffer; its value is stored in shadow only and is not an operating bid.
 - The shadow command trains from `gm_trusted_outcome_eval`, predicts the next `ML_SHADOW_LEAD_DAYS` listings (default 30), and preserves feature hashes/components for later review.

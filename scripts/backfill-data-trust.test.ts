@@ -16,7 +16,7 @@ describe('readTrustBackfillOptions', () => {
       { TRUST_BACKFILL_LIMIT: '34' },
     );
 
-    expect(options).toEqual({ limit: 12, outcomesOnly: true, sinceDays: null });
+    expect(options).toEqual({ limit: 12, outcomesOnly: true, sinceDays: null, force: false });
   });
 
   it('accepts a validated --since-days bound', () => {
@@ -24,6 +24,7 @@ describe('readTrustBackfillOptions', () => {
       limit: 5000,
       outcomesOnly: false,
       sinceDays: 2,
+      force: false,
     });
   });
 
@@ -40,6 +41,7 @@ describe('trust backfill bounded selection', () => {
     expect(LISTING_TRUST_SQL).toContain('loc.analyzed_at');
     expect(LISTING_TRUST_SQL).toContain('docs.updated_at');
     expect(LISTING_TRUST_SQL).toContain("make_interval(days => $2::int)");
+    expect(LISTING_TRUST_SQL).toContain('$3::boolean');
     expect(LISTING_TRUST_SQL).toContain('r.analyzed_at as rights_analyzed_at');
     expect(LISTING_TRUST_SQL).toContain('loc.analyzed_at as location_analyzed_at');
     expect(LISTING_TRUST_SQL).not.toContain('greatest(r.analyzed_at, loc.analyzed_at) as analysis_at');
@@ -49,7 +51,7 @@ describe('trust backfill bounded selection', () => {
     expect(LISTING_TRUST_SQL).toContain('left join gm_data_trust current_trust');
     expect(LISTING_TRUST_SQL).toContain('current_trust.evaluated_at is null');
     expect(LISTING_TRUST_SQL).toContain('current_trust.evaluated_at < greatest(');
-    expect(LISTING_TRUST_SQL).toContain('$2::int is null\n      or (');
+    expect(LISTING_TRUST_SQL).toContain('$2::int is null');
   });
 
   it('bounds outcomes by their snapshot or result observation timestamp before limit', () => {
@@ -57,13 +59,14 @@ describe('trust backfill bounded selection', () => {
     expect(OUTCOME_TRUST_SQL).toContain('max(observed.captured_at)');
     expect(OUTCOME_TRUST_SQL).toContain('observed_result.captured_at');
     expect(OUTCOME_TRUST_SQL).toContain("make_interval(days => $2::int)");
+    expect(OUTCOME_TRUST_SQL).toContain('$3::boolean');
   });
 
   it('selects only missing or source-stale outcome trust rows in since-days mode', () => {
     expect(OUTCOME_TRUST_SQL).toContain('left join gm_outcome_trust current_trust');
     expect(OUTCOME_TRUST_SQL).toContain('current_trust.evaluated_at is null');
     expect(OUTCOME_TRUST_SQL).toContain('current_trust.evaluated_at < greatest(');
-    expect(OUTCOME_TRUST_SQL).toContain('$2::int is null\n       or (');
+    expect(OUTCOME_TRUST_SQL).toContain('$2::int is null');
   });
 });
 
@@ -78,7 +81,7 @@ describe('trust backfill mappings', () => {
     const candidates = [{
       case_no: '2026타경0', item_no: '1', sale_date: null,
       appraisal_value: '100000000', sold_amount: null,
-      duplicate_result_count: 0, sale_date_matches: false, case_date_item_count: 0,
+      sold: false, duplicate_result_count: 0, result_known: false, sale_date_matches: false, case_date_item_count: 0,
     }].filter(isOutcomeTrustCandidate);
 
     expect(candidates).toEqual([]);
@@ -120,13 +123,13 @@ describe('trust backfill mappings', () => {
     const input = mapOutcomeTrustInput({
       case_no: '2026타경2', item_no: '4', sale_date: '2026-08-21',
       appraisal_value: '100000000', sold_amount: '160000000',
-      duplicate_result_count: 1, sale_date_matches: true, case_date_item_count: 2,
+      sold: true, duplicate_result_count: 1, result_known: true, sale_date_matches: true, case_date_item_count: 2,
     });
 
     expect(input).toEqual({
       caseNo: '2026타경2', itemNo: '4', saleDate: '2026-08-21',
-      appraisalValue: 100000000, soldAmount: 160000000, duplicateResultCount: 1,
-      saleDateMatches: true, batchSaleSuspected: true,
+      appraisalValue: 100000000, soldAmount: 160000000, sold: true, duplicateResultCount: 1,
+      resultKnown: true, saleDateMatches: true, batchSaleSuspected: true,
     });
   });
 });

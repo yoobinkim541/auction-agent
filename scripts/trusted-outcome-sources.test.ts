@@ -26,6 +26,7 @@ describe('trusted outcome metric sources', () => {
     const operationalMigration = source('../db/migrate_phase2_operational_views.sql');
     const remainingOpsMigration = source('../db/migrate_phase2_remaining_ops.sql');
     const trustMigration = source('../db/migrate_precision_data_trust.sql');
+    const qualityMigration = source('../db/migrate_phase3_ml_quality.sql');
     const schema = source('../db/schema.sql');
 
     expect(viewDefinition(operationalMigration, 'gm_ml_price_calibration')).toContain('from gm_trusted_outcome_eval');
@@ -35,6 +36,9 @@ describe('trusted outcome metric sources', () => {
     expect(viewDefinition(schema, 'gm_ml_price_calibration')).toContain('from gm_trusted_outcome_eval');
     expect(viewDefinition(schema, 'gm_rights_risk_eval')).toContain('from gm_trusted_outcome_eval');
     expect(viewDefinition(schema, 'gm_shadow_score_eval')).toContain('gm_trusted_outcome_eval');
+    expect(qualityMigration).toContain('add column if not exists appraisal_value bigint');
+    expect(qualityMigration).toContain('t.appraisal_value is not distinct from e.appraisal_value');
+    expect(qualityMigration).toContain('t.sold is not distinct from e.sold');
   });
 
   it('conditionally upgrades existing shadow-error views to trusted outcomes', () => {

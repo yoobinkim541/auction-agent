@@ -361,6 +361,9 @@ order by
 create table if not exists gm_outcome_trust (
   case_no text not null, item_no text not null, sale_date date not null,
   status text not null check (status in ('trusted','hold','quarantined')),
+  sold boolean not null default false,
+  appraisal_value bigint,
+  sold_amount bigint,
   sale_ratio numeric, reason_codes jsonb not null default '[]'::jsonb,
   checks jsonb not null default '{}'::jsonb, evaluator_version text not null,
   evaluated_at timestamptz not null default now(),
@@ -408,6 +411,7 @@ create table if not exists gm_prediction_snapshots (
   case_no        text not null,
   item_no        text not null default '1',
   sale_date      date,                             -- 이 예측이 겨눈 매각기일
+  appraisal_value bigint,                           -- 스냅샷 당시 감정가(사후 listing 변경 격리)
   expected_bid   bigint,                           -- 예상낙찰가(loc.expected_bid_price)
   market_price   bigint,                           -- 추정시세
   min_bid_price  bigint,                           -- 스냅샷 시점 최저가
@@ -431,14 +435,14 @@ create or replace view gm_outcome_eval as
       from gm_listings order by case_no, coalesce(item_no,'1'), crawled_at desc nulls last
   )
   select s.case_no, s.item_no, s.sale_date,
-         l.property_type, l.court, l.address, l.appraisal_value,
+         l.property_type, l.court, l.address, coalesce(s.appraisal_value, l.appraisal_value) as appraisal_value,
          s.expected_bid, s.market_price, s.min_bid_price, s.total_score, s.passed_filter,
          s.recommendation, s.true_margin, s.max_safe_bid, s.inq_cnt, s.interest_cnt,
          r.sold, r.sold_amount, r.result_cd, r.min_price as result_min_price,
          (r.dxdy_date is not null) as matched,
          case when r.sold then r.sold_amount - s.expected_bid end as residual,
          case when r.sold and s.expected_bid > 0 then (r.sold_amount - s.expected_bid)::float8 / s.expected_bid end as residual_pct,
-         case when r.sold and l.appraisal_value > 0 then r.sold_amount::float8 / l.appraisal_value end as sale_ratio,
+         case when r.sold and coalesce(s.appraisal_value, l.appraisal_value) > 0 then r.sold_amount::float8 / coalesce(s.appraisal_value, l.appraisal_value) end as sale_ratio,
          case when r.sold and s.max_safe_bid is not null then r.sold_amount <= s.max_safe_bid end as would_have_won_under_max_safe_bid,
          case when r.sold and s.market_price > 0 then (s.market_price - r.sold_amount)::float8 / s.market_price end as realized_bid_margin
     from gm_prediction_snapshots s
@@ -449,10 +453,13 @@ create or replace view gm_trusted_outcome_eval as
   select e.*
     from gm_outcome_eval e
     join gm_outcome_trust t
-      on t.case_no = e.case_no
+     on t.case_no = e.case_no
      and t.item_no = coalesce(nullif(e.item_no, ''), '1')
      and t.sale_date = e.sale_date
-   where t.status = 'trusted';
+   where t.status = 'trusted'
+     and t.sold is not distinct from e.sold
+     and t.appraisal_value is not distinct from e.appraisal_value
+     and t.sold_amount is not distinct from e.sold_amount;
 
 
 -- Phase2 operational review/cache views.
@@ -531,12 +538,14 @@ create table if not exists gm_shadow_scores (
   model_name text not null,
   model_version text not null,
   predicted_sale_ratio double precision not null,
+  conservative_sale_ratio double precision,
   confidence double precision,
   feature_snapshot_hash text not null,
   features jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   unique (case_no, item_no, sale_date, model_name, model_version),
   check (predicted_sale_ratio > 0),
+  check (conservative_sale_ratio is null or conservative_sale_ratio > 0),
   check (confidence is null or (confidence >= 0 and confidence <= 1))
 );
 
@@ -574,7 +583,8 @@ create or replace view gm_shadow_score_eval as
          e.sold_amount, e.sale_ratio, e.realized_bid_margin,
          case when e.sale_ratio is not null then s.predicted_sale_ratio - e.sale_ratio end as sale_ratio_error,
          case when e.sale_ratio is not null then abs(s.predicted_sale_ratio - e.sale_ratio) end as abs_sale_ratio_error,
-         (e.sale_date <= current_date - 14) as eligible_for_review
+         (e.sale_date <= current_date - 14) as eligible_for_review,
+         s.conservative_sale_ratio
     from gm_shadow_scores s
     left join gm_trusted_outcome_eval e
       on e.case_no = s.case_no

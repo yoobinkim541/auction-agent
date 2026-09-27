@@ -35,6 +35,23 @@ describe('evaluateOutcomeTrust', () => {
     expect(result.reasonCodes).toEqual(expect.arrayContaining(['MISSING_APPRAISAL', 'MISSING_SOLD_AMOUNT']));
   });
 
+  it('trusts a known unsold result without a sold amount', () => {
+    const result = evaluateOutcomeTrust({ appraisalValue: 300_000_000, soldAmount: null, sold: false,
+      duplicateResultCount: 1, saleDateMatches: true, batchSaleSuspected: false });
+
+    expect(result.status).toBe('trusted');
+    expect(result.ratio).toBeNull();
+    expect(result.reasonCodes).not.toContain('MISSING_SOLD_AMOUNT');
+  });
+
+  it('holds a snapshot with no matched auction result', () => {
+    const result = evaluateOutcomeTrust({ appraisalValue: 300_000_000, soldAmount: null, sold: false,
+      duplicateResultCount: 0, resultKnown: false, saleDateMatches: false, batchSaleSuspected: false });
+
+    expect(result.status).toBe('hold');
+    expect(result.reasonCodes).toContain('MISSING_RESULT');
+  });
+
   it('quarantines duplicate, mismatched, and aggregate signals', () => {
     const result = evaluateOutcomeTrust({ appraisalValue: 100, soldAmount: 50,
       duplicateResultCount: 2, saleDateMatches: false, batchSaleSuspected: true });

@@ -8,7 +8,7 @@ import type {
 } from './types.ts';
 import type { CrawlRunRow } from './crawl-health.ts';
 import type { ListingTrustResult } from './data-trust.ts';
-import type { OutcomeTrustResult } from './outcome-trust.ts';
+import type { OutcomeTrustInput, OutcomeTrustResult } from './outcome-trust.ts';
 import type { PrecisionEvaluation } from '../pipeline/precision/evaluate.ts';
 
 let _pool: pg.Pool | null = null;
@@ -113,16 +113,18 @@ export async function fetchRegistryOpinion(listingId: number): Promise<RegistryO
 }
 
 export async function saveOutcomeTrust(
-  caseNo: string, itemNo: string, saleDate: string, result: OutcomeTrustResult,
+  caseNo: string, itemNo: string, saleDate: string, input: OutcomeTrustInput, result: OutcomeTrustResult,
 ): Promise<void> {
   await query(
     `insert into gm_outcome_trust
-       (case_no,item_no,sale_date,status,sale_ratio,reason_codes,checks,evaluator_version,evaluated_at)
-     values ($1,$2,$3::date,$4,$5,$6::jsonb,$7::jsonb,$8,now())
+       (case_no,item_no,sale_date,status,sold,appraisal_value,sold_amount,sale_ratio,reason_codes,checks,evaluator_version,evaluated_at)
+     values ($1,$2,$3::date,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,now())
      on conflict (case_no,item_no,sale_date) do update set
-       status=excluded.status, sale_ratio=excluded.sale_ratio, reason_codes=excluded.reason_codes,
+       status=excluded.status, sold=excluded.sold, appraisal_value=excluded.appraisal_value,
+       sold_amount=excluded.sold_amount, sale_ratio=excluded.sale_ratio, reason_codes=excluded.reason_codes,
        checks=excluded.checks, evaluator_version=excluded.evaluator_version, evaluated_at=now()`,
-    [caseNo, itemNo, saleDate, result.status, result.ratio, j(result.reasonCodes), j(result.checks), result.evaluatorVersion],
+    [caseNo, itemNo, saleDate, result.status, input.sold ?? true, input.appraisalValue, input.soldAmount,
+      result.ratio, j(result.reasonCodes), j(result.checks), result.evaluatorVersion],
   );
 }
 

@@ -14,7 +14,7 @@ const defaultLeadDays = Number(process.env.ML_SHADOW_LEAD_DAYS) || 30;
 const leadDays = Number(process.argv.find((arg) => arg.startsWith('--lead-days='))?.slice('--lead-days='.length)) || defaultLeadDays;
 const modelVersion = process.argv.find((arg) => arg.startsWith('--model-version='))?.slice('--model-version='.length)
   ?? process.env.ML_SHADOW_MODEL_VERSION
-  ?? 'ensemble-v1';
+  ?? 'ensemble-v2';
 const dryRun = process.argv.includes('--dry-run');
 
 const csvCell = (value: Cell): string => {
@@ -89,11 +89,13 @@ async function main(): Promise<void> {
   const trainingRows = await query<DbRow>(
     `with latest_listing as (
        select distinct on (case_no, coalesce(nullif(item_no, ''), '1'))
-              id as listing_id, case_no, coalesce(nullif(item_no, ''), '1') as item_no
+              id as listing_id, case_no, coalesce(nullif(item_no, ''), '1') as item_no,
+              fail_count, area_m2, building_area_m2, is_collective_building
          from gm_listings
         order by case_no, coalesce(nullif(item_no, ''), '1'), crawled_at desc nulls last, id desc
      ), trusted as (
-       select e.*, rr.risk_grade, rr.assumed_amount,
+       select e.*, l.fail_count, l.area_m2, l.building_area_m2, l.is_collective_building,
+              loc.market_confidence, rr.risk_grade, rr.assumed_amount,
               exists (
                 select 1
                   from jsonb_array_elements(coalesce(rr.tenants, '[]'::jsonb)) tenant
@@ -104,12 +106,15 @@ async function main(): Promise<void> {
            on l.case_no = e.case_no
           and l.item_no = coalesce(nullif(e.item_no, ''), '1')
          left join gm_rights_analysis rr on rr.listing_id = l.listing_id
+         left join gm_location_analysis loc on loc.listing_id = l.listing_id
         where e.sale_date < current_date
      )
      select case_no, item_no, sale_date::text, property_type, court, address,
             appraisal_value::float8, expected_bid::float8, market_price::float8, min_bid_price::float8,
             total_score::float8, passed_filter, recommendation, true_margin::float8, max_safe_bid::float8,
             inq_cnt::float8, interest_cnt::float8,
+            fail_count::float8, area_m2::float8, building_area_m2::float8,
+            is_collective_building, market_confidence,
             sold, sold_amount::float8, result_cd, matched, residual::float8, residual_pct, sale_ratio,
             would_have_won_under_max_safe_bid, realized_bid_margin,
             risk_grade, assumed_amount::float8, has_opposition_tenant
@@ -131,6 +136,8 @@ async function main(): Promise<void> {
             loc.report->>'recommendation' as recommendation,
             (loc.acquisition_cost->>'trueSafetyMargin')::float8 as true_margin,
             r.max_safe_bid::float8, l.inq_cnt::float8, l.interest_cnt::float8,
+            l.fail_count::float8, l.area_m2::float8, l.building_area_m2::float8,
+            l.is_collective_building, loc.market_confidence,
             r.risk_grade, r.assumed_amount::float8,
             exists (
               select 1
@@ -179,6 +186,7 @@ async function main(): Promise<void> {
       item_no: prediction.item_no || '1',
       sale_date: prediction.sale_date,
       predicted_sale_ratio: Number(prediction.predicted_sale_ratio),
+      conservative_sale_ratio: Number(prediction.conservative_sale_ratio),
       confidence: Number(prediction.confidence),
       feature_snapshot_hash: prediction.feature_snapshot_hash,
       features: JSON.parse(prediction.features_json || '{}') as Record<string, unknown>,
@@ -186,20 +194,22 @@ async function main(): Promise<void> {
     await query(
       `insert into gm_shadow_scores
          (case_no, item_no, sale_date, model_name, model_version,
-          predicted_sale_ratio, confidence, feature_snapshot_hash, features)
+          predicted_sale_ratio, conservative_sale_ratio, confidence, feature_snapshot_hash, features)
        select p.case_no, p.item_no, p.sale_date::date, $2, $3,
-              p.predicted_sale_ratio, p.confidence, p.feature_snapshot_hash, p.features
+              p.predicted_sale_ratio, p.conservative_sale_ratio, p.confidence, p.feature_snapshot_hash, p.features
          from jsonb_to_recordset($1::jsonb) as p(
            case_no text,
            item_no text,
            sale_date text,
            predicted_sale_ratio double precision,
+           conservative_sale_ratio double precision,
            confidence double precision,
            feature_snapshot_hash text,
            features jsonb
          )
        on conflict (case_no, item_no, sale_date, model_name, model_version) do update set
          predicted_sale_ratio=excluded.predicted_sale_ratio,
+         conservative_sale_ratio=excluded.conservative_sale_ratio,
          confidence=excluded.confidence,
          feature_snapshot_hash=excluded.feature_snapshot_hash,
          features=excluded.features,

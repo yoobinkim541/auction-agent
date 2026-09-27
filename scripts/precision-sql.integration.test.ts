@@ -45,7 +45,7 @@ async function createTemporaryRelations(client: Client): Promise<void> {
     create temp table gm_precision_shortlist (listing_id bigint, case_no text) on commit drop;
     create temp table gm_outcome_eval (
       case_no text, item_no text, sale_date date, appraisal_value bigint,
-      sold_amount bigint, matched boolean
+      sold_amount bigint, sold boolean, matched boolean
     ) on commit drop;
     create temp table gm_prediction_snapshots (
       case_no text, item_no text, sale_date date, snapped_at timestamptz
@@ -280,13 +280,13 @@ describeDatabase('precision production SQL against temporary PostgreSQL fixtures
           (3, 'trusted', '[]', now());
       `);
 
-      const bounded = await client.query<{ id: string | number; documents: unknown[] }>(LISTING_TRUST_SQL, [10, 2]);
+      const bounded = await client.query<{ id: string | number; documents: unknown[] }>(LISTING_TRUST_SQL, [10, 2, false]);
       expect(ids(bounded.rows)).toEqual([1, 2]);
       expect(bounded.rows[0]!.documents).toHaveLength(2);
-      expect((await client.query(LISTING_TRUST_SQL, [1, 2])).rows).toHaveLength(1);
+      expect((await client.query(LISTING_TRUST_SQL, [1, 2, false])).rows).toHaveLength(1);
       await client.query("insert into gm_data_trust values (1, 'trusted', '[]', now())");
-      expect(ids((await client.query<{ id: string | number }>(LISTING_TRUST_SQL, [1, 2])).rows)).toEqual([2]);
-      expect(new Set(ids((await client.query<{ id: string | number }>(LISTING_TRUST_SQL, [10, null])).rows)))
+      expect(ids((await client.query<{ id: string | number }>(LISTING_TRUST_SQL, [1, 2, false])).rows)).toEqual([2]);
+      expect(new Set(ids((await client.query<{ id: string | number }>(LISTING_TRUST_SQL, [10, null, false])).rows)))
         .toEqual(new Set([1, 2, 3]));
     });
   });
@@ -295,9 +295,9 @@ describeDatabase('precision production SQL against temporary PostgreSQL fixtures
     await withTemporaryDatabase(async (client) => {
       await client.query(`
         insert into gm_outcome_eval values
-          ('case-a', '1', current_date - 1, 200, 151, true),
-          ('case-a', '2', current_date - 1, 300, 252, true),
-          ('case-b', '1', current_date - 1, 400, 353, true);
+          ('case-a', '1', current_date - 1, 200, 151, true, true),
+          ('case-a', '2', current_date - 1, 300, 252, true, true),
+          ('case-b', '1', current_date - 1, 400, 353, true, true);
         insert into gm_prediction_snapshots values
           ('case-a', '1', current_date - 1, now() - interval '5 minutes'),
           ('case-a', '2', current_date - 1, now() - interval '10 minutes'),
@@ -316,17 +316,17 @@ describeDatabase('precision production SQL against temporary PostgreSQL fixtures
       const bounded = await client.query<{
         case_no: string; item_no: string; sold_amount: string | number;
         duplicate_result_count: string | number; case_date_item_count: string | number;
-      }>(OUTCOME_TRUST_SQL, [10, 2]);
+      }>(OUTCOME_TRUST_SQL, [10, 2, false]);
       expect(bounded.rows.map(({ case_no, item_no }) => `${case_no}/${item_no}`)).toEqual(['case-a/1', 'case-b/1']);
       expect(Number(bounded.rows[0]!.sold_amount)).toBe(151);
       expect(Number(bounded.rows[0]!.duplicate_result_count)).toBe(2);
       expect(Number(bounded.rows[0]!.case_date_item_count)).toBe(2);
-      const first = (await client.query<{ case_no: string; item_no: string; sale_date: Date }>(OUTCOME_TRUST_SQL, [1, 2])).rows[0]!;
+      const first = (await client.query<{ case_no: string; item_no: string; sale_date: Date }>(OUTCOME_TRUST_SQL, [1, 2, false])).rows[0]!;
       await client.query(
         `insert into gm_outcome_trust values ($1, $2, $3, 'trusted', '[]', now())`,
         [first.case_no, first.item_no, first.sale_date],
       );
-      const next = (await client.query<{ case_no: string; item_no: string }>(OUTCOME_TRUST_SQL, [1, 2])).rows[0]!;
+      const next = (await client.query<{ case_no: string; item_no: string }>(OUTCOME_TRUST_SQL, [1, 2, false])).rows[0]!;
       expect(`${next.case_no}/${next.item_no}`).toBe('case-b/1');
     });
   });
