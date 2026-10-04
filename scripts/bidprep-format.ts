@@ -6,9 +6,11 @@ export interface BidPrepRow {
   property_type: string;
   address: string;
   court: string;
+  appraisal_value: number | null;
   min_bid_price: number | null;
   total_score: number | null;
   is_favorite: boolean;
+  bid_guide?: string | null; // 입찰가 가이드(승률) — bid-prep.ts가 comps로 채움(선택)
 }
 
 const TYPE: Record<string, string> = { apartment: '아파트', villa: '빌라', officetel: '오피스텔', house: '단독', land: '토지', commercial: '상가', other: '기타' };
@@ -28,6 +30,7 @@ export function formatBidPrep(rows: BidPrepRow[], tomorrow: string, dashboardBas
   rows.forEach((r, i) => {
     out.push(`${i + 1}. ${r.case_no} · ${TYPE[r.property_type] ?? r.property_type} · ${r.address.slice(0, 22)}${r.total_score != null ? ` ⭐${r.total_score}` : ''}${r.is_favorite ? ' ★' : ''}`);
     out.push(`   ${r.court} · 최저가 ${eok(r.min_bid_price)} · 보증금 ${manwon(depositWon(r.min_bid_price))} (10%)`);
+    if (r.bid_guide) out.push(`   🎯 ${r.bid_guide}`);
     if (dashboardBase) out.push(`   ${dashboardBase.replace(/\/+$/, '')}/#case=${encodeURIComponent(r.case_no)}`);
   });
   out.push('');

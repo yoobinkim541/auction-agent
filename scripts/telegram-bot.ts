@@ -21,11 +21,47 @@ const API = `https://api.telegram.org/bot${TOKEN}`;
 const eok = (n: number | null | undefined): string => (n == null ? '-' : `${(n / 1e8).toFixed(1)}억`);
 const RSLT: Record<string, string> = { '001': '매각', '002': '유찰' };
 
-async function send(chatId: string | number, text: string): Promise<void> {
+/** 인라인 키보드(선택) 포함 발송. */
+async function send(chatId: string | number, text: string, keyboard?: unknown): Promise<void> {
   await fetch(`${API}/sendMessage`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text: text.slice(0, 3900), disable_web_page_preview: true }),
+    body: JSON.stringify({
+      chat_id: chatId, text: text.slice(0, 3900), disable_web_page_preview: true,
+      ...(keyboard ? { reply_markup: keyboard } : {}),
+    }),
   }).catch((e) => console.error('send 실패:', e));
+}
+
+/** 버튼 탭 응답(토스트) — 콜백은 반드시 answer해야 클라이언트 로딩 스피너가 멈춘다. */
+async function answerCallback(id: string, text: string): Promise<void> {
+  await fetch(`${API}/answerCallbackQuery`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ callback_query_id: id, text: text.slice(0, 190) }),
+  }).catch((e) => console.error('answerCallback 실패:', e));
+}
+
+/** ★ 관심 토글 — 사건 단위(여러 물건이면 전체를 같은 상태로). */
+async function toggleFav(caseNo: string): Promise<string> {
+  const norm = caseNo.replace(/\s/g, '');
+  const rows = await query<{ is_favorite: boolean; address: string }>(
+    `update gm_listings
+        set is_favorite = not coalesce((select bool_or(is_favorite) from gm_listings where case_no = $1), false)
+      where case_no = $1
+      returning is_favorite, address`,
+    [norm],
+  );
+  if (!rows.length) return `수집된 매물에 없는 사건: ${norm}`;
+  return rows[0]!.is_favorite
+    ? `★ 관심 등록 — ${norm} · ${rows[0]!.address.slice(0, 22)} (변동 알림 대상)`
+    : `☆ 관심 해제 — ${norm}`;
+}
+
+/** /case 응답용 인라인 버튼 — ★토글 콜백 + 대시보드 딥링크(DASHBOARD_URL 설정 시). */
+function caseKeyboard(caseNo: string): unknown {
+  const rows: unknown[] = [[{ text: '★ 관심 토글', callback_data: `fav|${caseNo}` }]];
+  const base = process.env.DASHBOARD_URL;
+  if (base) rows.push([{ text: '📊 대시보드에서 보기', url: `${base.replace(/\/+$/, '')}/#case=${encodeURIComponent(caseNo)}` }]);
+  return { inline_keyboard: rows };
 }
 
 /** npm run <script> stdout 캡처(디제스트 재사용). */
@@ -77,15 +113,27 @@ async function cmdStatus(): Promise<string> {
   return out.join('\n');
 }
 
-async function handle(text: string): Promise<string> {
+interface Reply { text: string; keyboard?: unknown }
+
+async function handle(text: string): Promise<Reply> {
   const [cmd, ...rest] = text.trim().split(/\s+/);
   const arg = rest.join(' ');
   switch ((cmd ?? '').toLowerCase()) {
-    case '/case': return arg ? cmdCase(arg) : '사용법: /case 2023타경111644';
-    case '/digest': return runScript('digest');
-    case '/route': case '/임장': return runScript('route');
-    case '/status': return cmdStatus();
-    default: return '경매 봇 명령:\n/case <사건번호> — 사건 실시간 조회\n/digest — 지금 추천\n/route — 이번 주 임장 코스\n/status — 크롤·건수 상태';
+    case '/case': return arg
+      ? { text: await cmdCase(arg), keyboard: caseKeyboard(arg.replace(/\s/g, '')) }
+      : { text: '사용법: /case 2023타경111644' };
+    case '/fav': case '/star': return { text: arg ? await toggleFav(arg) : '사용법: /fav 2023타경111644 (★ 토글)' };
+    case '/digest': return { text: await runScript('digest') };
+    case '/route': case '/임장': return { text: await runScript('route') };
+    case '/status': return { text: await cmdStatus() };
+    case '/update': {
+      // 배포는 detached — 봇 자신이 재시작돼도 update.sh가 완료 알림을 보낸다.
+      spawn('bash', ['deploy/update.sh'], { cwd: process.cwd(), detached: true, stdio: 'ignore' }).unref();
+      return { text: '🚀 배포 시작 — pull→빌드→재시작. 완료 알림이 옵니다(봇 재시작으로 잠시 무응답 가능).' };
+    }
+    default: return {
+      text: '경매 봇 명령:\n/case <사건번호> — 사건 실시간 조회(+★버튼)\n/fav <사건번호> — ★ 관심 토글\n/digest — 지금 추천\n/route — 이번 주 임장 코스\n/status — 크롤·건수 상태\n/update — 최신 코드 배포',
+    };
   }
 }
 
@@ -93,7 +141,7 @@ async function main(): Promise<void> {
   // 원샷 테스트: `npm run bot -- /status` — 루프 없이 명령 1회 실행 후 종료(검증용).
   const cli = process.argv.slice(2);
   if (cli.some((a) => a.startsWith('/'))) {
-    console.log(await handle(cli.join(' ')));
+    console.log((await handle(cli.join(' '))).text);
     await pool().end();
     return;
   }
@@ -112,14 +160,35 @@ async function main(): Promise<void> {
   for (;;) {
     try {
       const res = await fetch(`${API}/getUpdates?timeout=0&offset=${offset}`);
-      const j = await res.json() as { ok: boolean; result?: { update_id: number; message?: { chat: { id: number }; text?: string } }[] };
+      const j = await res.json() as {
+        ok: boolean;
+        result?: {
+          update_id: number;
+          message?: { chat: { id: number }; text?: string };
+          callback_query?: { id: string; from: { id: number }; data?: string };
+        }[];
+      };
       for (const u of j.result ?? []) {
         offset = u.update_id + 1;
+        // 인라인 버튼 콜백(★토글) — 소유자만
+        const cq = u.callback_query;
+        if (cq) {
+          if (String(cq.from.id) !== OWNER) { await answerCallback(cq.id, '소유자 전용'); continue; }
+          try {
+            const [action, arg] = (cq.data ?? '').split('|');
+            await answerCallback(cq.id, action === 'fav' && arg ? await toggleFav(arg) : '알 수 없는 버튼');
+          } catch (e) {
+            await answerCallback(cq.id, `오류: ${e instanceof Error ? e.message : e}`);
+          }
+          continue;
+        }
         const m = u.message;
         if (!m?.text) continue;
         if (String(m.chat.id) !== OWNER) { await send(m.chat.id, '이 봇은 소유자 전용입니다.'); continue; }
-        try { await send(m.chat.id, await handle(m.text)); }
-        catch (e) { await send(m.chat.id, `오류: ${e instanceof Error ? e.message : e}`); }
+        try {
+          const r = await handle(m.text);
+          await send(m.chat.id, r.text, r.keyboard);
+        } catch (e) { await send(m.chat.id, `오류: ${e instanceof Error ? e.message : e}`); }
       }
     } catch (e) {
       console.error('[bot] loop 오류:', e instanceof Error ? e.message : e);

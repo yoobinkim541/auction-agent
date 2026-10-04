@@ -14,7 +14,11 @@ interface FavRow extends FavSnapshot {
   prev_min_bid: number | null;
   prev_fail: number | null;
   prev_sold: boolean | null;   // null = 상태 없음(첫 관측)
+  interest_cnt: number | null;      // 오늘 관심수
+  prev_interest: number | null;     // 직전 스냅샷 관심수(gm_competition_history)
 }
+
+const INTEREST_JUMP = Number(process.env.WATCH_INTEREST_JUMP) || 3; // 관심 급증 임계(+명)
 
 async function main(): Promise<void> {
   const favs = await query<FavRow>(
@@ -23,7 +27,12 @@ async function main(): Promise<void> {
             exists(select 1 from gm_auction_results r
                     where r.case_no = l.case_no and r.item_no = coalesce(l.item_no,'1') and r.sold) as sold,
             w.sale_date::text as prev_sale_date, w.min_bid_price::float8 as prev_min_bid,
-            w.fail_count as prev_fail, w.sold as prev_sold
+            w.fail_count as prev_fail, w.sold as prev_sold,
+            l.interest_cnt,
+            (select h.interest_cnt from gm_competition_history h
+              where h.case_no = l.case_no and h.item_no = coalesce(l.item_no,'1')
+                and h.captured_date < current_date
+              order by h.captured_date desc limit 1) as prev_interest
        from gm_listings l
        left join gm_watch_state w on w.listing_id = l.id
       where l.is_favorite = true`,
@@ -36,7 +45,12 @@ async function main(): Promise<void> {
         case_no: f.case_no, address: f.address,
         sale_date: f.prev_sale_date, min_bid_price: f.prev_min_bid, fail_count: f.prev_fail, sold: f.prev_sold,
       };
-      blocks.push({ caseNo: f.case_no, address: f.address, lines: diffFavorite(prev, f) });
+      const lines = diffFavorite(prev, f);
+      // 경쟁 열기 급증 — 직전 스냅샷 대비 관심수 +INTEREST_JUMP 이상(남들이 몰리기 시작한 신호)
+      if (!f.sold && f.interest_cnt != null && f.prev_interest != null && f.interest_cnt - f.prev_interest >= INTEREST_JUMP) {
+        lines.push(`🔥 관심 급증 +${f.interest_cnt - f.prev_interest} (총 ${f.interest_cnt}명) — 경쟁 열기 상승`);
+      }
+      blocks.push({ caseNo: f.case_no, address: f.address, lines });
     }
     // 상태 upsert(첫 관측은 씨딩만 — 다음 실행부터 diff)
     await query(

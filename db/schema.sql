@@ -235,6 +235,17 @@ create table if not exists gm_doc_changes (
 );
 create index if not exists gm_doc_changes_pending_idx on gm_doc_changes (notified, listing_id);
 
+-- 경쟁 열기 시계열 — 크롤 시 일별 관심수/조회수 스냅샷(현재값만 덮어쓰던 gm_listings 보완).
+-- ★매물 관심 급증 알림(watch-favorites)·저경쟁 추세 신호용.
+create table if not exists gm_competition_history (
+  case_no       text not null,
+  item_no       text not null default '1',
+  captured_date date not null default current_date,
+  inq_cnt       int,
+  interest_cnt  int,
+  primary key (case_no, item_no, captured_date)
+);
+
 -- 교차 보강(courtauction ↔ deonakchal): courtauction은 임차인 표를 못 파싱(명세서 PDF) → 명도판정 '점유관계 미상'.
 -- deonakchal에서 사건번호로 조회한 임차인(대항력·확정일자·배당요구)을 여기 저장. analyze가 최우선으로 읽고(pipeline/run.ts),
 -- courtauction 재크롤(gm_listing_docs 삭제)로 안 지워짐. found=false = 조회했으나 deonakchal에 없음(재시도 마커).

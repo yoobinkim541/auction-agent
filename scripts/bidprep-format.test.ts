@@ -3,7 +3,8 @@ import { depositWon, formatBidPrep, type BidPrepRow } from './bidprep-format.ts'
 
 const row = (over: Partial<BidPrepRow> = {}): BidPrepRow => ({
   case_no: '2025타경507294', property_type: 'villa', address: '인천광역시 중구 송월동3가 1-1',
-  court: '인천지방법원', min_bid_price: 1_4000_0000, total_score: 100, is_favorite: false, ...over,
+  court: '인천지방법원', appraisal_value: 2_0000_0000, min_bid_price: 1_4000_0000,
+  total_score: 100, is_favorite: false, ...over,
 });
 
 describe('depositWon', () => {
@@ -27,6 +28,12 @@ describe('formatBidPrep', () => {
     expect(s).toContain('준비물');
     expect(s).toContain('특별매각조건');
   });
+  it('입찰가 가이드 있으면 🎯 라인 동봉', () => {
+    const s = formatBidPrep([row({ bid_guide: '입찰가 가이드(승률): 50% 1.30억 · 70% 1.44억 · 90% 1.60억 — 유사 12건 낙찰가 분포 기준' })], '2026-07-13');
+    expect(s).toContain('🎯 입찰가 가이드(승률): 50% 1.30억');
+    expect(formatBidPrep([row()], '2026-07-13')).not.toContain('입찰가 가이드');
+  });
+
   it('보증금 1억 이상은 억 단위 표기', () => {
     const s = formatBidPrep([row({ min_bid_price: 12_0000_0000 })], '2026-07-13');
     expect(s).toContain('보증금 1.20억');

@@ -1,5 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped, parseCourtDetail, isKnownForIncremental, shouldFetchDetailNow, detailDecision } from './courtauction.ts';
+import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped, parseCourtDetail, parseCourtExtra, isKnownForIncremental, shouldFetchDetailNow, detailDecision } from './courtauction.ts';
+
+describe('parseCourtExtra', () => {
+  it('빈/미설정 → 빈 배열', () => {
+    expect(parseCourtExtra(undefined)).toEqual([]);
+    expect(parseCourtExtra('')).toEqual([]);
+  });
+  it('code:name 쌍 파싱 + 이름의 콜론 보존', () => {
+    expect(parseCourtExtra('B000252:여주지원,B000253:평택지원')).toEqual([
+      { code: 'B000252', name: '여주지원' },
+      { code: 'B000253', name: '평택지원' },
+    ]);
+  });
+  it('형식 오류(코드 패턴 불일치·이름 없음)는 버린다', () => {
+    expect(parseCourtExtra('X:여주,B000252:,B000254:안산지원')).toEqual([{ code: 'B000254', name: '안산지원' }]);
+  });
+});
 
 describe('filterCourts', () => {
   it('빈 regions → 수도권 전체(16개) 반환', () => {
@@ -39,6 +55,19 @@ describe('filterCourts', () => {
   });
   it('매칭 없음 → 빈 배열', () => {
     expect(filterCourts(['부산'])).toHaveLength(0);
+  });
+  it('COURT_EXTRA 지원은 경기/수도권에 포함(코드 목록 주입)', () => {
+    const extended = [
+      { code: 'B000210', name: '서울중앙지방법원' },
+      { code: 'B000250', name: '수원지방법원' },
+      { code: 'B000251', name: '성남지원' },
+      { code: 'B000214', name: '의정부지방법원' },
+      { code: 'B000252', name: '여주지원' }, // COURT_EXTRA로 추가된 지원
+    ];
+    // 여주지원은 이름에 '경기'가 없지만 경기/수도권 요청 시 포함돼야 한다(baseCodes 밖 → 경기로 간주)
+    expect(filterCourts(['경기'], extended).map((c) => c.name)).toContain('여주지원');
+    // 서울만 요청하면 지원은 제외
+    expect(filterCourts(['서울'], extended).map((c) => c.name)).not.toContain('여주지원');
   });
   it('반환값 변형이 METRO_COURTS 원본에 영향 없음', () => {
     const r = filterCourts([]);

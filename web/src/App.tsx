@@ -232,11 +232,16 @@ export default function App() {
   const activeTab = showReview ? 'review' : showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
   // 배지 카운트 — 결과를 좁히는 '숨은' 필터(오늘기일·달력일·갭·발품회피 등)까지 포함해야
   // 목록이 비었을 때 원인을 알 수 있다(과거: 절반 누락 → 0건인데 배지 0).
+  // 설정(ConfigPanel)의 지역·가격 조건도 목록을 항상 자르므로 포함 — "전체 3200인데 목록 800" 미스터리 방지.
+  const cfgFilterCount = [
+    cfg.regionKeywords.length > 0, cfg.priceMinEok > 0, cfg.priceMaxEok > 0,
+    cfg.apprMinEok > 0, cfg.apprMaxEok > 0,
+  ].filter(Boolean).length;
   const activeFilterCount = [
     hideExpired, hideIncomplete, onlyPassed, onlyFavorite, onlyMultiRound,
     onlyZeroPi, onlyConsider, onlyUrgent, onlyPassedAvoid, onlyToday,
     !!filterDate, maxGapEok > 0,
-  ].filter(Boolean).length;
+  ].filter(Boolean).length + cfgFilterCount;
 
   // 모든 필터 초기화(검색어·종류 포함) — 팝오버/빈상태 버튼이 동일하게 사용
   const resetFilters = () => {
@@ -504,6 +509,13 @@ export default function App() {
         <Suspense fallback={<div className="list-more">지도 불러오는 중…</div>}>
           <MapView items={mapPoints} onSelect={handleSelect} showAll={mapShowAll} onToggleShowAll={() => setMapShowAll((s) => !s)} />
         </Suspense>
+      )}
+
+      {!showReview && viewMode === 'list' && viewFull.length > 0 && stats.total > viewFull.length && (
+        <div className="hidden-note" title="설정의 지역·가격 조건과 필터 토글이 목록을 좁힙니다. 상단 ❌ 필터해제 또는 ⚙️ 설정에서 조정.">
+          표시 {viewFull.length} / 전체 {stats.total}건 — 조건·필터로 {stats.total - viewFull.length}건 숨김
+          {cfgFilterCount > 0 && ' (⚙️ 설정의 지역·가격 조건 포함)'}
+        </div>
       )}
 
       {!showReview && viewMode === 'list' && view.length > 0 && !isMobile && (
