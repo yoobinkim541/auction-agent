@@ -50,6 +50,11 @@ describe('loadUIState / saveUIState', () => {
 
   it('saveUIState → loadUIState 라운드트립', () => {
     saveUIState({ sort: 'safety', sortDir: 'asc', onlyPassed: false });
-    expect(loadUIState()).toEqual({ sort: 'safety', sortDir: 'asc', onlyPassed: false });
+    expect(loadUIState()).toEqual({ version: 2, sort: 'safety', sortDir: 'asc', onlyPassed: false });
+  });
+
+  it('구버전 UI 상태는 무시', () => {
+    localStorage.setItem('gm_ui_state', JSON.stringify({ onlyPassed: true }));
+    expect(loadUIState()).toEqual({});
   });
 });

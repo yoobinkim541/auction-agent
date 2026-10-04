@@ -44,6 +44,24 @@ export function parseKoreanMoney(input: string | null | undefined): number | nul
   return digits ? parseInt(digits, 10) : null;
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** "보증금 1억2,000만원 전입일자 ..."처럼 라벨 뒤 금액만 안전하게 추출. */
+export function extractLabeledKoreanMoney(input: string | null | undefined, labelPattern: string, stopLabels: string[]): number | null {
+  if (!input) return null;
+  const m = input.match(new RegExp(`${labelPattern}\\s*:?(?:\\s*금)?\\s*(.+)`, 'i'));
+  if (!m?.[1]) return null;
+  let segment = m[1];
+  if (stopLabels.length) {
+    const stopRe = new RegExp(`[\\s,;/]*(?:${stopLabels.map(escapeRegExp).join('|')})\\s*:?`, 'i');
+    const stopIdx = segment.search(stopRe);
+    if (stopIdx >= 0) segment = segment.slice(0, stopIdx);
+  }
+  return parseKoreanMoney(segment);
+}
+
 /**
  * 한 줄(날짜·순위번호·권리자·금액이 섞인 등기 텍스트)에서 '금액'만 추출.
  * parseKoreanMoney 를 줄 전체에 쓰면 날짜·순위번호 숫자까지 합쳐져 천문학적 오값이 나오므로,

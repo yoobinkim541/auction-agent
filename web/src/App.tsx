@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState, useDeferredValue, useCallback, me
 import { FLAG_LABEL, TYPE_LABEL, RISK, RECO } from './labels.ts';
 import { SkeletonList, Notice, ThSort, DDay, FieldProgress } from './ui.tsx';
 import {
-  fetchDetail, triggerJob, fetchJobStatus, setFavorite,
+  fetchDetail, triggerJob, fetchJobStatus, setFavorite, fetchMlReview,
   apiBase, eok, pct,
-  type ListingItem,
+  type ListingItem, type MlReview, type MlSurpriseRow,
 } from './api.ts';
 import { scoreClient, scoreBreakdown, type ScoreConfig, type ClientScore } from './scoring.ts';
 // 코드 스플릿 — 지도(leaflet)·비교·상세·설정·도움말은 열 때만 로드(초기 번들·첫 페인트 단축).
@@ -16,6 +16,8 @@ const Detail = lazy(() => import('./Detail.tsx').then((m) => ({ default: m.Detai
 import { applyListingFilters, sortRows, groupRowsByCase, type SortKey } from './filters.ts';
 import { resolveRound, saleDaysDiff, localDateISO } from './listing-utils.ts';
 import { useListings } from './useListings.ts';
+import { useTodayActions } from './useTodayActions.ts';
+import { TodayActions } from './TodayActions.tsx';
 import { useIncrementalList } from './useIncremental.ts';
 import { exportCSV } from './export-csv.ts';
 import { loadConfig, saveConfig, loadUIState, saveUIState } from './persistence.ts';
@@ -61,7 +63,8 @@ const SORT_DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
 
 export default function App() {
   const { rows, setRows, loading, err, lastCrawl, load } = useListings();
-  const [onlyPassed, setOnlyPassed] = useState<boolean>(() => loadUIState().onlyPassed ?? true);
+  const { actions: todayActions, loading: todayActionsLoading, error: todayActionsError, reload: reloadTodayActions } = useTodayActions(20);
+  const [onlyPassed, setOnlyPassed] = useState<boolean>(() => loadUIState().onlyPassed ?? false);
   const [onlyFavorite, setOnlyFavorite] = useState(false);
   const [onlyMultiRound, setOnlyMultiRound] = useState<boolean>(() => loadUIState().onlyMultiRound ?? false);
   const [onlyZeroPi, setOnlyZeroPi] = useState(false);
@@ -80,6 +83,7 @@ export default function App() {
   const [groupByCase, setGroupByCase] = useState<boolean>(() => loadUIState().groupByCase ?? false);
   const [selected, setSelected] = useState<ListingItem | null>(null);
   const [showCompare, setShowCompare] = useState(false);
+  const [showReview, setShowReview] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [mapShowAll, setMapShowAll] = useState(true); // 지도는 기본 전체 매물(수집한 모든 데이터)
   const [cfg, setCfg] = useState<ScoreConfig>(loadConfig);
@@ -137,6 +141,7 @@ export default function App() {
               stopPoll();
               showJob(`✓ ${label} 완료 (${elapsedStr})`, true);
               load();
+              reloadTodayActions();
             } else if (s?.state === 'error') {
               stopPoll();
               showJob(`✕ ${label} 실패`, false);
@@ -166,6 +171,16 @@ export default function App() {
       })
       .catch(() => {})
       .finally(() => setDetailLoading((cur) => (cur === item.case_no ? null : cur)));
+  }, []);
+
+  const openCaseFromReview = useCallback((caseNo: string) => {
+    const cached = detailCacheRef.current.get(caseNo);
+    if (cached) { setSelected(cached); return; }
+    setDetailLoading(caseNo);
+    fetchDetail(caseNo)
+      .then((full) => { detailCacheRef.current.set(caseNo, full); setSelected(full); })
+      .catch(() => {})
+      .finally(() => setDetailLoading((cur) => (cur === caseNo ? null : cur)));
   }, []);
 
   // 단일 패스 스코어링 — rows·cfg 변경 시에만 1회. (과거: view/stats/allScored 3중 패스가 매 상호작용 재계산)
@@ -214,7 +229,7 @@ export default function App() {
   // 활성 레이아웃만 렌더(표 또는 카드) — 둘 다 DOM에 만들던 것을 하나로(노드 절반↓).
   const isMobile = useMediaQuery('(max-width: 760px)');
   const favCount = rows.filter((r) => r.is_favorite).length;
-  const activeTab = showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
+  const activeTab = showReview ? 'review' : showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
   // 배지 카운트 — 결과를 좁히는 '숨은' 필터(오늘기일·달력일·갭·발품회피 등)까지 포함해야
   // 목록이 비었을 때 원인을 알 수 있다(과거: 절반 누락 → 0건인데 배지 0).
   // 설정(ConfigPanel)의 지역·가격 조건도 목록을 항상 자르므로 포함 — "전체 3200인데 목록 800" 미스터리 방지.
@@ -399,6 +414,13 @@ export default function App() {
         </div>
       )}
 
+      <TodayActions
+        actions={todayActions}
+        loading={todayActionsLoading}
+        error={todayActionsError}
+        onOpenCase={openCaseFromReview}
+      />
+
       <div className="controls">
         <details className="filter-menu">
           <summary>🔎 필터{activeFilterCount > 0 ? ` · ${activeFilterCount}` : ''}</summary>
@@ -450,7 +472,8 @@ export default function App() {
 
         <span className="ctrl-sep" />
         <button className={`help-btn${showLegend ? ' on' : ''}`} onClick={() => setShowLegend((s) => !s)} title="점수·통과 기준·배지 의미 도움말">❓ 도움말</button>
-        <button onClick={() => setShowCfg((s) => !s)}>{showCfg ? '조건 닫기' : '⚙ 조건·기준'}</button>
+        <button className={`viewmode-btn${showReview ? ' on' : ''}`} onClick={() => { setShowReview((s) => !s); setShowCfg(false); window.scrollTo(0, 0); }} title="Phase2 복기와 ML 오프라인 지표">🧠 복기/ML</button>
+        <button onClick={() => { setShowCfg((s) => !s); setShowReview(false); }}>{showCfg ? '조건 닫기' : '⚙ 조건·기준'}</button>
         <button onClick={() => exportCSV(view)} title="현재 목록을 CSV로 내보내기">↓ CSV</button>
         {favCount >= 2 && <button className="cmp-btn" onClick={() => setShowCompare(true)} title="관심 매물을 나란히 비교">⚖ 비교 ({favCount})</button>}
 
@@ -466,7 +489,9 @@ export default function App() {
 
       {loading && <SkeletonList />}
       {err && <Notice>API 연결 오류: {err} <br />백엔드(<code>{apiBase}</code>) 실행 확인 (<code>server/run.sh</code>).</Notice>}
-      {!loading && !err && view.length === 0 && (
+      {showReview && !err && <ReviewPanel onOpenCase={openCaseFromReview} />}
+
+      {!showReview && !loading && !err && view.length === 0 && (
         <div className="empty-state">
           <div className="empty-emoji">🔍</div>
           {activeFilterCount > 0 || q.trim() || type !== 'all' || filterDate || onlyToday || maxGapEok > 0 ? (
@@ -480,20 +505,20 @@ export default function App() {
         </div>
       )}
 
-      {viewMode === 'map' && (
+      {!showReview && viewMode === 'map' && (
         <Suspense fallback={<div className="list-more">지도 불러오는 중…</div>}>
           <MapView items={mapPoints} onSelect={handleSelect} showAll={mapShowAll} onToggleShowAll={() => setMapShowAll((s) => !s)} />
         </Suspense>
       )}
 
-      {viewMode === 'list' && viewFull.length > 0 && stats.total > viewFull.length && (
+      {!showReview && viewMode === 'list' && viewFull.length > 0 && stats.total > viewFull.length && (
         <div className="hidden-note" title="설정의 지역·가격 조건과 필터 토글이 목록을 좁힙니다. 상단 ❌ 필터해제 또는 ⚙️ 설정에서 조정.">
           표시 {viewFull.length} / 전체 {stats.total}건 — 조건·필터로 {stats.total - viewFull.length}건 숨김
           {cfgFilterCount > 0 && ' (⚙️ 설정의 지역·가격 조건 포함)'}
         </div>
       )}
 
-      {viewMode === 'list' && view.length > 0 && !isMobile && (
+      {!showReview && viewMode === 'list' && view.length > 0 && !isMobile && (
         <table className="grid">
           <thead>
             <tr>
@@ -516,7 +541,7 @@ export default function App() {
         </table>
       )}
 
-      {viewMode === 'list' && view.length > 0 && isMobile && (
+      {!showReview && viewMode === 'list' && view.length > 0 && isMobile && (
         <ul className="cards">
           {visible.map(({ item, sc }, i) => (
             <ListingCard key={item.id} item={item} sc={sc} onSelect={handleSelect} onFav={toggleFav}
@@ -525,8 +550,8 @@ export default function App() {
         </ul>
       )}
 
-      {viewMode === 'list' && !listDone && (
-        <div ref={sentinelRef} className="list-more">{visible.length}/{listTotal}건 표시 — 스크롤하면 더 불러옵니다</div>
+      {!showReview && viewMode === 'list' && !listDone && (
+        <div ref={sentinelRef} className="list-more">{visible.length}/{listTotal}건 렌더링 중 — 아래로 스크롤하면 더 붙입니다</div>
       )}
 
       {selected && <Suspense fallback={null}><Detail
@@ -553,19 +578,181 @@ export default function App() {
       )}
 
       <nav className="tabbar">
-        <button className={activeTab === 'recommend' ? 'on' : ''} onClick={() => { setShowCfg(false); setOnlyFavorite(false); setOnlyPassed(true); window.scrollTo(0, 0); }}>
+        <button className={activeTab === 'recommend' ? 'on' : ''} onClick={() => { setShowReview(false); setShowCfg(false); setOnlyFavorite(false); setOnlyPassed(true); window.scrollTo(0, 0); }}>
           <span className="tb-ico">🎯</span>추천
         </button>
-        <button className={activeTab === 'all' ? 'on' : ''} onClick={() => { setShowCfg(false); setOnlyFavorite(false); setOnlyPassed(false); window.scrollTo(0, 0); }}>
+        <button className={activeTab === 'all' ? 'on' : ''} onClick={() => { setShowReview(false); setShowCfg(false); setOnlyFavorite(false); setOnlyPassed(false); window.scrollTo(0, 0); }}>
           <span className="tb-ico">📋</span>전체
         </button>
-        <button className={activeTab === 'fav' ? 'on' : ''} onClick={() => { setShowCfg(false); setOnlyFavorite(true); window.scrollTo(0, 0); }}>
+        <button className={activeTab === 'fav' ? 'on' : ''} onClick={() => { setShowReview(false); setShowCfg(false); setOnlyFavorite(true); window.scrollTo(0, 0); }}>
           <span className="tb-ico">★</span>관심{favCount > 0 && <i className="tb-badge">{favCount}</i>}
         </button>
-        <button className={activeTab === 'config' ? 'on' : ''} onClick={() => setShowCfg((s) => !s)}>
+        <button className={activeTab === 'review' ? 'on' : ''} onClick={() => { setShowReview((s) => !s); setShowCfg(false); window.scrollTo(0, 0); }}>
+          <span className="tb-ico">🧠</span>복기
+        </button>
+        <button className={activeTab === 'config' ? 'on' : ''} onClick={() => { setShowCfg((s) => !s); setShowReview(false); }}>
           <span className="tb-ico">⚙</span>조건
         </button>
       </nav>
+    </div>
+  );
+}
+
+
+function fmtRate(n: number | null | undefined): string {
+  return n == null ? '-' : `${(n * 100).toFixed(1)}%`;
+}
+
+function fmtNum(n: number | null | undefined, digits = 3): string {
+  return n == null ? '-' : n.toFixed(digits);
+}
+
+function calibrationHint(row: ListingItem): string | null {
+  const c = row.ml_calibration;
+  if (!c || c.reference_bid_price == null) return null;
+  const delta = c.delta_vs_expected_bid == null ? '' : ` · 현재예상 대비 ${c.delta_vs_expected_bid >= 0 ? '+' : ''}${eok(c.delta_vs_expected_bid)}`;
+  return `ML 참고가 ${eok(c.reference_bid_price)} · ${c.region} ${c.sample_size}건 중앙 낙찰가율 ${fmtRate(c.median_sale_ratio)}${delta}`;
+}
+
+function overbidCaution(row: ListingItem): boolean {
+  const c = row.ml_calibration;
+  if (!c || c.delta_vs_expected_bid == null || row.appraisal_value == null || row.appraisal_value <= 0) return false;
+  return c.delta_vs_expected_bid < 0 && Math.abs(c.delta_vs_expected_bid) / row.appraisal_value >= 0.05;
+}
+
+function CalibrationChip({ row }: { row: ListingItem }) {
+  const hint = calibrationHint(row);
+  if (!hint || row.ml_calibration?.reference_bid_price == null) return null;
+  const delta = row.ml_calibration.delta_vs_expected_bid;
+  const caution = overbidCaution(row);
+  const cls = caution ? ' ml-overbid' : delta == null ? '' : delta > 0 ? ' ml-up' : delta < 0 ? ' ml-down' : '';
+  return <span className={`ml-ref-chip${cls}`} title={`${hint} · 운영 반영 전 참고용`}>{caution ? '과다주의' : 'ML'} {eok(row.ml_calibration.reference_bid_price)}</span>;
+}
+
+function ReviewPanel({ onOpenCase }: { onOpenCase: (caseNo: string) => void }) {
+  const [data, setData] = useState<MlReview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    fetchMlReview()
+      .then((res) => { if (alive) { setData(res); setError(null); } })
+      .catch((e: unknown) => { if (alive) setError(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  if (loading) return <div className="review-panel"><Notice>복기/ML 지표 불러오는 중…</Notice></div>;
+  if (error || !data) return <div className="review-panel"><Notice>복기/ML API 오류: {error ?? '데이터 없음'}</Notice></div>;
+  const s = data.summary;
+  const ready = (s.miss_rate ?? 1) < 0.3 && s.sale_ratio_labels >= 150;
+  const markdownLines = data.reportMarkdown.split('\n').filter((line) => /^\| (hist_gbr|random_forest|current_expected_bid|dummy_median|dummy_prior)/.test(line));
+  const surpriseGroups = [
+    ['overpriced', '🔺 예상보다 비싸게 낙찰'],
+    ['avoid_but_sold', '🟠 회피/미통과인데 낙찰'],
+    ['passed_but_unsold', '🔻 추천/통과했는데 유찰'],
+  ] as const;
+  return (
+    <section className="review-panel">
+      <div className="review-head">
+        <div>
+          <h2>🧠 Phase2 복기/ML</h2>
+          <p>DB를 수정하지 않는 오프라인 검증입니다. 추천·입찰가에는 아직 자동 반영하지 않습니다.</p>
+        </div>
+        <span className={`review-gate${ready ? ' gate-ok' : ' gate-wait'}`}>{ready ? '채택 검토 가능' : '운영 반영 대기'}</span>
+      </div>
+
+      <div className="review-kpis">
+        <div><span>지난 스냅샷</span><b>{s.past_snapshots.toLocaleString('ko-KR')}</b></div>
+        <div><span>결과 매칭</span><b>{s.matched.toLocaleString('ko-KR')}</b><em>낙찰 {s.sold.toLocaleString('ko-KR')} · 유찰 {s.unsold.toLocaleString('ko-KR')}</em></div>
+        <div><span>미매칭률</span><b className={(s.miss_rate ?? 1) > 0.3 ? 'danger' : 'good'}>{fmtRate(s.miss_rate)}</b></div>
+        <div><span>낙찰가율 라벨</span><b>{s.sale_ratio_labels.toLocaleString('ko-KR')}</b></div>
+        <div><span>현재 예상가 MAE</span><b>{fmtRate(s.current_expected_mae)}</b></div>
+        <div><span>양수 마진률</span><b>{fmtRate(s.positive_margin_rate)}</b></div>
+      </div>
+
+      <div className="review-card">
+        <h3>참고가 성능 추적</h3>
+        <div className="review-kpis review-kpis-compact">
+          <div><span>비교 가능 행</span><b>{data.calibrationPerformance.rows.toLocaleString('ko-KR')}</b></div>
+          <div><span>참고가 MAE</span><b>{fmtRate(data.calibrationPerformance.reference_mae)}</b></div>
+          <div><span>현재예상 MAE</span><b>{fmtRate(data.calibrationPerformance.current_mae)}</b></div>
+          <div><span>참고가 승률</span><b>{fmtRate(data.calibrationPerformance.reference_win_rate)}</b></div>
+        </div>
+      </div>
+
+      {markdownLines.length > 0 && (
+        <div className="review-card">
+          <h3>최근 오프라인 모델 결과</h3>
+          <ul className="ml-lines">{markdownLines.map((line) => <li key={line}><code>{line}</code></li>)}</ul>
+        </div>
+      )}
+
+      <div className="review-card">
+        <h3>서프라이즈 복기 케이스</h3>
+        <div className="surprise-grid">
+          {surpriseGroups.map(([kind, label]) => {
+            const rows = data.surprises.filter((r) => r.surprise_kind === kind).slice(0, 5);
+            return <SurpriseTable key={kind} title={label} rows={rows} onOpenCase={onOpenCase} />;
+          })}
+        </div>
+      </div>
+
+      <div className="review-grid2">
+        <div className="review-card">
+          <h3>결과 미매칭 재시도 큐</h3>
+          <table className="mini-table"><thead><tr><th>사건</th><th>D+</th><th>우선</th><th>점수</th></tr></thead><tbody>
+            {data.retryQueue.slice(0, 12).map((r) => <tr key={`${r.case_no}-${r.item_no}`}><td><button className="link-btn mono" onClick={() => onOpenCase(r.case_no)}>{r.case_no}{r.item_no !== '1' ? `-${r.item_no}` : ''}</button></td><td>{r.days_overdue}</td><td>{r.retry_priority}</td><td>{r.total_score ?? '-'}</td></tr>)}
+          </tbody></table>
+        </div>
+        <div className="review-card">
+          <h3>권리 리스크 복기</h3>
+          <table className="mini-table"><thead><tr><th>권리</th><th>rows</th><th>낙찰률</th><th>마진</th><th>대항력</th></tr></thead><tbody>
+            {data.rightsRisk.map((r) => <tr key={r.risk_grade}><td>{RISK[r.risk_grade]?.label ?? r.risk_grade}</td><td>{r.rows}</td><td>{fmtRate(r.sold_rate)}</td><td>{fmtRate(r.median_proxy_margin)}</td><td>{r.opposition_rows}</td></tr>)}
+          </tbody></table>
+        </div>
+      </div>
+
+      <div className="review-grid2">
+        <div className="review-card">
+          <h3>Feature Coverage Watchlist</h3>
+          <table className="mini-table"><thead><tr><th>feature</th><th>rows</th><th>coverage</th></tr></thead><tbody>
+            {data.featureCoverage.map((r) => <tr key={r.feature}><td>{r.feature}</td><td>{r.non_null_rows.toLocaleString('ko-KR')}</td><td>{fmtRate(r.coverage)}</td></tr>)}
+          </tbody></table>
+        </div>
+        <div className="review-card">
+          <h3>지역×종류 중앙 낙찰가율</h3>
+          <table className="mini-table"><thead><tr><th>종류</th><th>지역</th><th>n</th><th>낙찰가율</th><th>마진</th></tr></thead><tbody>
+            {data.groupMedian.slice(0, 12).map((r) => <tr key={`${r.property_type}-${r.region}`}><td>{TYPE_LABEL[r.property_type] ?? r.property_type}</td><td>{r.region}</td><td>{r.rows}</td><td>{fmtNum(r.median_sale_ratio)}</td><td>{fmtNum(r.median_realized_margin)}</td></tr>)}
+          </tbody></table>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+
+function surpriseMetric(row: MlSurpriseRow): string {
+  if (row.surprise_kind === 'overpriced') return `오차 ${fmtRate(row.residual_pct)}`;
+  if (row.surprise_kind === 'avoid_but_sold') return `낙찰가율 ${fmtRate(row.sale_ratio)}`;
+  return `점수 ${row.total_score ?? '-'}`;
+}
+
+function SurpriseTable({ title, rows, onOpenCase }: { title: string; rows: MlSurpriseRow[]; onOpenCase: (caseNo: string) => void }) {
+  return (
+    <div className="surprise-box">
+      <h4>{title}</h4>
+      {rows.length === 0 ? <p className="muted">케이스 없음</p> : (
+        <table className="mini-table surprise-table"><thead><tr><th>사건</th><th>주소</th><th>핵심</th><th>마진</th></tr></thead><tbody>
+          {rows.map((r) => <tr key={`${r.surprise_kind}-${r.case_no}-${r.item_no}`}>
+            <td><button className="link-btn mono" onClick={() => onOpenCase(r.case_no)}>{r.case_no}{r.item_no !== '1' ? `-${r.item_no}` : ''}</button></td>
+            <td title={r.address}>{r.address.slice(0, 18)}</td>
+            <td>{surpriseMetric(r)}</td>
+            <td>{fmtRate(r.realized_bid_margin ?? r.true_margin)}</td>
+          </tr>)}
+        </tbody></table>
+      )}
     </div>
   );
 }
@@ -604,6 +791,7 @@ const ListingRow = memo(function ListingRow({ item: r, sc, onSelect, onFav, toda
         )}
         {r.location?.market_confidence === 'low' && <span className="conf-dot conf-low" title="시세 추정 신뢰도: 낮음(표본 부족)">●</span>}
         {r.location?.market_confidence === 'medium' && <span className="conf-dot conf-med" title="시세 추정 신뢰도: 보통">●</span>}
+        <CalibrationChip row={r} />
       </td>
       <td className="num" onClick={() => onSelect(r)}>{r.rights ? (r.rights.assumed_amount ? eok(r.rights.assumed_amount) : '0') : '-'}</td>
       <td onClick={() => onSelect(r)}>
@@ -680,6 +868,7 @@ const ListingCard = memo(function ListingCard({ item: r, sc, onSelect, onFav, gr
         <div><span>안전마진</span><b>{pct(r.location?.safety_margin)}</b></div>
         {expBid ? <div><span>예상낙찰가</span><b className="good">{eok(expBid)}</b></div>
           : <div><span>진짜마진</span><b className={(tm ?? 0) < 0 ? 'danger' : 'good'}>{pct(tm)}</b></div>}
+        {r.ml_calibration?.reference_bid_price != null && <div><span>ML참고가</span><b>{eok(r.ml_calibration.reference_bid_price)}</b></div>}
       </div>
       <div className="card-foot">
         <span className="card-score" title={scoreBreakdown(sc)}>점수 <b>{sc.totalScore}</b></span>
@@ -699,4 +888,3 @@ const ListingCard = memo(function ListingCard({ item: r, sc, onSelect, onFav, gr
 // ConfigPanel은 ./ConfigPanel.tsx로 분리
 
 // exportCSV/buildCsv는 ./export-csv.ts로 분리
-

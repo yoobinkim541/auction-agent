@@ -1,5 +1,58 @@
 import { describe, it, expect } from 'vitest';
-import { extractRegistryRowsFromText, extractSiteMetrics } from './deonakchal.ts';
+import { extractRegistryRowsFromText, extractSiteMetrics, caseNoToMngno, DEONAK_COURT1, chooseDeonakListRow } from './deonakchal.ts';
+
+describe('caseNoToMngno (courtauction 사건번호 → deonakchal mngno)', () => {
+  it('타경 사건번호 → 연도-번호', () => {
+    expect(caseNoToMngno('2023타경111644')).toBe('2023-111644');
+    expect(caseNoToMngno('2023 타경 111644')).toBe('2023-111644'); // 공백 허용
+  });
+  it('포맷 아니면 null', () => {
+    expect(caseNoToMngno('그냥문자')).toBeNull();
+    expect(caseNoToMngno('')).toBeNull();
+  });
+});
+
+describe('DEONAK_COURT1 (수도권 법원 매핑)', () => {
+  it('courtauction METRO_COURTS 이름과 매칭', () => {
+    expect(DEONAK_COURT1['서울중앙지방법원']).toBe('A1');
+    expect(DEONAK_COURT1['남양주지원']).toBe('D3');
+    expect(DEONAK_COURT1['안산지원']).toBe('E5');
+    expect(DEONAK_COURT1['수원지방법원']).toBe('E1');
+  });
+});
+
+describe('lookupCaseDetail row match key', () => {
+  it('item_no가 다른 같은 사건은 별도 물건으로 봐야 함', () => {
+    const rows = [
+      { productId: 'p1', listing: { caseNo: '2025-103018', itemNo: '1' } },
+      { productId: 'p2', listing: { caseNo: '2025-103018', itemNo: '2' } },
+    ];
+    expect(chooseDeonakListRow(rows, '2025-103018', '2')?.productId).toBe('p2');
+  });
+
+  it('물건번호 앞자리 0을 정규화해 같은 물건만 고름', () => {
+    const rows = [
+      { productId: 'p1', listing: { caseNo: '2025-103018', itemNo: '1' } },
+      { productId: 'p2', listing: { caseNo: '2025-103018', itemNo: '02' } },
+    ];
+    expect(chooseDeonakListRow(rows, '2025-103018', '2')?.productId).toBe('p2');
+  });
+
+  it('같은 사건이어도 요청 물건번호가 없으면 선택하지 않음', () => {
+    const rows = [
+      { productId: 'p1', listing: { caseNo: '2025-103018', itemNo: '1' } },
+    ];
+    expect(chooseDeonakListRow(rows, '2025-103018', '2')).toBeUndefined();
+  });
+
+  it('상세 product_id 없는 행은 선택하지 않음', () => {
+    const rows = [
+      { listing: { caseNo: '2025-103018', itemNo: '2' } },
+      { productId: 'p2', listing: { caseNo: '2025-103018', itemNo: '2' } },
+    ];
+    expect(chooseDeonakListRow(rows, '2025-103018', '2')?.productId).toBe('p2');
+  });
+});
 
 describe('extractRegistryRowsFromText', () => {
   it('근저당·가압류 행을 종류/접수일/금액으로 파싱', () => {

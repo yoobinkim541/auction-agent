@@ -6,14 +6,19 @@
  */
 import 'dotenv/config';
 import { query } from '../shared/db.ts';
-import { geocodeNaver } from '../pipeline/location/osm.ts';
+import { geocodeSmart } from '../pipeline/location/osm.ts';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DELAY = parseInt(process.env.GEOCODE_DELAY_MS ?? '320', 10);
 
 async function main() {
+  // 우선순위: 대시보드 노출(통과+미래기일) → 활성 → 나머지. 쿼터가 중간에 끊겨도 지도에 보이는 물건부터 채워지게.
   const rows = await query<{ id: number; address: string }>(
-    `SELECT id, address FROM gm_listings WHERE lat IS NULL OR lng IS NULL ORDER BY id`,
+    `SELECT l.id, l.address FROM gm_listings l
+      LEFT JOIN gm_scores s ON s.listing_id = l.id
+     WHERE l.lat IS NULL OR l.lng IS NULL
+     ORDER BY (coalesce(s.passed_filter, false) AND (l.sale_date IS NULL OR l.sale_date >= current_date)) DESC,
+              (l.sale_date IS NULL OR l.sale_date >= current_date) DESC, l.id`,
   );
   console.log(`지오코딩 대상: ${rows.length}건 · 간격 ${DELAY}ms`);
   if (!rows.length) { console.log('모두 완료됨.'); return; }
@@ -21,7 +26,7 @@ async function main() {
   let ok = 0, fail = 0;
   for (const r of rows) {
     try {
-      const geo = await geocodeNaver(r.address);
+      const geo = await geocodeSmart(r.address);
       if (geo) {
         await query('UPDATE gm_listings SET lat=$2, lng=$3 WHERE id=$1', [r.id, geo.lat, geo.lng]);
         ok++;

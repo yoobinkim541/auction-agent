@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Comparable } from '../../shared/types.ts';
-import { parseMolitDealAmount, dongMatches, extractDong, estimateMarketPrice } from './comps.ts';
+import { parseMolitDealAmount, dongMatches, extractDong, estimateMarketPrice, capMarketPrice } from './comps.ts';
 
 describe('parseMolitDealAmount', () => {
   it('정상 만원→원', () => expect(parseMolitDealAmount('120,000')).toBe(1_200_000_000));
@@ -37,6 +37,33 @@ describe('estimateMarketPrice', () => {
     const est = estimateMarketPrice(comps, { areaM2: 84, dong: '산동' });
     // '산동' 정확일치 비교군 없음 → 면적만으로 구 전체(low) 폴백
     expect(est.confidence).toBe('low');
+  });
+});
+
+describe('capMarketPrice (시세 sanity 상한)', () => {
+  it('빌라: 저신뢰 시세가 감정가 초과 → 감정가로 상한 + low', () => {
+    const r = capMarketPrice(390_000_000, 'medium', 200_000_000, 'villa'); // 시세 195% of 감정
+    expect(r.capped).toBe(true);
+    expect(r.marketPrice).toBe(200_000_000);
+    expect(r.confidence).toBe('low');
+    expect(r.overPct).toBe(195);
+  });
+  it('빌라: 시세 ≤ 감정가면 그대로', () => {
+    const r = capMarketPrice(180_000_000, 'medium', 200_000_000, 'villa');
+    expect(r.capped).toBe(false);
+    expect(r.marketPrice).toBe(180_000_000);
+  });
+  it('아파트: 감정가×1.3까지 허용(실제 상승 여지)', () => {
+    expect(capMarketPrice(250_000_000, 'medium', 200_000_000, 'apartment').capped).toBe(false); // 125% 허용
+    expect(capMarketPrice(280_000_000, 'medium', 200_000_000, 'apartment').marketPrice).toBe(260_000_000); // 140%→130% 상한
+  });
+  it('high 신뢰(동일건물·면적)는 상한 예외 — 진짜 상승 반영', () => {
+    const r = capMarketPrice(400_000_000, 'high', 200_000_000, 'villa');
+    expect(r.capped).toBe(false);
+    expect(r.marketPrice).toBe(400_000_000);
+  });
+  it('감정가 없으면 상한 불가(그대로)', () => {
+    expect(capMarketPrice(400_000_000, 'low', undefined, 'villa').capped).toBe(false);
   });
 });
 

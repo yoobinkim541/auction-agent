@@ -13,8 +13,9 @@ async function main(): Promise<void> {
   const rows = await query<EvalRow>(
     `select case_no, item_no, sale_date::text, property_type, court, address,
             appraisal_value::float8, expected_bid::float8, market_price::float8, min_bid_price::float8,
-            total_score, passed_filter, recommendation, true_margin, inq_cnt, interest_cnt,
-            sold, sold_amount::float8, result_cd, matched, residual::float8, residual_pct, sale_ratio
+            total_score, passed_filter, recommendation, true_margin, max_safe_bid::float8, inq_cnt, interest_cnt,
+            sold, sold_amount::float8, result_cd, matched, residual::float8, residual_pct, sale_ratio,
+            would_have_won_under_max_safe_bid, realized_bid_margin
        from gm_outcome_eval
       where sale_date < current_date`,
   );

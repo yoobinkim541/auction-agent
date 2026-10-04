@@ -5,9 +5,9 @@
 import type { Listing, LocationAnalysis, Comparable, PropertyType } from '../../shared/types.ts';
 import { addressToLawdCd } from './lawd-codes.ts';
 import { fetchMolitRaw, molitQuotaHit } from '../../shared/molit-cache.ts';
-import { geocodeNaver } from './osm.ts';
+import { geocodeSmart, stripToJibun } from './osm.ts';
 import {
-  parseMolitDealAmount, extractDong, extractBuildingName, estimateMarketPrice,
+  parseMolitDealAmount, extractDong, extractBuildingName, estimateMarketPrice, capMarketPrice,
 } from './comps.ts';
 import { recentYearMonths } from '../../shared/stats.ts';
 
@@ -121,11 +121,15 @@ export async function analyzeLocation(listing: Listing, opts: LocationOptions = 
   if (listing.lat && listing.lng) {
     geo = { lat: listing.lat, lng: listing.lng, lawdCd: addressToLawdCd(listing.address) };
   } else {
-    // 카카오(키 있을 때) → 네이버(fallback) 순으로 지오코딩 시도
+    // 카카오(키 있을 때) → 네이버(fallback, 지번 정제 재시도 포함) 순으로 지오코딩 시도
     const addr = listing.roadAddress || listing.address;
     geo = await kakaoGeocode(addr);
     if (!geo) {
-      const n = await geocodeNaver(addr);
+      const stripped = stripToJibun(addr);
+      if (stripped !== addr) geo = await kakaoGeocode(stripped);
+    }
+    if (!geo) {
+      const n = await geocodeSmart(addr);
       if (n) geo = { lat: n.lat, lng: n.lng, lawdCd: addressToLawdCd(listing.address) };
     }
   }
@@ -153,6 +157,16 @@ export async function analyzeLocation(listing: Listing, opts: LocationOptions = 
     marketPrice = Math.round(listing.appraisalValue * 0.90);
     marketConfidence = 'low';
     compBasis = `감정가(${(listing.appraisalValue / 100_000_000).toFixed(2)}억)×90% 추정 — 실거래 비교군 부족, 저신뢰`;
+  }
+
+  // 시세 sanity 상한(가짜 마진 방지) — 백테스트상 '고점수→유찰'의 최대 원인이 저신뢰 시세 과대추정.
+  {
+    const capped = capMarketPrice(marketPrice, marketConfidence, listing.appraisalValue, listing.propertyType);
+    if (capped.capped) {
+      compBasis = `${compBasis ?? ''} → 감정가 대비 과대(${capped.overPct}%)로 ${capped.thinType ? '감정가' : '감정가×1.3'} 상한(저신뢰 실거래 매칭 의심)`;
+    }
+    marketPrice = capped.marketPrice;
+    marketConfidence = capped.confidence;
   }
 
   const safetyMargin =

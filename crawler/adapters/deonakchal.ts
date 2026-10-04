@@ -19,12 +19,14 @@ import type {
 import type { Adapter, CrawlFilter, ScrapedListing } from './types.ts';
 import { sleep } from './types.ts';
 import {
-  parseKoreanMoney, parseKoreanDate, mapPropertyType, mapRightKind,
+  parseKoreanMoney, parseKoreanDate, mapPropertyType, mapRightKind, extractLabeledKoreanMoney,
   normalizeCaseNo, extractAmountFromText,
 } from '../normalize.ts';
-import { parseResultRowText, type ParsedRow } from './parse-row.ts';
+import { parseResultRowText, normalizeItemNo, type ParsedRow } from './parse-row.ts';
+import { classifyEgress } from '../egress.ts';
 
 const BASE = 'https://www.xn--b20bu5cuwtpue8ui.com'; // 더낙찰옥션.com (punycode)
+export const DEONAKCHAL_BASE_URL = BASE;
 const AUTH_DIR = '.auth';
 const STORAGE = path.join(AUTH_DIR, 'deonakchal.json');
 const UA = 'gyeongmae-agent/0.1 (personal research; contact: owner)';
@@ -40,7 +42,7 @@ function intEnv(name: string, dflt: number, min: number): number {
 }
 const BLOCK_MARKER = path.join(AUTH_DIR, 'deonakchal-blocked.json');
 const BLOCK_COOLDOWN_MS = intEnv('CRAWL_BLOCK_COOLDOWN_MIN', 360, 0) * 60_000; // 기본 6h
-function recordBlock(reason: string): void {
+export function recordBlock(reason: string): void {
   try {
     fs.mkdirSync(AUTH_DIR, { recursive: true });
     const tmp = `${BLOCK_MARKER}.${process.pid}.tmp`;
@@ -60,8 +62,8 @@ function blockCooldownRemainingMs(): number {
   } catch { return 0; }
 }
 
-/** egress IP가 데이터센터/클라우드면 경고만 한다(개인 계정을 클라우드 IP로 로그인 = 계정 플래그 트리거).
- *  막지는 않음. CRAWL_ALLOW_DATACENTER=true 로 침묵. 네트워크 실패는 무시(throw-safe). */
+/** egress IP가 등록 집 IP가 아니면 경고한다(개인 계정을 클라우드 IP로 로그인 = 계정 플래그 트리거).
+ *  오케스트레이터(enrich)는 fail-closed로 중단하고, 일반 크롤 어댑터는 경고만 한다. */
 let _egressChecked = false;
 async function warnIfDatacenterEgress(): Promise<void> {
   if (_egressChecked || process.env.CRAWL_ALLOW_DATACENTER === 'true') return;
@@ -70,9 +72,10 @@ async function warnIfDatacenterEgress(): Promise<void> {
     const res = await fetch('https://ipinfo.io/json', { signal: AbortSignal.timeout(4000) });
     if (!res.ok) return;
     const j = (await res.json()) as { ip?: string; org?: string };
-    if (/oracle|amazon|aws|google|gcp|microsoft|azure|ovh|hetzner|digitalocean|linode|vultr|cloud|hosting|datacenter|data center/i.test(j.org ?? '')) {
-      console.warn(`[deonakchal] ⚠️ egress IP(${j.ip ?? '?'} · ${j.org})가 데이터센터/클라우드망입니다.`);
-      console.warn('[deonakchal] ⚠️ 개인 구독 계정을 클라우드 IP로 로그인하면 비정상 로그인으로 계정이 플래그될 수 있습니다 — 주거용 회선 권장. (무시: CRAWL_ALLOW_DATACENTER=true)');
+    const kind = classifyEgress(j);
+    if (kind !== 'home') {
+      console.warn(`[deonakchal] ⚠️ egress IP(${j.ip ?? '?'} · ${j.org})가 등록 집 IP로 확인되지 않습니다(${kind}).`);
+      console.warn('[deonakchal] ⚠️ ISP 문자열만으로는 데이터센터 프록시를 배제할 수 없습니다. CRAWL_HOME_IPS에 실제 집 IP 등록 권장. (무시: CRAWL_ALLOW_DATACENTER=true)');
     }
   } catch { /* 네트워크 실패 무시 */ }
 }
@@ -84,7 +87,7 @@ const SEL = {
   loginId: '#id',
   loginPw: '#pw',
   loginSubmit: '#frmLogin input[type=submit]',
-  loggedInMarker: 'text=로그아웃', // 로그인 성공 판별
+  loggedInMarker: 'text=마이페이지', // 로그인 성공 판별 (2026-07 사이트 개편으로 '로그아웃'→'마이페이지'. 로그인 시 헤더에 노출)
   searchPath: '/auction/search.html',
   listPath: '/auction/list.html',     // 전체 결과(종결 우선 정렬)
   themePath: '/auction/thema.html',   // 테마 = 진행 매물 (실시간, 권장 소스)
@@ -219,8 +222,8 @@ async function newPage(browser: Browser): Promise<Page> {
 }
 
 /** 결과 행 텍스트를 정규식으로 파싱. 종결/취하 등 입찰불가 상태는 제외. (파싱은 parse-row.ts 순수함수) */
-async function parseListPage(page: Page): Promise<ParsedRow[]> {
-  const rows = page.locator(SEL.resultRow);
+async function parseListPage(page: Page, rowSelector: string = SEL.resultRow): Promise<ParsedRow[]> {
+  const rows = page.locator(rowSelector);
   const n = await rows.count();
   const out: ParsedRow[] = [];
   for (let i = 0; i < n; i++) {
@@ -231,6 +234,15 @@ async function parseListPage(page: Page): Promise<ParsedRow[]> {
     if (parsed) out.push(parsed);
   }
   return out;
+}
+
+/** deonakchal 검색결과에서 사건번호와 물건번호가 모두 같은 행만 선택한다. */
+export function chooseDeonakListRow<T extends { productId?: string; listing: { caseNo: string; itemNo?: string | null } }>(rows: T[], caseNo: string, itemNo: string | null | undefined): T | undefined {
+  const wantCase = normalizeCaseNo(caseNo);
+  const wantItem = normalizeItemNo(itemNo);
+  return rows.find((row) =>
+    !!row.productId && normalizeCaseNo(row.listing.caseNo) === wantCase && normalizeItemNo(row.listing.itemNo) === wantItem,
+  );
 }
 
 /** 명세서 notes에서 "최선순위설정: 2023.09.06" → ISO 추출 */
@@ -249,15 +261,8 @@ async function scrapeOne(page: Page, c: ParsedRow): Promise<ScrapedListing> {
   if (c.productId) {
     // 상세 데이터를 docs·listing에 적용하는 헬퍼 — 세션만료 재시도 시 중복 방지
     const applyDetail = (d: DetailData) => {
-      const allNotes = [...c.notes, ...d.notes];
       listing = { ...listing, sourceUrl: `${BASE}/auction/view.html?product_id=${c.productId}` };
-      docs.push({
-        caseNo: listing.caseNo, docType: 'registry_summary',
-        parsedJson: { registry: d.registry, siteAssumedAmount: d.siteAssumedAmount, statementSeniorDate: extractSeniorDate(allNotes) },
-      });
-      docs.push({ caseNo: listing.caseNo, docType: 'sale_statement', parsedJson: { tenants: d.tenants, notes: allNotes } });
-      if (d.appraisal) docs.push({ caseNo: listing.caseNo, docType: 'appraisal_report', parsedJson: d.appraisal });
-      if (d.siteMetrics && Object.keys(d.siteMetrics).length) docs.push({ caseNo: listing.caseNo, docType: 'site_metrics', parsedJson: d.siteMetrics });
+      docs.push(...docsFromDetail(listing.caseNo, listing.itemNo, d, c.notes, listing.sourceUrl));
     };
     try {
       applyDetail(await parseDetail(page, c.productId));
@@ -325,8 +330,9 @@ export class DeonakchalAdapter implements Adapter {
           if (rows.length === 0) break;
           let newOnPage = 0;
           for (const r of rows) {
-            if (seen.has(r.listing.caseNo)) continue;
-            seen.add(r.listing.caseNo);
+            const rowKey = `${r.listing.caseNo}|${r.listing.itemNo ?? '1'}`;
+            if (seen.has(rowKey)) continue;
+            seen.add(rowKey);
             newOnPage++;
             if (filter.propertyTypes.length && !filter.propertyTypes.includes(r.listing.propertyType)) continue;
             if (filter.regions.length && !filter.regions.some((rg) => r.listing.address.includes(rg))) continue;
@@ -411,6 +417,21 @@ export interface DetailData {
   siteAssumedAmount: number | null; // 사이트 예상배당의 '낙찰자인수' 합계(미배당금액)
   appraisal: { text: string; highlights: string[]; zoning?: string; gongPrice?: number; landPrice?: number } | null; // 감정평가요항 + 공시가격
   siteMetrics: SiteMetrics; // 역세권·매각기일·동일건물 실거래·매각가율·표제부·명도비·토지규제·행정기관
+}
+
+export function docsFromDetail(caseNo: string, itemNo: string | undefined, detail: DetailData, extraNotes: string[] = [], sourceUrl?: string): ListingDoc[] {
+  const allNotes = [...extraNotes, ...detail.notes];
+  const sourceMeta = sourceUrl ? { sourceUrl } : {};
+  const docs: ListingDoc[] = [
+    {
+      caseNo, itemNo, docType: 'registry_summary',
+      parsedJson: { source: 'deonakchal', ...sourceMeta, registry: detail.registry, siteAssumedAmount: detail.siteAssumedAmount, statementSeniorDate: extractSeniorDate(allNotes) },
+    },
+    { caseNo, itemNo, docType: 'sale_statement', parsedJson: { source: 'deonakchal', ...sourceMeta, tenants: detail.tenants, notes: allNotes } },
+  ];
+  if (detail.appraisal) docs.push({ caseNo, itemNo, docType: 'appraisal_report', parsedJson: { source: 'deonakchal', ...sourceMeta, ...detail.appraisal } });
+  if (detail.siteMetrics && Object.keys(detail.siteMetrics).length) docs.push({ caseNo, itemNo, docType: 'site_metrics', parsedJson: { source: 'deonakchal', ...sourceMeta, ...detail.siteMetrics } });
+  return docs;
 }
 
 const KMONEY = (s?: string | null): number | undefined => parseKoreanMoney(s ?? undefined) ?? undefined;
@@ -544,10 +565,10 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
     await wait(rnd(900, 1900)); // 페이지 훑어보는 텀
     const probe = await page.evaluate((blkSrc) => {
       const html = document.documentElement.innerHTML;
-      return { blocked: new RegExp(blkSrc, 'i').test(html), tables: document.querySelectorAll('table').length, logged: html.includes('로그아웃') };
+      return { blocked: new RegExp(blkSrc, 'i').test(html), tables: document.querySelectorAll('table').length, logged: html.includes('마이페이지') };
     }, BLOCK_RE.source).catch(() => ({ blocked: false, tables: 0, logged: true }));
     if (probe.blocked) throw new SiteBlockedError();
-    // 로그아웃 마커 없음 = 세션 만료(로그인 폼 리다이렉트) — 더 기다려도 의미 없음
+    // 로그인 마커(마이페이지) 없음 = 세션 만료(로그인 폼 리다이렉트) — 더 기다려도 의미 없음
     if (!probe.logged) throw new SessionExpiredError();
     if (probe.tables > 0) { loaded = true; break; }
     // 표 미로딩: 사람처럼 잠깐 더 기다렸다 확인(최대 ~6초)
@@ -555,7 +576,7 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
       await wait(500);
       const r2 = await page.evaluate((src) => {
         const html = document.documentElement.innerHTML;
-        return { blk: new RegExp(src, 'i').test(html), n: document.querySelectorAll('table').length, logged: html.includes('로그아웃') };
+        return { blk: new RegExp(src, 'i').test(html), n: document.querySelectorAll('table').length, logged: html.includes('마이페이지') };
       }, BLOCK_RE.source).catch(() => ({ blk: false, n: 0, logged: true }));
       if (r2.blk) throw new SiteBlockedError();
       if (!r2.logged) throw new SessionExpiredError(); // 초기 probe와 일치: 테이블 유무 무관
@@ -629,7 +650,7 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
     tenants.push({
       name: row[1],
       moveInDate: moveIn, occupancyDate: moveIn, fixedDate: fixed,
-      deposit: parseKoreanMoney(joined.match(/보증금\s*:?\s*([\d,]+)/)?.[1]) ?? 0,
+      deposit: extractLabeledKoreanMoney(joined, '보증금', ['월차임', '차임', '전입일자', '확정일자', '배당요구', '점유', '대항력']) ?? 0,
       demandedDistribution: !!demand, demandDate: demand, occupied: true,
       raw: joined,
     });
@@ -702,4 +723,81 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
   if (photos.length) siteMetrics.photos = photos;
 
   return { registry, tenants, notes, siteAssumedAmount, appraisal, siteMetrics };
+}
+
+// ── 교차 보강: courtauction 사건 → deonakchal 임차인 상세 (courtauction은 임차인 표 미파싱) ──
+/** 수도권 법원명 → deonakchal search.html court1 값 (2026-07 확인). courtauction METRO_COURTS 이름과 동일. */
+export const DEONAK_COURT1: Record<string, string> = {
+  '서울중앙지방법원': 'A1', '서울동부지방법원': 'A2', '서울남부지방법원': 'A4', '서울북부지방법원': 'A5', '서울서부지방법원': 'A3',
+  '의정부지방법원': 'D1', '고양지원': 'D2', '남양주지원': 'D3',
+  '인천지방법원': 'C1', '부천지원': 'C2',
+  '수원지방법원': 'E1', '성남지원': 'E2', '여주지원': 'E3', '평택지원': 'E4', '안산지원': 'E5', '안양지원': 'E6',
+};
+
+/** courtauction 사건번호 "2023타경111644" → deonakchal mngno "2023-111644". 실패 시 null. (순수함수, 테스트) */
+export function caseNoToMngno(caseNo: string): string | null {
+  const m = String(caseNo).replace(/\s/g, '').match(/(\d{4})타경(\d+)/);
+  return m ? `${m[1]}-${m[2]}` : null;
+}
+
+/**
+ * [교차 보강] courtauction 물건을 deonakchal에서 사건번호로 찾아 상세(임차인 등) 조회.
+ *   page는 **로그인된 상태**여야 함(오케스트레이터가 ensureLogin 후 재사용). 조회 1건 = 검색 GET + 상세.
+ *   못 찾으면 null(그 사건이 deonakchal에 없거나 매칭 실패). 차단 시 SiteBlockedError 전파.
+ */
+export async function lookupCaseDetail(
+  page: Page, courtName: string, caseNo: string, itemNo: string,
+): Promise<{ productId: string; detail: DetailData } | null> {
+  const m = String(caseNo).replace(/\s/g, '').match(/(\d{4})타경(\d+)/);
+  const court1 = DEONAK_COURT1[courtName];
+  if (!m || !court1) return null; // 파싱 실패 or 수도권 외 법원(매핑 없음) → 스킵
+  const [, year, num] = m;
+  await rateGate();
+  // 경매(법원) 검색: frmSimple GET — list.html?court1=<법원>&syear=<연도>&sno=<사건번호>. (frm_top3 mngno는 공매라 오답.)
+  await page.goto(`${BASE}${SEL.listPath}?court1=${court1}&syear=${year}&sno=${num}`, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+  // 검색결과 행은 테마 목록과 다른 테이블에 있어 SEL.resultRow(테마 스코프)로 안 잡힘 → 넓은 셀렉터 사용.
+  // AJAX 렌더라 첫 결과행이 뜰 때까지 대기(최대 8s). 0건이면 타임아웃 후 진행(빈 배열).
+  const searchRowSel = 'tr[id^="tr_"]';
+  await page.locator(searchRowSel).first().waitFor({ state: 'attached', timeout: 8000 }).catch(() => {});
+  await wait(rnd(900, 1900));
+  if (await detectBlocked(page)) throw new SiteBlockedError();
+  const rows = await parseListPage(page, searchRowSel);
+  // deonakchal 행 사건번호는 "연도-번호"(예: 2025-103018) — courtauction "2025타경103018"과 형식이 달라
+  // normalizeCaseNo(공백제거만)로는 안 맞음. court1으로 이미 법원 필터되므로 연도-번호 일치 행을 고른다.
+  const wantDash = `${year}-${num}`;
+  const chosen = chooseDeonakListRow(rows, wantDash, itemNo);
+  if (!chosen) return null;
+  try {
+    return { productId: chosen.productId!, detail: await parseDetail(page, chosen.productId!) };
+  } catch (e) {
+    if (e instanceof SiteBlockedError) throw e; // 차단은 상위로 전파(즉시 중단·쿨다운)
+    if (e instanceof SessionExpiredError) {
+      // 밤샘 배치 중 세션 TTL 만료 대비: 재로그인 1회 후 재시도(scrapeOne과 동일 패턴). 없으면 배치 전체가 만료로 실패.
+      console.warn(`[deonakchal] lookup 세션 만료 — 재로그인 후 재시도 ${caseNo}`);
+      await ensureLogin(page); // SiteBlockedError는 그대로 전파
+      return { productId: chosen.productId!, detail: await parseDetail(page, chosen.productId!) };
+    }
+    throw e;
+  }
+}
+
+/**
+ * [교차 보강용] 로그인된 페이지 1개 열기(세션 재사용 — 재로그인 최소화). 오케스트레이터가 이걸로 **직렬** lookup 후 close().
+ *   서킷브레이커 쿨다운 중이면 null 반환(그날 건너뜀). 로그인 성공 시 쿨다운 해제.
+ *   ⚠️ egress(집 IP) 검증은 오케스트레이터 책임(warnIfDatacenterEgress는 경고만이므로 abort는 상위에서).
+ */
+export async function openLoggedInPage(): Promise<{ page: Page; close: () => Promise<void> } | null> {
+  const cd = blockCooldownRemainingMs();
+  if (cd > 0) { console.warn(`[deonakchal] 서킷브레이커 쿨다운 ${Math.round(cd / 60000)}분 남음 — 이번 실행 건너뜀`); return null; }
+  const browser = await launch();
+  try {
+    const page = await newPage(browser);
+    await ensureLogin(page);        // 세션 있으면 재로그인 안 함
+    clearBlock();                   // 로그인 성공 = 계정 정상
+    await page.context().storageState({ path: STORAGE }).catch(() => {}); // 갱신 세션 저장
+    return { page, close: async () => { await browser.close().catch(() => {}); } };
+  } catch (e) {
+    await browser.close().catch(() => {});
+    throw e;
+  }
 }

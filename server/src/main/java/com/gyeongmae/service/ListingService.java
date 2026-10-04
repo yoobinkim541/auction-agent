@@ -1,6 +1,8 @@
 package com.gyeongmae.service;
 
 import javax.sql.DataSource;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
@@ -21,9 +23,31 @@ public class ListingService {
   }
 
   private static final String SELECT_BODY = """
-      select l.id, l.case_no, l.court, l.address, l.property_type,
+      select l.id, l.case_no, l.item_no, l.court, l.address, l.property_type,
              l.appraisal_value, l.min_bid_price, l.fail_count, l.sale_date, l.area_m2, l.source,
              l.source_url, l.is_favorite, l.inq_cnt, l.interest_cnt,
+             coalesce(case when l.source = 'courtauction' then l.source_url end, 'https://www.courtauction.go.kr/pgj/index.on') as court_check_url,
+             coalesce(
+               case when l.source = 'deonakchal' then l.source_url end,
+               deonak_doc.source_url,
+               case when l.case_no ~ '^[0-9]{4}타경[0-9]+'
+                    then 'https://www.xn--b20bu5cuwtpue8ui.com/auction/list.html?'
+                         || case when deonak_court.court1 is not null then 'court1=' || deonak_court.court1 || '&' else '' end
+                         || 'syear=' || substring(l.case_no from '([0-9]{4})타경')
+                         || '&sno=' || substring(l.case_no from '타경([0-9]+)')
+                    else 'https://www.xn--b20bu5cuwtpue8ui.com/auction/list.html' end
+             ) as deonakchal_check_url,
+             case when cal.sample_size is null then null
+                  else jsonb_build_object(
+                    'method', 'group_median_v1',
+                    'status', 'reference_only',
+                    'region', listing_region.region,
+                    'sample_size', cal.sample_size,
+                    'median_sale_ratio', cal.median_sale_ratio,
+                    'median_realized_margin', cal.median_realized_margin,
+                    'reference_bid_price', case when l.appraisal_value is null then null else round(l.appraisal_value * cal.median_sale_ratio)::bigint end,
+                    'delta_vs_expected_bid', case when loc.expected_bid_price is null or l.appraisal_value is null then null else round(l.appraisal_value * cal.median_sale_ratio)::bigint - loc.expected_bid_price end
+                  ) end as ml_calibration,
              (to_jsonb(r)   - 'id' - 'listing_id') as rights,
              (to_jsonb(loc) - 'id' - 'listing_id') as location,
              s.total_score, s.passed_filter, s.safety_margin_score, s.clean_rights_score, s.reason
@@ -31,13 +55,65 @@ public class ListingService {
       left join gm_rights_analysis   r   on r.listing_id   = l.id
       left join gm_location_analysis loc on loc.listing_id = l.id
       left join gm_scores            s   on s.listing_id   = l.id
+
+      left join lateral (
+        select case
+          when split_part(l.address, ' ', 1) in ('서울특별시','부산광역시','대구광역시','인천광역시','광주광역시','대전광역시','울산광역시','세종특별자치시')
+            then split_part(l.address, ' ', 1) || ' ' || split_part(l.address, ' ', 2)
+          when split_part(l.address, ' ', 1) like '%도'
+            then split_part(l.address, ' ', 1) || ' ' || split_part(l.address, ' ', 2)
+          else split_part(l.address, ' ', 1)
+        end as region
+      ) listing_region on true
+      left join gm_ml_price_calibration cal on cal.property_type = l.property_type and cal.region = listing_region.region
+      left join lateral (
+        select case l.court
+          when '서울중앙지방법원' then 'A1' when '서울동부지방법원' then 'A2' when '서울서부지방법원' then 'A3'
+          when '서울남부지방법원' then 'A4' when '서울북부지방법원' then 'A5'
+          when '의정부지방법원' then 'D1' when '고양지원' then 'D2' when '남양주지원' then 'D3'
+          when '인천지방법원' then 'C1' when '부천지원' then 'C2'
+          when '수원지방법원' then 'E1' when '성남지원' then 'E2' when '여주지원' then 'E3'
+          when '평택지원' then 'E4' when '안산지원' then 'E5' when '안양지원' then 'E6'
+          else null end as court1
+      ) deonak_court on true
+      left join lateral (
+        select d.parsed_json->>'sourceUrl' as source_url
+        from gm_listing_docs d
+        where d.listing_id = l.id
+          and d.parsed_json->>'source' = 'deonakchal'
+          and d.parsed_json->>'sourceUrl' is not null
+        order by d.created_at desc
+        limit 1
+      ) deonak_doc on true
       """;
 
   /** 목록용 경량 쿼리 — comps/photos/report 본문/tenants/classified 등 무거운 필드 제외 (~10× 경량) */
   private static final String SELECT_SLIM = """
-      select l.id, l.case_no, l.court, l.address, l.property_type,
+      select l.id, l.case_no, l.item_no, l.court, l.address, l.property_type,
              l.appraisal_value, l.min_bid_price, l.fail_count, l.sale_date, l.area_m2, l.source,
              l.source_url, l.is_favorite, l.crawled_at, l.lat, l.lng, l.inq_cnt, l.interest_cnt,
+             coalesce(case when l.source = 'courtauction' then l.source_url end, 'https://www.courtauction.go.kr/pgj/index.on') as court_check_url,
+             coalesce(
+               case when l.source = 'deonakchal' then l.source_url end,
+               deonak_doc.source_url,
+               case when l.case_no ~ '^[0-9]{4}타경[0-9]+'
+                    then 'https://www.xn--b20bu5cuwtpue8ui.com/auction/list.html?'
+                         || case when deonak_court.court1 is not null then 'court1=' || deonak_court.court1 || '&' else '' end
+                         || 'syear=' || substring(l.case_no from '([0-9]{4})타경')
+                         || '&sno=' || substring(l.case_no from '타경([0-9]+)')
+                    else 'https://www.xn--b20bu5cuwtpue8ui.com/auction/list.html' end
+             ) as deonakchal_check_url,
+             case when cal.sample_size is null then null
+                  else jsonb_build_object(
+                    'method', 'group_median_v1',
+                    'status', 'reference_only',
+                    'region', listing_region.region,
+                    'sample_size', cal.sample_size,
+                    'median_sale_ratio', cal.median_sale_ratio,
+                    'median_realized_margin', cal.median_realized_margin,
+                    'reference_bid_price', case when l.appraisal_value is null then null else round(l.appraisal_value * cal.median_sale_ratio)::bigint end,
+                    'delta_vs_expected_bid', case when loc.expected_bid_price is null or l.appraisal_value is null then null else round(l.appraisal_value * cal.median_sale_ratio)::bigint - loc.expected_bid_price end
+                  ) end as ml_calibration,
              (select count(*) from gm_fieldwork_notes fn where fn.listing_id = l.id and fn.checked) as field_done,
              coalesce(jsonb_array_length(loc.report->'fieldwork'->'fieldChecklist'), 0) as field_total,
              (select count(*) from gm_fieldwork_notes fn where fn.listing_id = l.id and fn.note <> '') as field_notes,
@@ -81,6 +157,36 @@ public class ListingService {
       left join gm_rights_analysis   r   on r.listing_id   = l.id
       left join gm_location_analysis loc on loc.listing_id = l.id
       left join gm_scores            s   on s.listing_id   = l.id
+
+      left join lateral (
+        select case
+          when split_part(l.address, ' ', 1) in ('서울특별시','부산광역시','대구광역시','인천광역시','광주광역시','대전광역시','울산광역시','세종특별자치시')
+            then split_part(l.address, ' ', 1) || ' ' || split_part(l.address, ' ', 2)
+          when split_part(l.address, ' ', 1) like '%도'
+            then split_part(l.address, ' ', 1) || ' ' || split_part(l.address, ' ', 2)
+          else split_part(l.address, ' ', 1)
+        end as region
+      ) listing_region on true
+      left join gm_ml_price_calibration cal on cal.property_type = l.property_type and cal.region = listing_region.region
+      left join lateral (
+        select case l.court
+          when '서울중앙지방법원' then 'A1' when '서울동부지방법원' then 'A2' when '서울서부지방법원' then 'A3'
+          when '서울남부지방법원' then 'A4' when '서울북부지방법원' then 'A5'
+          when '의정부지방법원' then 'D1' when '고양지원' then 'D2' when '남양주지원' then 'D3'
+          when '인천지방법원' then 'C1' when '부천지원' then 'C2'
+          when '수원지방법원' then 'E1' when '성남지원' then 'E2' when '여주지원' then 'E3'
+          when '평택지원' then 'E4' when '안산지원' then 'E5' when '안양지원' then 'E6'
+          else null end as court1
+      ) deonak_court on true
+      left join lateral (
+        select d.parsed_json->>'sourceUrl' as source_url
+        from gm_listing_docs d
+        where d.listing_id = l.id
+          and d.parsed_json->>'source' = 'deonakchal'
+          and d.parsed_json->>'sourceUrl' is not null
+        order by d.created_at desc
+        limit 1
+      ) deonak_doc on true
       """;
 
   /** 매물 목록(JSON 배열 문자열) — 경량(목록 뷰용) */
@@ -137,6 +243,207 @@ public class ListingService {
         .addValue("n", note == null ? "" : note);
     jdbc.update(sql, params);
   }
+
+
+
+  /** 오늘 할 일 큐(JSON 배열 문자열) — DB view가 우선순위와 사유를 산출한다. */
+  public String todayActionsJson(int requestedLimit) {
+    int limit = Math.max(1, Math.min(50, requestedLimit));
+    String sql = """
+        select coalesce(json_agg(t order by t.priority desc, t.sort_date asc nulls last, t.case_no, t.item_no), '[]'::json)::text
+          from (
+            select listing_id, case_no, item_no, action_type, priority, severity,
+                   title, reason, due_date::text, sort_date::text, source_url
+              from gm_today_actions
+             order by priority desc, sort_date asc nulls last, case_no, item_no
+             limit :limit
+          ) t
+        """;
+    return jdbc.queryForObject(sql, new MapSqlParameterSource("limit", limit), String.class);
+  }
+
+  /** Phase2 복기/ML 대시보드 데이터 — 운영 추천에는 반영하지 않는 read-only 지표. */
+  public Map<String, Object> mlReview() {
+    String summarySql = """
+        with base as (
+          select * from gm_outcome_eval where sale_date < current_date
+        )
+        select count(*)::int as past_snapshots,
+               count(*) filter (where matched)::int as matched,
+               count(*) filter (where matched and sold)::int as sold,
+               count(*) filter (where matched and not sold)::int as unsold,
+               case when count(*) > 0 then 1 - count(*) filter (where matched)::float8 / count(*) else 0 end as miss_rate,
+               count(*) filter (where sold and sale_ratio is not null)::int as sale_ratio_labels,
+               avg(abs(residual_pct)) filter (where sold and residual_pct is not null) as expected_bid_mape,
+               avg(abs(sale_ratio - expected_bid::float8 / nullif(appraisal_value, 0)))
+                 filter (where sold and sale_ratio is not null and expected_bid is not null and appraisal_value > 0) as current_expected_mae,
+               avg(case when realized_bid_margin > 0 then 1.0 else 0.0 end)
+                 filter (where sold and realized_bid_margin is not null) as positive_margin_rate,
+               count(*) filter (where sold and would_have_won_under_max_safe_bid is not null)::int as safe_bid_rows,
+               avg(case when would_have_won_under_max_safe_bid then 1.0 else 0.0 end)
+                 filter (where sold and would_have_won_under_max_safe_bid is not null) as safe_bid_hit_rate
+          from base
+        """;
+    Map<String, Object> summary = jdbc.getJdbcTemplate().queryForMap(summarySql);
+
+    String groupsSql = """
+        with sold as (
+          select property_type,
+                 case
+                   when split_part(address, ' ', 1) in ('서울특별시','부산광역시','대구광역시','인천광역시','광주광역시','대전광역시','울산광역시','세종특별자치시')
+                     then split_part(address, ' ', 1) || ' ' || split_part(address, ' ', 2)
+                   when split_part(address, ' ', 1) like '%도'
+                     then split_part(address, ' ', 1) || ' ' || split_part(address, ' ', 2)
+                   else split_part(address, ' ', 1)
+                 end as region,
+                 sale_ratio, realized_bid_margin
+            from gm_outcome_eval
+           where sale_date < current_date and sold and sale_ratio is not null
+        )
+        select property_type, region, count(*)::int as rows,
+               percentile_cont(0.5) within group (order by sale_ratio) as median_sale_ratio,
+               percentile_cont(0.5) within group (order by realized_bid_margin) as median_realized_margin
+          from sold
+         group by property_type, region
+        having count(*) >= 5
+         order by rows desc, median_sale_ratio desc
+         limit 20
+        """;
+    List<Map<String, Object>> groups = jdbc.getJdbcTemplate().queryForList(groupsSql);
+
+    String coverageSql = """
+        with base as (select * from gm_outcome_eval where sale_date < current_date),
+        metrics(feature, non_null_rows) as (values
+          ('max_safe_bid', (select count(*) from base where max_safe_bid is not null)),
+          ('expected_bid', (select count(*) from base where expected_bid is not null)),
+          ('inq_cnt', (select count(*) from base where inq_cnt is not null)),
+          ('interest_cnt', (select count(*) from base where interest_cnt is not null)),
+          ('appraisal_value', (select count(*) from base where appraisal_value is not null)),
+          ('market_price', (select count(*) from base where market_price is not null)),
+          ('min_bid_price', (select count(*) from base where min_bid_price is not null)),
+          ('total_score', (select count(*) from base where total_score is not null)),
+          ('true_margin', (select count(*) from base where true_margin is not null))
+        ), total as (select greatest(count(*), 1)::float8 as n from base)
+        select feature, non_null_rows::int, non_null_rows::float8 / total.n as coverage
+          from metrics cross join total
+         order by coverage asc, non_null_rows desc
+        """;
+    List<Map<String, Object>> featureCoverage = jdbc.getJdbcTemplate().queryForList(coverageSql);
+
+    String surpriseSql = """
+        with base as (
+          select case_no, coalesce(nullif(item_no,''),'1') as item_no, sale_date, property_type, court, address,
+                 expected_bid, sold_amount, sale_ratio, residual_pct, total_score, passed_filter,
+                 recommendation, true_margin, inq_cnt, interest_cnt, realized_bid_margin, matched, sold
+            from gm_outcome_eval
+           where sale_date < current_date
+        ), ranked as (
+          (select 'overpriced' as surprise_kind, residual_pct as surprise_score, *
+             from base
+            where sold and residual_pct > 0
+            order by residual_pct desc nulls last
+            limit 10)
+          union all
+          (select 'avoid_but_sold' as surprise_kind, coalesce(sale_ratio, 0) as surprise_score, *
+             from base
+            where sold and (passed_filter = false or recommendation = 'avoid')
+            order by coalesce(sale_ratio, 0) desc
+            limit 10)
+          union all
+          (select 'passed_but_unsold' as surprise_kind, coalesce(total_score, 0) as surprise_score, *
+             from base
+            where matched and not sold and passed_filter = true
+            order by coalesce(total_score, 0) desc
+            limit 10)
+        )
+        select surprise_kind, surprise_score, case_no, item_no, sale_date::text, property_type, court, address,
+               expected_bid, sold_amount, sale_ratio, residual_pct, total_score, passed_filter,
+               recommendation, true_margin, inq_cnt, interest_cnt, realized_bid_margin
+          from ranked
+         order by case surprise_kind
+                    when 'overpriced' then 1
+                    when 'avoid_but_sold' then 2
+                    else 3
+                  end,
+                  surprise_score desc nulls last
+        """;
+    List<Map<String, Object>> surprises = jdbc.getJdbcTemplate().queryForList(surpriseSql);
+
+    String retrySql = """
+        select case_no, item_no, sale_date::text, court, property_type, address,
+               days_overdue, retry_priority, total_score, passed_filter, recommendation,
+               expected_bid, min_bid_price, inq_cnt, interest_cnt
+          from gm_result_retry_queue
+         order by retry_priority desc, sale_date desc, case_no, item_no
+         limit 30
+        """;
+    List<Map<String, Object>> retryQueue = jdbc.getJdbcTemplate().queryForList(retrySql);
+
+    String calibrationPerformanceSql = """
+        with scored as (
+          select e.case_no, e.item_no, e.property_type, e.address, e.appraisal_value,
+                 e.expected_bid, e.sale_ratio, c.median_sale_ratio,
+                 abs(e.sale_ratio - c.median_sale_ratio) as reference_abs_error,
+                 abs(e.sale_ratio - e.expected_bid::float8 / nullif(e.appraisal_value, 0)) as current_abs_error
+            from gm_outcome_eval e
+            join gm_ml_price_calibration c on c.property_type = e.property_type
+             and c.region = case
+               when split_part(e.address, ' ', 1) in ('서울특별시','부산광역시','대구광역시','인천광역시','광주광역시','대전광역시','울산광역시','세종특별자치시')
+                 then split_part(e.address, ' ', 1) || ' ' || split_part(e.address, ' ', 2)
+               when split_part(e.address, ' ', 1) like '%도'
+                 then split_part(e.address, ' ', 1) || ' ' || split_part(e.address, ' ', 2)
+               else split_part(e.address, ' ', 1)
+             end
+           where e.sale_date < current_date
+             and e.sold
+             and e.sale_ratio is not null
+             and e.appraisal_value > 0
+        )
+        select count(*)::int as rows,
+               avg(reference_abs_error) as reference_mae,
+               avg(current_abs_error) filter (where current_abs_error is not null) as current_mae,
+               avg(case when reference_abs_error < current_abs_error then 1.0 else 0.0 end)
+                 filter (where current_abs_error is not null) as reference_win_rate
+          from scored
+        """;
+    Map<String, Object> calibrationPerformance = jdbc.getJdbcTemplate().queryForMap(calibrationPerformanceSql);
+
+    String rightsRiskSql = """
+        select coalesce(risk_grade, 'unknown') as risk_grade,
+               count(*)::int as rows,
+               count(*) filter (where matched)::int as matched,
+               count(*) filter (where sold)::int as sold,
+               avg(case when sold then 1.0 else 0.0 end) filter (where matched) as sold_rate,
+               avg(realized_bid_margin) filter (where sold and realized_bid_margin is not null) as median_proxy_margin,
+               avg(assumed_amount) filter (where assumed_amount is not null) as avg_assumed_amount,
+               count(*) filter (where has_opposition_tenant)::int as opposition_rows,
+               avg(case when would_have_won_under_max_safe_bid then 1.0 else 0.0 end)
+                 filter (where would_have_won_under_max_safe_bid is not null) as safe_bid_hit_rate
+          from gm_rights_risk_eval
+         group by coalesce(risk_grade, 'unknown')
+         order by rows desc
+        """;
+    List<Map<String, Object>> rightsRisk = jdbc.getJdbcTemplate().queryForList(rightsRiskSql);
+
+    String reportPath = System.getenv().getOrDefault("ML_REPORT_PATH", "docs/phase2/ml-offline-report.md");
+    String markdown = null;
+    try {
+      Path path = Path.of(reportPath);
+      if (Files.exists(path)) markdown = Files.readString(path);
+    } catch (Exception ignored) { }
+
+    return Map.of(
+        "summary", summary,
+        "groupMedian", groups,
+        "featureCoverage", featureCoverage,
+        "surprises", surprises,
+        "retryQueue", retryQueue,
+        "calibrationPerformance", calibrationPerformance,
+        "rightsRisk", rightsRisk,
+        "reportMarkdown", markdown == null ? "" : markdown
+    );
+  }
+
 
   /** 최근 크롤 실행 로그 */
   public List<Map<String, Object>> crawlRuns() {

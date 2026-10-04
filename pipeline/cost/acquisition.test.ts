@@ -71,6 +71,28 @@ describe('시세/예상낙찰가', () => {
     expect(e.ratioPct).toBe(93);
     expect(e.price).toBe(214_830_000);
   });
+  it('실거래 comp 없으면 실증 낙찰가율 폴백 사용', () => {
+    const e = expectedBid(200_000_000, undefined, undefined, 90_000_000, { ratioPct: 56, basis: '실증 낙찰가율 villa×경기' });
+    expect(e.ratioPct).toBe(56);
+    expect(e.price).toBe(112_000_000); // 2억×56%
+    expect(e.basis).toContain('실증');
+  });
+  it('실증 폴백: 극단적 저최저가여도 최저가로 끌어내리지 않음(가짜마진 방지)', () => {
+    // 감정 4억, 최저 0.14억(극단 유찰) → 실증 56%면 예상낙찰 2.24억 (down-cap으로 최저가 근처로 붕괴되면 안 됨)
+    const e = expectedBid(400_000_000, undefined, undefined, 14_000_000, { ratioPct: 56, basis: '실증 villa' });
+    expect(e.price).toBe(224_000_000);
+    expect(e.basis).not.toContain('1.3배');
+  });
+  it('실증 폴백: 감정가×율 < 최저가면 최저가 하한(현 회차 최저 이상)', () => {
+    // 1회차(최저=감정): 감정 2억, 최저 2억, 실증 56% → 1.12억 < 최저 → 최저 2억으로 하한
+    const e = expectedBid(200_000_000, undefined, undefined, 200_000_000, { ratioPct: 56, basis: '실증 villa' });
+    expect(e.price).toBe(200_000_000);
+    expect(e.basis).toContain('최저가 하한');
+  });
+  it('실거래 comp가 실증보다 우선', () => {
+    const e = expectedBid(200_000_000, [80], undefined, 90_000_000, { ratioPct: 56, basis: '실증' });
+    expect(e.ratioPct).toBe(80); // comp 80 사용, 실증 56 무시
+  });
 });
 
 describe('토지규제 flags', () => {

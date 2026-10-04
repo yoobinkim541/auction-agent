@@ -7,9 +7,10 @@ export interface EvalRow {
   property_type: string; court: string | null; address: string; appraisal_value: number | null;
   expected_bid: number | null; market_price: number | null; min_bid_price: number | null;
   total_score: number | null; passed_filter: boolean | null; recommendation: string | null;
-  true_margin: number | null; inq_cnt: number | null; interest_cnt: number | null;
+  true_margin: number | null; max_safe_bid: number | null; inq_cnt: number | null; interest_cnt: number | null;
   sold: boolean | null; sold_amount: number | null; result_cd: string | null;
   matched: boolean; residual: number | null; residual_pct: number | null; sale_ratio: number | null;
+  would_have_won_under_max_safe_bid: boolean | null; realized_bid_margin: number | null;
 }
 
 const mean = (xs: number[]): number | null => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
@@ -34,10 +35,18 @@ export function coverage(rows: EvalRow[]) {
 
 /** 가격 보정 — 예상낙찰가 vs 실제(낙찰건만). residual_pct 기반 MAPE/편향 + 낙찰가율. */
 export function priceStats(rows: EvalRow[]) {
-  const s = rows.filter((r) => r.sold && r.residual_pct != null);
+  const sold = rows.filter((r) => r.sold);
+  const s = sold.filter((r) => r.residual_pct != null);
   if (!s.length) return null;
+  const missingExpected = sold.filter((r) => r.expected_bid == null || r.expected_bid <= 0).length;
+  const missingSoldAmount = sold.filter((r) => r.sold_amount == null).length;
+  const missingResidual = sold.length - s.length;
   return {
     n: s.length,
+    soldRows: sold.length,
+    missingResidual,
+    missingExpected,
+    missingSoldAmount,
     mapePct: (mean(s.map((r) => Math.abs(r.residual_pct!))) ?? 0) * 100,
     biasPct: (mean(s.map((r) => r.residual_pct!)) ?? 0) * 100, // +면 우리가 과소예측(시장이 더 비싸게)
     saleRatioMedPct: (median(s.filter((r) => r.sale_ratio != null).map((r) => r.sale_ratio!)) ?? 0) * 100,
@@ -55,6 +64,30 @@ export function qualityStats(rows: EvalRow[]) {
     matched: m.length,
     passedSoldRate: rate(passed), // 통과 매물이 실제 낙찰된 비율
     notPassedSoldRate: rate(notPassed), // 미통과인데 낙찰된 비율(높으면 기준이 헛다리)
+  };
+}
+
+
+/** 수익성 품질 — 낙찰 여부가 아니라 우리 안전입찰가/마진 기준으로 추천이 말이 됐는지 본다. */
+export function profitStats(rows: EvalRow[]) {
+  const sold = rows.filter((r) => r.sold);
+  const withSafeBid = sold.filter((r) => r.would_have_won_under_max_safe_bid != null);
+  const wonUnderSafeBid = withSafeBid.filter((r) => r.would_have_won_under_max_safe_bid === true);
+  const withRealizedMargin = sold.filter((r) => r.realized_bid_margin != null);
+  const positiveRealizedMargin = withRealizedMargin.filter((r) => r.realized_bid_margin! > 0);
+  const passed = withRealizedMargin.filter((r) => r.passed_filter === true);
+  const notPassed = withRealizedMargin.filter((r) => r.passed_filter === false);
+  const positiveRate = (xs: EvalRow[]) => (xs.length ? xs.filter((r) => r.realized_bid_margin! > 0).length / xs.length : null);
+  if (!sold.length) return null;
+  return {
+    soldRows: sold.length,
+    safeBidRows: withSafeBid.length,
+    wonUnderSafeBidRate: withSafeBid.length ? wonUnderSafeBid.length / withSafeBid.length : null,
+    realizedMarginRows: withRealizedMargin.length,
+    positiveRealizedMarginRate: withRealizedMargin.length ? positiveRealizedMargin.length / withRealizedMargin.length : null,
+    passedPositiveMarginRate: positiveRate(passed),
+    notPassedPositiveMarginRate: positiveRate(notPassed),
+    realizedMarginMedianPct: (median(withRealizedMargin.map((r) => r.realized_bid_margin!)) ?? 0) * 100,
   };
 }
 
@@ -91,9 +124,14 @@ export function formatReport(rows: EvalRow[], gate: number): string {
   }
   if (c.missRate > 0.3) out.push(`⚠️ 결과 미매칭률 ${(c.missRate * 100).toFixed(0)}% — 매각결과를 자주 놓치면 '매각결과 전용검색' 캡처 검토(plan 2a).`);
   const p = priceStats(rows);
-  if (p) out.push('', `[가격] 낙찰 ${p.n}건 · 예상오차(MAPE) ${p.mapePct.toFixed(1)}% · 편향 ${p.biasPct >= 0 ? '+' : ''}${p.biasPct.toFixed(1)}%(+면 과소예측) · 낙찰가율(중앙) ${p.saleRatioMedPct.toFixed(0)}%`);
+  if (p) {
+    out.push('', `[가격] 낙찰 ${p.n}건 · 예상오차(MAPE) ${p.mapePct.toFixed(1)}% · 편향 ${p.biasPct >= 0 ? '+' : ''}${p.biasPct.toFixed(1)}%(+면 과소예측) · 낙찰가율(중앙) ${p.saleRatioMedPct.toFixed(0)}%`);
+    if (p.missingResidual > 0) out.push(`[가격] 낙찰 ${p.soldRows}건 중 ${p.missingResidual}건은 예상가/낙찰가 누락으로 가격오차 집계 제외(expected 누락 ${p.missingExpected}, sold_amount 누락 ${p.missingSoldAmount})`);
+  }
   const q = qualityStats(rows);
   if (q) out.push(`[품질] 통과 매물 낙찰률 ${q.passedSoldRate != null ? (q.passedSoldRate * 100).toFixed(0) + '%' : '-'} vs 미통과 낙찰률 ${q.notPassedSoldRate != null ? (q.notPassedSoldRate * 100).toFixed(0) + '%' : '-'}`);
+  const pr = profitStats(rows);
+  if (pr) out.push(`[수익성] 안전입찰가 이하 낙찰률 ${pr.wonUnderSafeBidRate != null ? (pr.wonUnderSafeBidRate * 100).toFixed(0) + '%' : '-'} (${pr.safeBidRows}/${pr.soldRows}) · 실현 bid 마진 양수 ${pr.positiveRealizedMarginRate != null ? (pr.positiveRealizedMarginRate * 100).toFixed(0) + '%' : '-'} · 중앙 ${(pr.realizedMarginMedianPct).toFixed(1)}%`);
   if (c.sold > 0) {
     const s = surprises(rows, 3);
     if (s.overpriced.length) {

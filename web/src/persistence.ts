@@ -3,8 +3,10 @@ import type { SortKey } from './filters.ts';
 
 const CFG_KEY = 'gm_score_config';
 const UI_KEY = 'gm_ui_state';
+const UI_STATE_VERSION = 2;
 
 export type UIState = {
+  version?: number;
   sort?: SortKey; sortDir?: 'asc' | 'desc'; type?: string;
   hideExpired?: boolean; onlyPassed?: boolean; onlyMultiRound?: boolean; hideIncomplete?: boolean;
   groupByCase?: boolean;
@@ -26,10 +28,13 @@ export function saveConfig(cfg: ScoreConfig): void {
 export function loadUIState(): UIState {
   try {
     const raw = localStorage.getItem(UI_KEY);
-    if (raw) return JSON.parse(raw) as UIState;
+    if (raw) {
+      const state = JSON.parse(raw) as UIState;
+      return state.version === UI_STATE_VERSION ? state : {};
+    }
   } catch { /* ignore */ }
   return {};
 }
 export function saveUIState(state: UIState): void {
-  localStorage.setItem(UI_KEY, JSON.stringify(state));
+  localStorage.setItem(UI_KEY, JSON.stringify({ ...state, version: UI_STATE_VERSION }));
 }

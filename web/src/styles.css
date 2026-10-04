@@ -564,6 +564,8 @@ table.mini td.num { text-align: right; font-family: var(--mono); }
 .srclink { margin: 4px 0 0; font-size: 12.5px; }
 .srclink a { color: #6ea8fe; text-decoration: none; }
 .srclink a:hover { text-decoration: underline; }
+.srclinks { margin: 4px 0 0; display: grid; gap: 2px; }
+.srclinks .srclink { margin: 0; }
 .court-notice { margin: 8px 0; padding: 8px 10px; background: rgba(255,180,0,0.1); border: 1px solid #b8860b; border-radius: 6px; font-size: 12.5px; line-height: 1.5; color: #e8c840; }
 .court-notice a { color: #e8c840; text-decoration: underline; }
 .court-notice-soft { background: rgba(90,160,255,0.1); border-color: #3a6ea5; color: #9fc4f0; }
@@ -932,3 +934,110 @@ table.mini td.num { text-align: right; font-family: var(--mono); }
 .list-more { text-align: center; padding: 14px 0 18px; font-size: 12px; color: var(--muted, #888); }
 /* 표시/전체 카운트 불일치 안내 — 조건·필터가 목록을 자를 때만 노출 */
 .hidden-note { font-size: 11.5px; color: var(--muted, #888); padding: 2px 2px 8px; }
+
+/* ── Review / ML dashboard ── */
+.review-panel { display: grid; gap: 14px; margin-top: 12px; }
+.review-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; background: linear-gradient(180deg, rgba(110,168,254,.1), rgba(110,168,254,.03)); border: 1px solid rgba(110,168,254,.28); border-radius: 12px; padding: 16px 18px; }
+.review-head h2 { margin: 0 0 5px; font-size: 18px; }
+.review-head p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.review-gate { flex: 0 0 auto; border-radius: 999px; padding: 5px 11px; font-size: 12px; font-weight: 800; }
+.gate-ok { color: var(--clean); background: rgba(30,199,88,.12); border: 1px solid rgba(30,199,88,.32); }
+.gate-wait { color: var(--caution); background: rgba(245,166,35,.12); border: 1px solid rgba(245,166,35,.32); }
+.review-kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 9px; }
+.review-kpis > div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; min-width: 0; }
+.review-kpis span { display: block; color: var(--muted); font-size: 11.5px; margin-bottom: 5px; }
+.review-kpis b { display: block; font-family: var(--mono); font-size: 19px; color: var(--text); }
+.review-kpis em { display: block; margin-top: 3px; color: var(--muted); font-style: normal; font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.review-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 15px 16px; overflow: auto; }
+.review-card h3 { margin: 0 0 10px; font-size: 14px; }
+.review-grid2 { display: grid; grid-template-columns: 0.9fr 1.4fr; gap: 14px; align-items: start; }
+.mini-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.mini-table th, .mini-table td { border-bottom: 1px solid var(--line); padding: 7px 8px; text-align: right; white-space: nowrap; }
+.mini-table th:first-child, .mini-table td:first-child, .mini-table th:nth-child(2), .mini-table td:nth-child(2) { text-align: left; }
+.mini-table th { color: var(--muted); font-weight: 700; background: var(--panel2); }
+.ml-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.ml-lines code { display: block; white-space: pre-wrap; color: var(--muted-2); background: var(--panel2); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; font-size: 11.5px; }
+@media (max-width: 980px) { .review-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } .review-grid2 { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .review-head { flex-direction: column; } .review-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .review-kpis b { font-size: 17px; } }
+.surprise-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.surprise-box { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; min-width: 0; }
+.surprise-box h4 { margin: 0 0 8px; font-size: 13px; }
+.surprise-table td { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.link-btn { background: none; border: none; color: var(--accent); padding: 0; cursor: pointer; font-size: 12px; }
+.link-btn:hover { text-decoration: underline; }
+@media (max-width: 1100px) { .surprise-grid { grid-template-columns: 1fr; } }
+.ml-ref-chip { display: inline-block; margin-left: 5px; padding: 1px 5px; border-radius: 4px; font-size: 10px; font-weight: 800; font-family: var(--mono); color: #9fc4f0; background: rgba(90,160,255,.10); border: 1px solid rgba(90,160,255,.28); vertical-align: middle; }
+.ml-ref-chip.ml-up { color: var(--caution); background: rgba(245,166,35,.10); border-color: rgba(245,166,35,.30); }
+.ml-ref-chip.ml-down { color: var(--clean); background: rgba(30,199,88,.10); border-color: rgba(30,199,88,.28); }
+.review-kpis-compact { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ml-ref-chip.ml-overbid { color: var(--risky); background: rgba(240,69,69,.12); border-color: rgba(240,69,69,.35); }
+
+
+/* ── Today actions queue ── */
+.today-actions {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.today-actions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.today-actions-kicker {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.today-actions-more,
+.today-actions-error {
+  color: var(--muted);
+  font-size: 13px;
+}
+.today-actions-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+.today-action-card {
+  display: grid;
+  gap: 4px;
+  min-height: 120px;
+  padding: 10px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: inherit;
+  cursor: pointer;
+}
+.today-action-card:hover {
+  border-color: var(--accent);
+}
+.today-action-type,
+.today-action-date {
+  color: var(--muted);
+  font-size: 12px;
+}
+.today-action-case {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+.today-action-reason {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+.today-action-danger {
+  border-left: 4px solid #dc2626;
+}
+.today-action-warn {
+  border-left: 4px solid #f59e0b;
+}
+.today-action-info {
+  border-left: 4px solid #2563eb;
+}

@@ -15,15 +15,15 @@
  */
 import 'dotenv/config';
 import type { PropertyType } from '../shared/types.ts';
-import type { Adapter, CrawlFilter } from './adapters/types.ts';
+import type { Adapter, CrawlFilter, ScrapedListing } from './adapters/types.ts';
 import { DeonakchalAdapter, SiteBlockedError, inspectAndDump } from './adapters/deonakchal.ts';
 import { CourtAuctionAdapter, CourtAuctionBlockedError } from './adapters/courtauction.ts';
-import { upsertListing, upsertListingDoc, deleteListingDocs, startCrawlRun, finishCrawlRun, fetchListingDocs, recordDocChange, recordCompetitionSnapshot } from '../shared/db.ts';
+import { upsertListing, upsertListingDoc, deleteListingDocs, startCrawlRun, finishCrawlRun, fetchListingDocs, recordDocChange, recordCompetitionSnapshot, query } from '../shared/db.ts';
 import { changedDocTypes } from '../shared/doc-fingerprint.ts';
 
 const DEFAULT_FILTER: CrawlFilter = {
-  regions: ['서울', '경기', '인천'],
-  propertyTypes: ['apartment', 'villa', 'officetel'] as PropertyType[],
+  regions: ['서울', '경기'],
+  propertyTypes: [] as PropertyType[],
   maxItems: 1000,
 };
 
@@ -36,28 +36,45 @@ function resolveProxies(): (string | undefined)[] {
   return [undefined]; // 프록시 없이 직접 연결
 }
 
+async function saveScrapedListing(s: ScrapedListing): Promise<void> {
+  const id = await upsertListing(s.listing);
+  // 경쟁 열기 시계열 — 일별 관심수/조회수 스냅샷(★급증 알림·추세 신호용). 실패는 치명 아님.
+  await recordCompetitionSnapshot(s.listing).catch(() => {});
+  if (s.docs?.length) {
+    // 문서 내용 변경 감지(발품절감 ⑤) — 기존 문서가 있고 내용이 달라졌으면 이력 기록(★알림용).
+    try {
+      const prev = (await fetchListingDocs(id)).map((d) => ({ docType: d.doc_type, parsedJson: d.parsed_json }));
+      const changed = prev.length ? changedDocTypes(prev, s.docs.map((d) => ({ docType: d.docType, parsedJson: d.parsedJson }))) : [];
+      if (changed.length) await recordDocChange(id, s.listing.caseNo, changed);
+    } catch (e) {
+      console.warn(`[docs] 변경 감지 실패(무시) ${s.listing.caseNo}:`, e instanceof Error ? e.message : e);
+    }
+    await deleteListingDocs(id);
+    for (const doc of s.docs) await upsertListingDoc(id, doc);
+  }
+}
+
 async function runAdapter(adapter: Adapter, filter: CrawlFilter) {
-  const scraped = await adapter.crawl(filter);
+  let streamed = false;
+  let nFound = 0;
   let nNew = 0;
-  for (const s of scraped) {
-    const id = await upsertListing(s.listing);
-    nNew++;
-    // 경쟁 열기 시계열 — 일별 관심수/조회수 스냅샷(★급증 알림·추세 신호용). 실패는 치명 아님.
-    await recordCompetitionSnapshot(s.listing).catch(() => {});
-    if (s.docs?.length) {
-      // 문서 내용 변경 감지(발품절감 ⑤) — 기존 문서가 있고 내용이 달라졌으면 이력 기록(★알림용).
-      try {
-        const prev = (await fetchListingDocs(id)).map((d) => ({ docType: d.doc_type, parsedJson: d.parsed_json }));
-        const changed = prev.length ? changedDocTypes(prev, s.docs.map((d) => ({ docType: d.docType, parsedJson: d.parsedJson }))) : [];
-        if (changed.length) await recordDocChange(id, s.listing.caseNo, changed);
-      } catch (e) {
-        console.warn(`[docs] 변경 감지 실패(무시) ${s.listing.caseNo}:`, e instanceof Error ? e.message : e);
-      }
-      await deleteListingDocs(id);
-      for (const doc of s.docs) await upsertListingDoc(id, doc);
+  const scraped = await adapter.crawl(filter, {
+    onListing: async (s) => {
+      streamed = true;
+      await saveScrapedListing(s);
+      nFound++;
+      nNew++;
+      if (nFound % 100 === 0) console.log(`[crawl] 중간 저장 ${nFound}건`);
+    },
+  });
+  if (!streamed) {
+    for (const s of scraped) {
+      await saveScrapedListing(s);
+      nFound++;
+      nNew++;
     }
   }
-  return { nFound: scraped.length, nNew };
+  return { nFound, nNew };
 }
 
 async function main() {
@@ -69,15 +86,45 @@ async function main() {
   }
 
   const maxArg = args.find((a) => a.startsWith('--max='));
+  const perCourtArg = args.find((a) => a.startsWith('--per-court='));
   const filter: CrawlFilter = {
     ...DEFAULT_FILTER,
     maxItems: maxArg ? parseInt(maxArg.split('=')[1]!, 10) : DEFAULT_FILTER.maxItems,
+    ...(perCourtArg ? { perCourt: parseInt(perCourtArg.split('=')[1]!, 10) } : {}),
+    // --all-types: 물건종류 필터 해제(토지·상가·단독·기타 포함) — 전 지역 "하나도 빠짐없이" 수집용
+    ...(args.includes('--all-types') ? { propertyTypes: [] } : {}),
+    // --all-types-courts=B000214,...: 지정 법원만 전종류(집 근처 남양주 일대=의정부만 완전 수집, 나머지는 주거용 유지)
+    ...(() => { const a = args.find((x) => x.startsWith('--all-types-courts=')); return a ? { allTypesCourts: a.split('=')[1]!.split(',').filter(Boolean) } : {}; })(),
+    // --region=의정부,수원: 특정 지역/법원만 크롤(타겟 캐치업용). 미지정 시 DEFAULT_FILTER(수도권 전역).
+    ...(() => { const a = args.find((x) => x.startsWith('--region=')); return a ? { regions: a.split('=')[1]!.split(',').filter(Boolean) } : {}; })(),
   };
 
   const forcedSource = args.find((a) => a.startsWith('--source='))?.split('=')[1];
 
   // ── 법원경매 어댑터 직접 지정 ───────────────────────────────────────
   if (forcedSource === 'courtauction') {
+    // 증분 모드: 이미 권리분석된 물건은 상세를 건너뛰고 메타만 갱신 → 신규만 풀 파싱(정기 배치용).
+    if (args.includes('--incremental')) {
+      // "이미 파싱됨" 기준은 문서(gm_listing_docs) 존재 — fetchDetail이 만드는 산출물 그 자체.
+      // (권리분석 행 기준은 오답: analyze가 문서 없는 이월 물건에도 review_required 행을 만들어
+      //  영영 상세를 못 받는 오염 발생 — 2026-07-11 1,243건 실측.)
+      const known = await query<{ k: string }>(
+        `select case_no || '|' || coalesce(item_no,'1') as k from gm_listings l
+          where exists (select 1 from gm_listing_docs d where d.listing_id = l.id)`,
+      );
+      filter.incremental = true;
+      filter.knownKeys = new Set(known.map((r) => r.k));
+      delete filter.perCourt; // 전 페이지 스윕(법원당 캡 없음) — maxItems만 안전상한
+      // 신규 상세 예산: 배치 실행시간 유계화(systemd 타임아웃·차단 예방). 초과분은 메타만 저장 → 다음 실행에서 이어감.
+      const maxNewArg = args.find((a) => a.startsWith('--max-new='));
+      filter.maxNewDetails = maxNewArg ? parseInt(maxNewArg.split('=')[1]!, 10) : 200;
+      // 임박(기본 14일) 기존 물건 상세 재수집 — 명세서 갱신 감지(recordDocChange)용. 일일 상한(기본 250)으로 시간 유계화.
+      const refreshDaysArg = args.find((a) => a.startsWith('--refresh-days='));
+      const maxRefreshArg = args.find((a) => a.startsWith('--max-refresh='));
+      filter.refreshImminentDays = refreshDaysArg ? parseInt(refreshDaysArg.split('=')[1]!, 10) : 14;
+      filter.maxRefreshDetails = maxRefreshArg ? parseInt(maxRefreshArg.split('=')[1]!, 10) : 250;
+      console.log(`[courtauction] 증분 모드: 기존 문서보유 ${filter.knownKeys.size}건 → 상세 skip(임박 ${filter.refreshImminentDays}일 내는 재수집), 신규 파싱 예산 ${filter.maxNewDetails}건/회`);
+    }
     const runId = await startCrawlRun('courtauction', filter.regions.join(','));
     try {
       const { nFound, nNew } = await runAdapter(new CourtAuctionAdapter(), filter);

@@ -15,6 +15,9 @@
     "route": "tsx scripts/field-route.ts",
     "discover:courts": "tsx scripts/discover-courts.ts",
     "eval:report": "tsx scripts/eval-report.ts",
+    "eval:calibrate": "tsx scripts/eval-report.ts",
+    "ml:export": "tsx scripts/export-ml-dataset.ts",
+    "ml:eval": "npm run ml:export && sh -c 'PY=python3; if [ -x .venv-ml/bin/python ]; then PY=.venv-ml/bin/python; fi; exec $PY scripts/ml/offline_eval.py --input artifacts/ml/outcome_eval.csv --output docs/phase2/ml-offline-report.md'",
     "analyze": "tsx pipeline/run.ts",
     "ingest:legal": "tsx pipeline/legal/ingest.ts",
     "eval": "tsx pipeline/eval/run.ts",
@@ -23,7 +26,9 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "enrich:poi": "tsx pipeline/location/enrich-poi.ts",
-    "geocode:bulk": "tsx scripts/geocode-bulk.ts"
+    "geocode:bulk": "tsx scripts/geocode-bulk.ts",
+    "enrich:deonakchal": "tsx scripts/enrich-deonakchal.ts",
+    "retry:outcomes": "tsx scripts/retry-outcome-results.ts"
   },
   "engines": {
     "node": ">=22"

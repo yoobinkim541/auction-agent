@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseResultRowText } from './parse-row.ts';
+import { parseResultRowText, splitDeonakCaseNo } from './parse-row.ts';
 
 const OPTS = { sourceUrl: 'https://example/list' };
 const ACTIVE = '서울중앙지방법원 본원 3계 2024-12345 [아파트] 서울특별시 강동구 천호동 123 건물 84.95㎡ 감정가 530,000,000 최저가 371,000,000 유찰 1회 (70%) 2025-07-01';
@@ -48,4 +48,15 @@ describe('parseResultRowText — 기타', () => {
     const r = parseResultRowText(ACTIVE.replace('[아파트]', '[아파트] [유치권]'), OPTS)!;
     expect(r.notes.some((n) => n.includes('유치권'))).toBe(true);
   });
+  it('다물건 사건번호를 caseNo/itemNo로 분리', () => {
+    const r = parseResultRowText(ACTIVE.replace('2024-12345', '2024-12345-2'), OPTS)!;
+    expect(r.listing.caseNo).toBe('2024-12345');
+    expect(r.listing.itemNo).toBe('2');
+  });
+});
+
+describe('splitDeonakCaseNo', () => {
+  it('물건번호 없으면 1', () => expect(splitDeonakCaseNo('2025-103018')).toEqual({ baseCaseNo: '2025-103018', itemNo: '1' }));
+  it('물건번호 있으면 분리', () => expect(splitDeonakCaseNo('2025-103018-3')).toEqual({ baseCaseNo: '2025-103018', itemNo: '3' }));
+  it('물건번호 앞자리 0은 제거', () => expect(splitDeonakCaseNo('2025-103018-03')).toEqual({ baseCaseNo: '2025-103018', itemNo: '3' }));
 });

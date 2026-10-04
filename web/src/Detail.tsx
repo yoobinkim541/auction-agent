@@ -20,6 +20,9 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position 
   const [copied, setCopied] = useState(false);
   const [fieldMode, setFieldMode] = useState(false);
   const fieldwork = loc?.report?.fieldwork;
+  const courtCheckUrl = row.court_check_url ?? (row.source === 'courtauction' ? row.source_url : null) ?? 'https://www.courtauction.go.kr/pgj/index.on';
+  const deonakchalCheckUrl = row.deonakchal_check_url ?? (row.source === 'deonakchal' ? row.source_url : null) ?? 'https://www.xn--b20bu5cuwtpue8ui.com/auction/list.html';
+  const itemHint = row.item_no && row.item_no !== '1' ? ` · 물건 ${row.item_no}` : '';
   useEffect(() => { setFieldMode(false); }, [row.case_no]); // 매물 바뀌면 현장모드 해제
   const copyCase = () => {
     navigator.clipboard.writeText(row.case_no).then(() => {
@@ -33,9 +36,13 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position 
       if (e.key === 'Escape') onClose();
       if (e.key === 'ArrowLeft' && onPrev) { e.preventDefault(); onPrev(); }
       if (e.key === 'ArrowRight' && onNext) { e.preventDefault(); onNext(); }
-      if (e.key === 'o' && row.source_url && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as Element)?.tagName)) {
+      if (e.key === 'o' && courtCheckUrl && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as Element)?.tagName)) {
         e.preventDefault();
-        window.open(row.source_url, '_blank', 'noopener,noreferrer');
+        window.open(courtCheckUrl, '_blank', 'noopener,noreferrer');
+      }
+      if (e.key === 'd' && deonakchalCheckUrl && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as Element)?.tagName)) {
+        e.preventDefault();
+        window.open(deonakchalCheckUrl, '_blank', 'noopener,noreferrer');
       }
       if (e.key === 'c' && !e.metaKey && !e.ctrlKey && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as Element)?.tagName)) {
         e.preventDefault();
@@ -48,7 +55,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position 
     };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
-  }, [onClose, onPrev, onNext, row.source_url, row.case_no, onFav]);
+  }, [onClose, onPrev, onNext, courtCheckUrl, deonakchalCheckUrl, row.case_no, onFav]);
 
   const detailRounds = loc?.sale_rounds ?? [];
   const detailResolvedRound = resolveRound(detailRounds, row.sale_date, row.fail_count);
@@ -75,7 +82,10 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position 
           <div className="fieldmode">
             <h2><span className="star" onClick={onFav}>{row.is_favorite ? '★' : '☆'}</span> {row.case_no}</h2>
             <p className="addr">{row.address} · {TYPE_LABEL[row.property_type]}</p>
-            {row.source_url && <p className="srclink"><a href={row.source_url} target="_blank" rel="noopener noreferrer">🔗 법원경매 원본(사건번호로 검색) ↗</a></p>}
+            <div className="srclinks">
+              <p className="srclink"><a href={courtCheckUrl} target="_blank" rel="noopener noreferrer">🔗 법원경매 더블체크{itemHint} ↗</a></p>
+              <p className="srclink"><a href={deonakchalCheckUrl} target="_blank" rel="noopener noreferrer">🔎 더낙찰 더블체크{itemHint} ↗</a></p>
+            </div>
             <FieldVisitChecklist listingId={row.id} items={fieldwork.fieldChecklist} big />
           </div>
         )}
@@ -87,9 +97,10 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position 
           <span className={`badge ${risk.cls}`}>{risk.label}</span>
         </h2>
         <p className="addr">{row.address} · {TYPE_LABEL[row.property_type]} · {row.court}</p>
-        {row.source_url && (
-          <p className="srclink"><a href={row.source_url} target="_blank" rel="noopener noreferrer">🔗 법원경매 원본에서 더블체크(사건번호 ⧉ 복사 후 검색) ↗</a> <span className="key-hint" title="단축키">o</span></p>
-        )}
+        <div className="srclinks">
+          <p className="srclink"><a href={courtCheckUrl} target="_blank" rel="noopener noreferrer">🔗 법원경매 더블체크{itemHint}(사건번호 ⧉ 복사 후 검색) ↗</a> <span className="key-hint" title="단축키">o</span></p>
+          <p className="srclink"><a href={deonakchalCheckUrl} target="_blank" rel="noopener noreferrer">🔎 더낙찰 더블체크{itemHint} ↗</a> <span className="key-hint" title="단축키">d</span></p>
+        </div>
         {row.source === 'courtauction' && (
           (rights?.malso_basis || (rights?.classified && rights.classified.length > 0)) ? (
             <div className="court-notice court-notice-soft" role="note">
@@ -124,6 +135,9 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position 
           )}
           <div><span>추정시세</span><b>{loc?.market_price == null ? <span className="muted">미확보 — 안전마진 산정 불가</span> : <>{eok(loc.market_price)}{loc.market_confidence ? ` · 신뢰도 ${CONF[loc.market_confidence]}` : ''}</>}</b></div>
           <div><span>예상낙찰가</span><b>{eok(loc?.expected_bid_price)}</b></div>
+          {row.ml_calibration?.reference_bid_price != null && (
+            <div><span title="지역×종류 과거 낙찰 중앙값 기반 — 운영 반영 전 참고용">ML 참고 보정가</span><b>{eok(row.ml_calibration.reference_bid_price)} <small className="muted">({row.ml_calibration.region} · n={row.ml_calibration.sample_size})</small></b></div>
+          )}
           <div><span>안전마진(최저가)</span><b>{pct(loc?.safety_margin)}</b></div>
           <div><span title="시세 − 총취득비용(취득세·명도비·채권·인수 포함)">진짜 안전마진</span><b className={(loc?.acquisition_cost?.trueSafetyMargin ?? 0) < 0 ? 'danger' : ''}>{pct(loc?.acquisition_cost?.trueSafetyMargin)}</b></div>
           <div><span>총 인수금액</span><b className={rights?.assumed_amount ? 'danger' : ''}>{won(rights?.assumed_amount ?? 0)}</b></div>

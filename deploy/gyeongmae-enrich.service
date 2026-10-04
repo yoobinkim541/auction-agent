@@ -1,0 +1,17 @@
+[Unit]
+Description=Gyeongmae 야간 교차보강 (deonakchal 임차인 → courtauction 권리분석 정밀화)
+After=network.target postgresql.service
+Wants=postgresql.service
+OnFailure=gyeongmae-alert@%n.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/projects/gyeongmae-agent/deploy/nightly-enrich.sh
+# 인간형 저속(사건 간 8~20s + 휴식) × 30건 ≈ 10~15분 + 재분석. 여유 3h.
+TimeoutStartSec=10800
+StandardOutput=append:/home/ubuntu/projects/gyeongmae-agent/enrich.log
+StandardError=append:/home/ubuntu/projects/gyeongmae-agent/enrich.log
+
+[Install]
+WantedBy=multi-user.target

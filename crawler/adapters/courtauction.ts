@@ -21,25 +21,37 @@
  *  면적, 건물 표제부 (상세 호출 시)
  *  등기·임차인·매각효력·실거래 없음 (deonakchal만 제공)
  */
-import type { Adapter, CrawlFilter, ScrapedListing } from './types.ts';
+import type { Adapter, CrawlFilter, CrawlSink, ScrapedListing } from './types.ts';
 import type { Listing, RegistryEntry, Tenant, ListingDoc } from '../../shared/types.ts';
 import { parseKoreanDate, normalizeCaseNo, mapRightKind } from '../normalize.ts';
-import { crawlFetch } from '../proxy.ts'; // CRAWL_PROXY(SSH SOCKS) egress — VM IP 차단 우회
+import { courtAuctionFetch } from '../proxy.ts'; // COURTAUCTION_PROXY 전용 egress — 더낙찰 CRAWL_PROXY와 분리
 
 const BASE = 'https://www.courtauction.go.kr';
 const UA = 'gyeongmae-agent/0.1 (personal research; contact: owner)';
-// 검색 입찰기일 범위(오늘~+N일, KST) — 진행 매물 조회(사이트 기본 +14일). 페이지 크기.
-const COURT_BID_DAYS = Math.max(1, parseInt(process.env.COURT_BID_DAYS ?? '30', 10) || 30);
+// 검색 입찰기일 범위(오늘~+N일, KST). 30일은 서울·경기 진행 물건을 크게 누락해 기본 180일로 넓힌다.
+const COURT_BID_START_OFFSET_DAYS = parseInt(process.env.COURT_BID_START_OFFSET_DAYS ?? '0', 10) || 0;
+const COURT_BID_DAYS = Math.max(1, parseInt(process.env.COURT_BID_DAYS ?? '180', 10) || 180);
 const COURT_PAGE_SIZE = Math.max(1, parseInt(process.env.COURT_PAGE_SIZE ?? '40', 10) || 40);
+const MIN_REQ_INTERVAL_MS = Math.max(250, parseInt(process.env.COURT_MIN_REQ_INTERVAL_MS ?? '2500', 10) || 2500);
+const PAGE_DWELL_MIN_MS = Math.max(0, parseInt(process.env.COURT_PAGE_DWELL_MIN_MS ?? '3000', 10) || 3000);
+const PAGE_DWELL_MAX_MS = Math.max(PAGE_DWELL_MIN_MS, parseInt(process.env.COURT_PAGE_DWELL_MAX_MS ?? '7000', 10) || 7000);
+const DETAIL_DWELL_MIN_MS = Math.max(0, parseInt(process.env.COURT_DETAIL_DWELL_MIN_MS ?? '4000', 10) || 4000);
+const DETAIL_DWELL_MAX_MS = Math.max(DETAIL_DWELL_MIN_MS, parseInt(process.env.COURT_DETAIL_DWELL_MAX_MS ?? '10000', 10) || 10000);
+const DETAIL_LONG_DWELL_CHANCE = Math.max(0, Math.min(1, Number(process.env.COURT_DETAIL_LONG_DWELL_CHANCE ?? '0.12')));
+const DETAIL_LONG_DWELL_MIN_MS = Math.max(DETAIL_DWELL_MAX_MS, parseInt(process.env.COURT_DETAIL_LONG_DWELL_MIN_MS ?? '15000', 10) || 15000);
+const DETAIL_LONG_DWELL_MAX_MS = Math.max(DETAIL_LONG_DWELL_MIN_MS, parseInt(process.env.COURT_DETAIL_LONG_DWELL_MAX_MS ?? '28000', 10) || 28000);
+const BREAK_EVERY_MIN = Math.max(1, parseInt(process.env.COURT_BREAK_EVERY_MIN ?? '40', 10) || 40);
+const BREAK_EVERY_MAX = Math.max(BREAK_EVERY_MIN, parseInt(process.env.COURT_BREAK_EVERY_MAX ?? '60', 10) || 60);
+const BREAK_DWELL_MIN_MS = Math.max(0, parseInt(process.env.COURT_BREAK_DWELL_MIN_MS ?? '60000', 10) || 60000);
+const BREAK_DWELL_MAX_MS = Math.max(BREAK_DWELL_MIN_MS, parseInt(process.env.COURT_BREAK_DWELL_MAX_MS ?? '150000', 10) || 150000);
 /** KST 기준 오늘+offset일 → YYYYMMDD */
 function ymdKST(offsetDays: number): string {
   return new Date(Date.now() + 9 * 3_600_000 + offsetDays * 86_400_000).toISOString().slice(0, 10).replace(/-/g, '');
 }
 
 // ── 수도권 법원 코드 (selectCortOfcLst.on 응답 확인 완료) ──────────────
-// 검증된 수도권 법원 코드(cortOfcCd) — 본원 + 성남지원. courtauction.go.kr 라이브로 확인된 것만.
-// ⚠️ 경기 지원(고양·남양주·부천·안양·안산·평택·여주 등)은 여기 없음 → 그 관할 물건은 미수집.
-//    지원 코드는 사이트에서 검증 후 COURT_EXTRA(.env)로 추가한다(추측 코드 하드코딩 금지).
+// 검증된 수도권 법원 코드(cortOfcCd) — 본원 + 경기 지원 16곳. courtauction.go.kr 라이브로 확인된 것만.
+//    그 외 지원 코드는 사이트에서 검증 후 COURT_EXTRA(.env)로 추가한다(추측 코드 하드코딩 금지).
 //    검증 도구: npm run discover:courts  (VM에서 집-IP 프록시 경유로 실제 코드→지역 확인).
 const BASE_METRO_COURTS: { code: string; name: string }[] = [
   { code: 'B000210', name: '서울중앙지방법원' },
@@ -47,10 +59,17 @@ const BASE_METRO_COURTS: { code: string; name: string }[] = [
   { code: 'B000212', name: '서울남부지방법원' },
   { code: 'B000213', name: '서울북부지방법원' },
   { code: 'B000215', name: '서울서부지방법원' },
-  { code: 'B000214', name: '의정부지방법원' }, // 경기북부
+  { code: 'B000214', name: '의정부지방법원' }, // 경기북부(의정부·양주·포천·동두천·연천·가평 일부)
+  { code: 'B214804', name: '남양주지원' },      // 남양주·구리·가평 (집 근처 — 코드가 부모 214 기반이라 별도)
+  { code: 'B214807', name: '고양지원' },        // 고양·파주
   { code: 'B000240', name: '인천지방법원' },
+  { code: 'B000241', name: '부천지원' },        // 인천 관할(부천·김포)
   { code: 'B000250', name: '수원지방법원' },   // 경기남부
-  { code: 'B000251', name: '성남지원' },
+  { code: 'B000251', name: '성남지원' },        // 성남·광주·하남
+  { code: 'B000252', name: '여주지원' },        // 여주·이천·양평
+  { code: 'B000253', name: '평택지원' },        // 평택·안성
+  { code: 'B250826', name: '안산지원' },        // 안산·광명·시흥 (코드가 부모 250 기반)
+  { code: 'B000254', name: '안양지원' },        // 안양·과천·의왕·군포
 ];
 
 /** COURT_EXTRA 파싱 — "B000252:여주지원,B000253:평택지원" → [{code,name}]. 잘못된 형식은 무시(순수·테스트 대상). */
@@ -68,7 +87,7 @@ export function parseCourtExtra(raw: string | undefined): { code: string; name: 
     .filter((c): c is { code: string; name: string } => c != null);
 }
 
-/** 검증된 본원 9곳 + COURT_EXTRA로 추가된 지원(중복 코드 제거). 매 호출 env 반영(운영 중 추가 가능). */
+/** 검증된 수도권 법원 16곳 + COURT_EXTRA로 추가된 지원(중복 코드 제거). 매 호출 env 반영(운영 중 추가 가능). */
 export function allCourts(): { code: string; name: string }[] {
   const seen = new Set(BASE_METRO_COURTS.map((c) => c.code));
   const extra = parseCourtExtra(process.env.COURT_EXTRA).filter((c) => !seen.has(c.code));
@@ -77,13 +96,13 @@ export function allCourts(): { code: string; name: string }[] {
 
 // '경기' → '의정부'+'수원'+'성남' 처럼 광역 지역명 → 세부 매칭 키워드 확장
 const REGION_EXPAND: Record<string, string[]> = {
-  경기: ['의정부', '수원', '성남'],
-  수도권: ['서울', '의정부', '인천', '수원', '성남'],
+  경기: ['의정부', '남양주', '고양', '수원', '성남', '부천', '여주', '평택', '안산', '안양'],
+  수도권: ['서울', '의정부', '남양주', '고양', '인천', '수원', '성남', '부천', '여주', '평택', '안산', '안양'],
 };
 
 /** 필터 regions 키워드로 대상 법원 추린다.
- *  '서울' → 서울 5개, '경기' → 의정부·수원·성남(+COURT_EXTRA 지원 전부), '인천' → 인천.
- *  DEFAULT_FILTER의 ['서울','경기','인천'] → 본원 9개(+추가 지원) 전부 포함. */
+ *  '서울' → 서울 5개, '경기' → 경기 본원·지원(+COURT_EXTRA 지원 전부), '인천' → 인천.
+ *  DEFAULT_FILTER의 ['서울','경기','인천'] → 수도권 16곳(+COURT_EXTRA 지원) 전부 포함. */
 export function filterCourts(regions: string[], courts: { code: string; name: string }[] = allCourts()): { code: string; name: string }[] {
   if (!regions.length) return [...courts];
   const baseCodes = new Set(BASE_METRO_COURTS.map((c) => c.code));
@@ -94,12 +113,41 @@ export function filterCourts(regions: string[], courts: { code: string; name: st
   );
 }
 
+/** 증분 크롤에서 이 물건이 "이미 파싱됨"(상세 fetchDetail skip 대상)인지. incremental이 아니면 항상 false(전량 상세). */
+export function isKnownForIncremental(filter: Pick<CrawlFilter, 'incremental' | 'knownKeys'>, key: string): boolean {
+  return filter.incremental === true && filter.knownKeys?.has(key) === true;
+}
+
+/** 이번 실행에서 이 신규 물건의 상세를 지금 받을지 — 신규 상세 예산(maxNewDetails) 내에서만.
+ *  예산 소진 시 메타만 저장(권리분석 없음 → 다음 실행에서 다시 신규로 잡혀 이어짐). 미설정이면 무제한. */
+export function shouldFetchDetailNow(known: boolean, nNewDetail: number, maxNewDetails?: number): boolean {
+  return !known && (maxNewDetails == null || nNewDetail < maxNewDetails);
+}
+
+/** 증분 모드 상세 수집 판정:
+ *   'new'     — 신규 물건(문서 없음), 신규 예산 내 → 풀 파싱
+ *   'refresh' — 기존 물건이지만 매각 임박(오늘~thresholdDate) → 명세서 변경감지 위해 재수집(재수집 예산 내)
+ *   'skip'    — 그 외(기존·비임박, 또는 예산 소진) → 메타만
+ * 순수 함수(테스트 가능). saleDate/today/thresholdDate는 'YYYY-MM-DD'. */
+export function detailDecision(
+  known: boolean,
+  saleDate: string | null,
+  today: string,
+  thresholdDate: string,
+  counts: { nNew: number; nRefresh: number },
+  caps: { maxNew?: number; maxRefresh: number; refreshDays: number },
+): 'new' | 'refresh' | 'skip' {
+  if (!known) return caps.maxNew == null || counts.nNew < caps.maxNew ? 'new' : 'skip';
+  if (caps.refreshDays <= 0) return 'skip';
+  const imminent = saleDate != null && saleDate >= today && saleDate <= thresholdDate;
+  if (imminent && counts.nRefresh < caps.maxRefresh) return 'refresh';
+  return 'skip';
+}
+
 // ── 휴먼 페이싱 ─────────────────────────────────────────────────────────
 const rnd = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.round(ms)));
-const humanDwellMs = () => (Math.random() < 0.12 ? rnd(15_000, 28_000) : rnd(4_000, 10_000));
-
-const MIN_REQ_INTERVAL_MS = 2_500;
+const humanDwellMs = () => (Math.random() < DETAIL_LONG_DWELL_CHANCE ? rnd(DETAIL_LONG_DWELL_MIN_MS, DETAIL_LONG_DWELL_MAX_MS) : rnd(DETAIL_DWELL_MIN_MS, DETAIL_DWELL_MAX_MS));
 let _nextReqAt = 0;
 async function rateGate(): Promise<void> {
   const now = Date.now();
@@ -113,13 +161,13 @@ async function rateGate(): Promise<void> {
  *  HTTP 상태·차단(ipcheck) 오류는 여기까지 오지 않음(호출부에서 처리) → 재시도 대상 아님. */
 async function crawlFetchRetry(
   url: string,
-  init: Parameters<typeof crawlFetch>[1],
+  init: Parameters<typeof courtAuctionFetch>[1],
   tries = 3,
-): Promise<Awaited<ReturnType<typeof crawlFetch>>> {
+): Promise<Awaited<ReturnType<typeof courtAuctionFetch>>> {
   let lastErr: unknown;
   for (let i = 0; i < tries; i++) {
     try {
-      return await crawlFetch(url, init);
+      return await courtAuctionFetch(url, init);
     } catch (e) {
       lastErr = e;
       if (i < tries - 1) {
@@ -301,7 +349,7 @@ function buildSrchInfo(courtCode: string): Record<string, unknown> {
     flbdNcntMin: '', flbdNcntMax: '', objctArDtsMin: '', objctArDtsMax: '',
     mvprpArtclKndCd: '', mvprpArtclNm: '', mvprpAtchmPlcTypCd: '', notifyLoc: 'off', lafjOrderBy: '',
     pgmId: 'PGJ151F01', csNo: '', cortStDvs: '1', statNum: 1,
-    bidBgngYmd: ymdKST(0), bidEndYmd: ymdKST(COURT_BID_DAYS),
+    bidBgngYmd: ymdKST(COURT_BID_START_OFFSET_DAYS), bidEndYmd: ymdKST(COURT_BID_START_OFFSET_DAYS + COURT_BID_DAYS),
     dspslDxdyYmd: '', fstDspslHm: '', scndDspslHm: '', thrdDspslHm: '', fothDspslHm: '',
     dspslPlcNm: '', lwsDspslPrcMin: '', lwsDspslPrcMax: '', grbxTypCd: '', gdsVendNm: '',
     fuelKndCd: '', carMdyrMax: '', carMdyrMin: '', carMdlNm: '', sideDvsCd: '',
@@ -370,7 +418,16 @@ export interface SaleResultRound {
 
 /** 법원명 → 법원코드(cortOfcCd). 결과 폴러가 DB의 court명으로 상세 조회 시 필요. */
 export function courtCodeByName(name: string): string | null {
-  return allCourts().find((c) => c.name === name)?.code ?? null;
+  const courts = allCourts();
+  const raw = name.trim();
+  const exact = courts.find((c) => c.name === raw);
+  if (exact) return exact.code;
+  const key = raw
+    .replace(/\s+/g, '')
+    .replace(/(지방법원|지원)/g, '')
+    .replace(/\d+계.*$/, '');
+  if (!key) return null;
+  return courts.find((c) => c.name.replace(/\s+/g, '').includes(key))?.code ?? null;
 }
 
 /** 상세 조회 가능한(코드 매핑 보유) 법원명 목록 — 결과 폴러 SQL 필터용(미매핑 법원에 슬롯 낭비 방지). */
@@ -577,8 +634,9 @@ function applyDetail(scraped: ScrapedListing, detail: any): void {
 export class CourtAuctionAdapter implements Adapter {
   name = 'courtauction' as const;
 
-  async crawl(filter: CrawlFilter): Promise<ScrapedListing[]> {
+  async crawl(filter: CrawlFilter, sink?: CrawlSink): Promise<ScrapedListing[]> {
     const maxItems = filter.maxItems ?? 200;
+    const perCourt = filter.perCourt ?? maxItems; // 법원당 상한 — 미설정 시 전역과 동일(기존 동작). 설정 시 서울·경기 균형 수집(서울중앙이 예산 독식 방지).
     const fetchDetail_ = process.env.COURT_FETCH_DETAIL !== 'false'; // 권리분석 위해 기본 ON(상세=명세서 권리데이터). 끄려면 false.
     const courts = filterCourts(filter.regions);
 
@@ -591,18 +649,31 @@ export class CourtAuctionAdapter implements Adapter {
     await initSession(cookies);
 
     const results: ScrapedListing[] = [];
+    let nResults = 0;
     const seen = new Set<string>();
     let blocked = false;
+    let nKnownSkip = 0;    // 증분: 기존 물건 상세 건너뛰고 메타만
+    let nNewDetail = 0;    // 증분: 신규라 상세까지 받은 건수
+    let nRefreshDetail = 0; // 증분: 임박 기존 물건 상세 재수집(명세서 변경감지용)
+    let nDeferred = 0;     // 신규지만 상세 예산(maxNewDetails) 소진 — 메타만 저장, 다음 실행에서 이어감
 
-    let nextBreakAt = Math.round(rnd(40, 60));
+    // 임박 기존 물건 상세 재수집 창(명세서 변경감지). KST 기준 오늘 ~ 오늘+refreshDays.
+    const refreshDays = filter.refreshImminentDays ?? 14;
+    const maxRefresh = filter.maxRefreshDetails ?? 250;
+    const nowKst = new Date(Date.now() + 9 * 3_600_000);
+    const todayStr = nowKst.toISOString().slice(0, 10);
+    const thresholdStr = new Date(nowKst.getTime() + refreshDays * 86_400_000).toISOString().slice(0, 10);
+
+    let nextBreakAt = Math.round(rnd(BREAK_EVERY_MIN, BREAK_EVERY_MAX));
 
     for (const court of courts) {
-      if (blocked || results.length >= maxItems) break;
+      if (blocked || nResults >= maxItems) break;
+      const courtStart = nResults; // 이 법원 수집량 = nResults - courtStart (perCourt 상한 판정용)
       console.log(`[courtauction] 검색: ${court.name} (${court.code})`);
       const srchInfo = buildSrchInfo(court.code); // 검색·상세 공용
 
       for (let page = 1; ; page++) {
-        if (blocked || results.length >= maxItems) break;
+        if (blocked || nResults >= maxItems || nResults - courtStart >= perCourt) break;
 
         // 실제 사이트(WebSquare) 검색 포맷 — dma_ 맵 본문 + submissionid 헤더. srchInfo는 상세 조회와 공용.
         const body = {
@@ -651,36 +722,62 @@ export class CourtAuctionAdapter implements Adapter {
           seen.add(key);
           newOnPage++;
 
-          // 물건 종류 필터 (클라이언트 사이드)
-          if (filter.propertyTypes.length && !filter.propertyTypes.includes(scraped.listing.propertyType)) continue;
+          // 물건 종류 필터 (클라이언트 사이드). allTypesCourts에 속한 법원은 전종류 수집(집 근처 완전 수집용).
+          const typeExempt = filter.allTypesCourts?.includes(court.code) ?? false;
+          if (!typeExempt && filter.propertyTypes.length && !filter.propertyTypes.includes(scraped.listing.propertyType)) continue;
           // 지역 키워드 필터
-          if (filter.regions.length && !filter.regions.some((rg) => scraped.listing.address.includes(rg) || court.name.includes(rg))) continue;
+          if (filter.regions.length && !filter.regions.some((rg) => scraped.listing.address.includes(rg) || court.name.includes(rg) || court.code === rg)) continue;
 
-          // 상세 보강 (선택적)
-          if (fetchDetail_) {
+          // 상세 보강 판정. 증분: 신규=풀파싱(예산 내), 임박 기존=명세서 변경감지 위해 재수집(예산 내), 그 외=메타만.
+          // 비증분: 전량 상세(기존 동작).
+          const known = isKnownForIncremental(filter, key);
+          const decision: 'new' | 'refresh' | 'skip' = !fetchDetail_
+            ? 'skip'
+            : !filter.incremental
+              ? 'new'
+              : detailDecision(known, scraped.listing.saleDate ?? null, todayStr, thresholdStr,
+                  { nNew: nNewDetail, nRefresh: nRefreshDetail },
+                  { maxNew: filter.maxNewDetails, maxRefresh, refreshDays });
+          if (decision !== 'skip') {
             try {
               const detail = await fetchDetail(scraped.listing.caseNo, court.code, scraped.listing.itemNo ?? '1', srchInfo, cookies);
-              applyDetail(scraped, detail);
+              applyDetail(scraped, detail); // scraped.docs 채움 → runAdapter가 이전 문서와 비교해 명세서 변경 감지
+              if (decision === 'new') {
+                nNewDetail++;
+                if (filter.maxNewDetails != null && nNewDetail === filter.maxNewDetails) {
+                  console.log(`[courtauction] 신규 상세 예산 ${filter.maxNewDetails}건 소진 — 이후 신규는 메타만(다음 실행에서 이어감)`);
+                }
+              } else {
+                nRefreshDetail++;
+              }
             } catch (e) {
               if (e instanceof CourtAuctionBlockedError) { blocked = true; break; }
             }
             await wait(humanDwellMs());
+          } else if (known) {
+            nKnownSkip++;
+          } else if (fetchDetail_) {
+            nDeferred++; // 신규인데 예산 소진 — 메타만
           }
 
-          results.push(scraped);
-          if (results.length >= maxItems) break;
+          if (sink) await sink.onListing(scraped);
+          else results.push(scraped);
+          nResults++;
+          if (nResults >= maxItems || nResults - courtStart >= perCourt) break;
         }
 
         if (newOnPage === 0) break; // 중복만 있으면 종료
 
-        // 중간 휴식 (사람처럼)
-        if (results.length >= nextBreakAt && results.length < maxItems) {
-          const br = rnd(60_000, 150_000);
+        // 중간 휴식 (사람처럼) — 부하가 큰 상세(fetchDetail) 총 수집량(신규+임박재수집) 기준. 증분 스윕에서 대부분 메타만
+        // 갱신(상세 skip)이면 잘 안 늘어 큰 휴식이 거의 안 뜸(불필요한 대기 방지). 비증분(전량 상세)에선 사실상 종전과 동일.
+        const nDetail = nNewDetail + nRefreshDetail;
+        if (nDetail >= nextBreakAt && nResults < maxItems) {
+          const br = rnd(BREAK_DWELL_MIN_MS, BREAK_DWELL_MAX_MS);
           console.log(`[courtauction] ☕ 휴식 ${Math.round(br / 1000)}s...`);
           await wait(br);
-          nextBreakAt = results.length + Math.round(rnd(40, 60));
+          nextBreakAt = nDetail + Math.round(rnd(BREAK_EVERY_MIN, BREAK_EVERY_MAX));
         } else {
-          await wait(rnd(3_000, 7_000)); // 다음 페이지 전 텀
+          await wait(rnd(PAGE_DWELL_MIN_MS, PAGE_DWELL_MAX_MS)); // 다음 페이지 전 텀
         }
       }
     }
@@ -688,7 +785,7 @@ export class CourtAuctionAdapter implements Adapter {
     if (blocked) {
       console.error('[courtauction] IP 차단 — 수집 중단. 로컬 PC/RPi에서 재시도 필요.');
     }
-    console.log(`[courtauction] 완료: ${results.length}건`);
+    console.log(`[courtauction] 완료: ${nResults}건${filter.incremental ? ` (증분: 신규 상세 ${nNewDetail} · 임박 재수집 ${nRefreshDetail} · 기존 메타갱신 ${nKnownSkip}${nDeferred ? ` · 상세 이월 ${nDeferred}` : ''})` : ''}`);
     return results;
   }
 }

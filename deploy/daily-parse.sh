@@ -11,15 +11,16 @@ export PATH="/home/ubuntu/.local/bin:$PATH"
 NOTIFY="scripts/notify-telegram.sh"   # 경매 전용 봇(GM_TELEGRAM_*) — 스톡봇(.hermes) 공용 스크립트 대체
 echo "[$(date '+%F %T')] === parse start ==="
 
-if npm run crawl -- --source=courtauction; then
+COURT_BID_DAYS="${COURT_BID_DAYS:-180}" npm run crawl -- --source=courtauction --incremental --max=10000 --max-new=500 --all-types --region=서울,경기
+CRAWL_RC=$?
+if [ "$CRAWL_RC" = "0" ]; then
   echo "[$(date '+%F %T')] crawl ok"
 else
-  CRC=$?
-  echo "[$(date '+%F %T')] ⚠ crawl 실패(rc=$CRC) — 분석은 계속 진행(DB·캐시 기반)"
+  echo "[$(date '+%F %T')] ⚠ crawl 실패(rc=$CRAWL_RC) — 분석은 계속 진행(DB·캐시 기반)"
   # 침묵 방지: 크롤 실패는 if/else로 삼켜져 스크립트가 exit 0 → systemd OnFailure가 안 뜬다.
   # 당일 즉시 알림(crawl:health의 48h 신선도 경보보다 빠른 조기경보). 분석 rc는 보존.
   bash "$NOTIFY" "경매 크롤 실패" "실패" \
-    "일일 크롤 비정상 종료(rc=$CRC) — 직접접속/네트워크·프록시 점검 필요. 분석은 DB·캐시로 계속." 2>/dev/null || true
+    "일일 크롤 비정상 종료(rc=$CRAWL_RC) — 직접접속/네트워크·프록시 점검 필요. 분석은 DB·캐시로 계속." 2>/dev/null || true
 fi
 
 npm run analyze -- --all
