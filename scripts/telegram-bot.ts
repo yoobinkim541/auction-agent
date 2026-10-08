@@ -7,37 +7,28 @@
  * 실행: npm run bot  (systemd gyeongmae-bot.service 로 상시). CRAWL_PROXY 비활성=직접.
  */
 import 'dotenv/config';
-import { Agent, setGlobalDispatcher } from 'undici';
-// 이 VM은 IPv6 미도달 → undici happy-eyeballs가 IPv6를 먼저 시도해 간헐 connect timeout.
-// IPv4 강제 + connect timeout으로 텔레그램/코트옥션 fetch 안정화.
-setGlobalDispatcher(new Agent({ connect: { family: 4, timeout: 15_000 } }));
 import { spawn } from 'node:child_process';
 import { query, pool } from '../shared/db.ts';
 import { collectCaseResults, courtCodeByName, type SaleResultRound } from '../crawler/adapters/courtauction.ts';
+import { createTelegramClient } from './telegram-client.ts';
+import { parseTelegramCommand } from './telegram-command.ts';
 
 const TOKEN = process.env.AUCTION_BOT_TOKEN || process.env.GM_TELEGRAM_BOT_TOKEN || '';
-const OWNER = String(process.env.AUCTION_CHAT_ID || process.env.GM_TELEGRAM_CHAT_ID || '5771238245');
-const API = `https://api.telegram.org/bot${TOKEN}`;
+const OWNER = String(process.env.AUCTION_CHAT_ID || process.env.GM_TELEGRAM_CHAT_ID || '');
+const ALERT_CHAT = String(process.env.GM_TELEGRAM_CHAT_ID || '');
+const ALLOWED_CHAT_IDS = new Set([OWNER, ALERT_CHAT].filter(Boolean));
+const telegram = createTelegramClient(TOKEN);
 const eok = (n: number | null | undefined): string => (n == null ? '-' : `${(n / 1e8).toFixed(1)}억`);
 const RSLT: Record<string, string> = { '001': '매각', '002': '유찰' };
 
 /** 인라인 키보드(선택) 포함 발송. */
 async function send(chatId: string | number, text: string, keyboard?: unknown): Promise<void> {
-  await fetch(`${API}/sendMessage`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId, text: text.slice(0, 3900), disable_web_page_preview: true,
-      ...(keyboard ? { reply_markup: keyboard } : {}),
-    }),
-  }).catch((e) => console.error('send 실패:', e));
+  await telegram.sendMessage(chatId, text, keyboard);
 }
 
 /** 버튼 탭 응답(토스트) — 콜백은 반드시 answer해야 클라이언트 로딩 스피너가 멈춘다. */
 async function answerCallback(id: string, text: string): Promise<void> {
-  await fetch(`${API}/answerCallbackQuery`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ callback_query_id: id, text: text.slice(0, 190) }),
-  }).catch((e) => console.error('answerCallback 실패:', e));
+  await telegram.answerCallbackQuery(id, text).catch((e) => console.error('answerCallback 실패:', e));
 }
 
 /** ★ 관심 토글 — 사건 단위(여러 물건이면 전체를 같은 상태로). */
@@ -116,9 +107,8 @@ async function cmdStatus(): Promise<string> {
 interface Reply { text: string; keyboard?: unknown }
 
 async function handle(text: string): Promise<Reply> {
-  const [cmd, ...rest] = text.trim().split(/\s+/);
-  const arg = rest.join(' ');
-  switch ((cmd ?? '').toLowerCase()) {
+  const { name, arg } = parseTelegramCommand(text);
+  switch (name) {
     case '/case': return arg
       ? { text: await cmdCase(arg), keyboard: caseKeyboard(arg.replace(/\s/g, '')) }
       : { text: '사용법: /case 2023타경111644' };
@@ -146,29 +136,31 @@ async function main(): Promise<void> {
     return;
   }
   if (!TOKEN) { console.error('AUCTION_BOT_TOKEN 필요'); process.exit(1); }
+  if (!OWNER) { console.error('AUCTION_CHAT_ID 또는 GM_TELEGRAM_CHAT_ID 필요'); process.exit(1); }
   console.log(`[bot] 경매 봇 시작 — owner ${OWNER}`);
   let offset = 0;
+  let skipPending = false;
   // 시작 시 밀린 업데이트 건너뛰기(중복 응답 방지). 텔레그램 일시 연결오류에도 죽지 않게 try/catch.
   try {
-    const init = await (await fetch(`${API}/getUpdates?offset=-1`)).json() as { result?: { update_id: number }[] };
-    if (init?.result?.length) offset = init.result[init.result.length - 1]!.update_id + 1;
+    const init = await telegram.getUpdates(-1);
+    if (init.length) offset = init[init.length - 1]!.update_id + 1;
   } catch (e) {
-    console.error('[bot] init getUpdates 실패(무시, offset=0):', e instanceof Error ? e.message : e);
+    skipPending = true;
+    offset = -1;
+    console.error('[bot] init getUpdates 실패 — 복구 후 밀린 업데이트를 건너뜀:', e instanceof Error ? e.message : e);
   }
 
   // 짧은 폴링(3초 간격) — 30s 롱폴은 이 VM 네트워크에서 간헐 connect 실패. 짧은 연결(getMe급)은 안정적.
   for (;;) {
     try {
-      const res = await fetch(`${API}/getUpdates?timeout=0&offset=${offset}`);
-      const j = await res.json() as {
-        ok: boolean;
-        result?: {
-          update_id: number;
-          message?: { chat: { id: number }; text?: string };
-          callback_query?: { id: string; from: { id: number }; data?: string };
-        }[];
-      };
-      for (const u of j.result ?? []) {
+      const updates = await telegram.getUpdates(offset);
+      if (skipPending) {
+        offset = updates.length ? updates[updates.length - 1]!.update_id + 1 : 0;
+        skipPending = false;
+        console.log('[bot] Telegram 연결 복구 — 기존 업데이트 건너뜀');
+        continue;
+      }
+      for (const u of updates) {
         offset = u.update_id + 1;
         // 인라인 버튼 콜백(★토글) — 소유자만
         const cq = u.callback_query;
@@ -182,9 +174,9 @@ async function main(): Promise<void> {
           }
           continue;
         }
-        const m = u.message;
+        const m = u.message ?? u.channel_post;
         if (!m?.text) continue;
-        if (String(m.chat.id) !== OWNER) { await send(m.chat.id, '이 봇은 소유자 전용입니다.'); continue; }
+        if (!ALLOWED_CHAT_IDS.has(String(m.chat.id))) { await send(m.chat.id, '이 봇은 허용된 채널/소유자 전용입니다.'); continue; }
         try {
           const r = await handle(m.text);
           await send(m.chat.id, r.text, r.keyboard);

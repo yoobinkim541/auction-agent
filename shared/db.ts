@@ -7,6 +7,9 @@ import type {
   Listing, ListingDoc, RightsAnalysisResult, LocationAnalysis, Score,
 } from './types.ts';
 import type { CrawlRunRow } from './crawl-health.ts';
+import type { ListingTrustResult } from './data-trust.ts';
+import type { OutcomeTrustInput, OutcomeTrustResult } from './outcome-trust.ts';
+import type { PrecisionEvaluation } from '../pipeline/precision/evaluate.ts';
 
 let _pool: pg.Pool | null = null;
 
@@ -29,6 +32,102 @@ export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
 const j = (v: unknown): string | null => (v == null ? null : JSON.stringify(v));
 
 // ── 쓰기 ─────────────────────────────────────────────────────────
+export async function saveListingDataTrust(
+  listingId: number, result: ListingTrustResult, inputHash: string,
+): Promise<void> {
+  await query(
+    `insert into gm_data_trust
+       (listing_id,status,score,reason_codes,checks,evaluator_version,input_hash,evaluated_at)
+     values ($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,now())
+     on conflict (listing_id) do update set
+       status=excluded.status, score=excluded.score, reason_codes=excluded.reason_codes,
+       checks=excluded.checks, evaluator_version=excluded.evaluator_version,
+       input_hash=excluded.input_hash, evaluated_at=now()`,
+    [listingId, result.status, result.score, j(result.reasonCodes), j(result.checks), result.evaluatorVersion, inputHash],
+  );
+}
+
+export async function savePrecisionEvaluation(
+  listingId: number, result: PrecisionEvaluation, inputHash: string,
+): Promise<void> {
+  await query(
+    `insert into gm_precision_evaluations
+       (listing_id,status,confidence,conservative_value,recommended_bid,hard_cap_bid,
+        reason_codes,strengths,risks,required_checks,evaluator_version,input_hash,evaluated_at)
+     values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,now())
+     on conflict (listing_id) do update set
+       status=excluded.status, confidence=excluded.confidence,
+       conservative_value=excluded.conservative_value, recommended_bid=excluded.recommended_bid,
+       hard_cap_bid=excluded.hard_cap_bid, reason_codes=excluded.reason_codes,
+       strengths=excluded.strengths, risks=excluded.risks, required_checks=excluded.required_checks,
+       evaluator_version=excluded.evaluator_version, input_hash=excluded.input_hash, evaluated_at=now()`,
+    [
+      listingId, result.status, result.confidence, result.conservativeValue, result.recommendedBid,
+      result.hardCapBid, j(result.reasonCodes), j(result.strengths), j(result.risks),
+      j(result.requiredChecks), result.evaluatorVersion, inputHash,
+    ],
+  );
+}
+
+export interface RegistryOpinionRow {
+  has_clue: boolean;
+  tentative_kind: string | null;
+  tentative_date: string | null;
+  explanation: string;
+  citations: unknown;
+  required_checks: string[];
+  confidence: 'high' | 'medium' | 'low';
+  model_version: string;
+  input_hash: string;
+}
+
+/** EMPTY_REGISTRY 물건 전용 AI 1차 소견 저장(pipeline/legal/registry-opinion.ts 결과). */
+export async function saveRegistryOpinion(
+  listingId: number,
+  opinion: { hasClue: boolean; tentativeKind: string | null; tentativeDate: string | null; explanation: string; citations: unknown; requiredChecks: string[]; confidence: 'high' | 'medium' | 'low' },
+  modelVersion: string,
+  inputHash: string,
+): Promise<void> {
+  await query(
+    `insert into gm_registry_opinions
+       (listing_id,has_clue,tentative_kind,tentative_date,explanation,citations,required_checks,confidence,model_version,input_hash,evaluated_at)
+     values ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10,now())
+     on conflict (listing_id) do update set
+       has_clue=excluded.has_clue, tentative_kind=excluded.tentative_kind, tentative_date=excluded.tentative_date,
+       explanation=excluded.explanation, citations=excluded.citations, required_checks=excluded.required_checks,
+       confidence=excluded.confidence, model_version=excluded.model_version, input_hash=excluded.input_hash,
+       evaluated_at=now()`,
+    [listingId, opinion.hasClue, opinion.tentativeKind, opinion.tentativeDate, opinion.explanation,
+      j(opinion.citations), j(opinion.requiredChecks), opinion.confidence, modelVersion, inputHash],
+  );
+}
+
+/** listing_id로 기존 AI 1차 소견 조회(캐시 — 배치가 미리 채워둔 값을 precision 평가에서 읽기만 함). */
+export async function fetchRegistryOpinion(listingId: number): Promise<RegistryOpinionRow | null> {
+  const rows = await query<RegistryOpinionRow>(
+    `select has_clue, tentative_kind, tentative_date, explanation, citations, required_checks, confidence, model_version, input_hash
+       from gm_registry_opinions where listing_id = $1`,
+    [listingId],
+  );
+  return rows[0] ?? null;
+}
+
+export async function saveOutcomeTrust(
+  caseNo: string, itemNo: string, saleDate: string, input: OutcomeTrustInput, result: OutcomeTrustResult,
+): Promise<void> {
+  await query(
+    `insert into gm_outcome_trust
+       (case_no,item_no,sale_date,status,sold,appraisal_value,sold_amount,sale_ratio,reason_codes,checks,evaluator_version,evaluated_at)
+     values ($1,$2,$3::date,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,now())
+     on conflict (case_no,item_no,sale_date) do update set
+       status=excluded.status, sold=excluded.sold, appraisal_value=excluded.appraisal_value,
+       sold_amount=excluded.sold_amount, sale_ratio=excluded.sale_ratio, reason_codes=excluded.reason_codes,
+       checks=excluded.checks, evaluator_version=excluded.evaluator_version, evaluated_at=now()`,
+    [caseNo, itemNo, saleDate, result.status, input.sold ?? true, input.appraisalValue, input.soldAmount,
+      result.ratio, j(result.reasonCodes), j(result.checks), result.evaluatorVersion],
+  );
+}
+
 export async function upsertListing(l: Listing): Promise<number> {
   const rows = await query<{ id: number }>(
     `insert into gm_listings
@@ -154,6 +253,84 @@ export async function saveLocationAnalysis(listingId: number, loc: LocationAnaly
   );
 }
 
+
+export interface ListingPhotoInput {
+  caseNo: string;
+  itemNo: string;
+  source: string;
+  sourceUrl: string;
+  cachePath: string;
+  publicUrl: string;
+  contentHash: string;
+}
+
+export async function saveListingPhotoMetadata(listingId: number, input: ListingPhotoInput): Promise<void> {
+  await query(
+    `insert into gm_listing_photos
+       (listing_id, case_no, item_no, source, source_url, cache_path, public_url, content_hash, status, delete_reason, deleted_at, captured_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,'active',null,null,now())
+     on conflict (listing_id, content_hash) do update set
+       case_no=excluded.case_no,
+       item_no=excluded.item_no,
+       source=excluded.source,
+       source_url=excluded.source_url,
+       cache_path=excluded.cache_path,
+       public_url=excluded.public_url,
+       status='active',
+       delete_reason=null,
+       deleted_at=null,
+       captured_at=now()`,
+    [listingId, input.caseNo, input.itemNo || '1', input.source, input.sourceUrl, input.cachePath, input.publicUrl, input.contentHash],
+  );
+}
+
+export async function activeListingPhotoUrls(listingId: number): Promise<string[]> {
+  const rows = await query<{ public_url: string }>(
+    `select public_url from gm_listing_photos where listing_id=$1 and status='active' order by captured_at, id`,
+    [listingId],
+  );
+  return rows.map((r) => r.public_url);
+}
+
+export async function activeListingPhotoSourceUrls(listingId: number): Promise<string[]> {
+  const rows = await query<{ source_url: string }>(
+    `select source_url from gm_listing_photos where listing_id=$1 and status='active' order by captured_at, id`,
+    [listingId],
+  );
+  return rows.map((r) => r.source_url);
+}
+
+export async function photoCachePathForPublicFile(listingId: number, filename: string): Promise<string | null> {
+  const rows = await query<{ cache_path: string }>(
+    `select cache_path
+       from gm_listing_photos
+      where listing_id=$1 and status='active' and public_url = '/api/listings/' || $1::text || '/photos/' || $2
+      order by id desc limit 1`,
+    [listingId, filename],
+  );
+  return rows[0]?.cache_path ?? null;
+}
+
+export async function markListingPhotosDeletedByCase(caseNo: string, itemNo: string, reason: string): Promise<string[]> {
+  const normalizedItemNo = itemNo || '1';
+  const rows = await query<{ listing_id: number; cache_path: string }>(
+    `update gm_listing_photos p
+        set status='deleted', delete_reason=$3, deleted_at=now()
+       from gm_listings l
+      where p.listing_id=l.id
+        and p.status='active'
+        and l.case_no=$1
+        and coalesce(nullif(l.item_no,''),'1')=$2
+      returning p.listing_id, p.cache_path`,
+    [caseNo, normalizedItemNo, reason],
+  );
+  const listingIds = [...new Set(rows.map((r) => r.listing_id))];
+  for (const listingId of listingIds) {
+    await query(`update gm_location_analysis set photos='[]'::jsonb, analyzed_at=now() where listing_id=$1`, [listingId]);
+  }
+  return rows.map((r) => r.cache_path);
+}
+
 /** sale_rounds 차수에서 fail_count 역산해 gm_listings 갱신 — 이전엔 saveLocationAnalysis의 숨은
  *  부수효과였던 것을 분리(호출부에서 명시 호출). N차 매각기일 = N-1회 유찰;
  *  sale_date 일치 차수 우선, 없으면 과거 최대 차수를 하한으로 사용. */
@@ -217,6 +394,7 @@ export interface ListingRow {
   appraisal_value: string | null; min_bid_price: string | null; fail_count: number | null;
   sale_date: string | null; demand_deadline: string | null; area_m2: string | null;
   is_collective_building: boolean | null; source: Listing['source']; source_url: string | null;
+  crawled_at: string | Date;
 }
 
 export async function fetchListingsForAnalysis(limit = 200, onlyNew = false): Promise<ListingRow[]> {
@@ -224,11 +402,22 @@ export async function fetchListingsForAnalysis(limit = 200, onlyNew = false): Pr
     ? 'where not exists (select 1 from gm_scores s where s.listing_id = gm_listings.id)'
     : '';
   // 활성(미래 기일·기일미정) 우선 — 재고가 limit를 넘어도 지나간 물건이 활성 재분석을 밀어내지 않게.
+  // --all(재분석) 모드는 crawled_at desc로 정렬하면 오래된 crawled_at의 활성매물이 limit 밖으로
+  // 영구히 밀려 재분석을 못 받는 굶주림이 생김(순서가 매일 거의 고정이라 로테이션 안 됨).
+  // 그래서 --all일 때만 "미분석·오래 분석 안 된 순"으로 정렬해 매일 다른 꼬리가 처리되게 한다.
+  const orderBy = onlyNew
+    ? 'crawled_at desc'
+    : 'greatest(r.analyzed_at, loc.analyzed_at) asc nulls first';
+  const joins = onlyNew ? '' : `
+     left join gm_rights_analysis r on r.listing_id = gm_listings.id
+     left join gm_location_analysis loc on loc.listing_id = gm_listings.id`;
   return query<ListingRow>(
-    `select id, case_no, coalesce(item_no,'1') as item_no, court, address, road_address, lat, lng, property_type, appraisal_value,
-            min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url
-     from gm_listings ${where}
-     order by (sale_date is null or sale_date >= current_date) desc, crawled_at desc limit $1`,
+    `select gm_listings.id, case_no, coalesce(item_no,'1') as item_no, court, address, road_address, lat, lng, property_type, appraisal_value,
+            min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url, crawled_at
+     from gm_listings ${joins} ${where}
+     order by (sale_date is null or sale_date >= current_date) desc,
+              case when sale_date >= current_date then sale_date end asc nulls last,
+              ${orderBy} limit $1`,
     [limit],
   );
 }
@@ -245,7 +434,7 @@ export async function fetchListingsByIds(ids: number[]): Promise<ListingRow[]> {
   if (!ids.length) return [];
   return query<ListingRow>(
     `select id, case_no, coalesce(item_no,'1') as item_no, court, address, road_address, lat, lng, property_type, appraisal_value,
-            min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url
+            min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url, crawled_at
      from gm_listings where id = any($1::bigint[])`,
     [ids],
   );

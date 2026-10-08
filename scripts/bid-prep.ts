@@ -11,7 +11,8 @@ import { fetchCompsWithFallback, regionKey, winRateGuide, type CompSale } from '
 async function main(): Promise<void> {
   const tomorrow = new Date(Date.now() + 9 * 3_600_000 + 86_400_000).toISOString().slice(0, 10); // KST 내일
   const rows = await query<BidPrepRow>(
-    `select l.case_no, l.property_type, l.address, l.court,
+    `select l.case_no, coalesce(nullif(l.item_no, ''), '1') as item_no,
+            l.property_type, l.address, l.court,
             l.appraisal_value::float8, l.min_bid_price::float8, s.total_score::int, l.is_favorite
        from gm_listings l
        left join gm_scores s on s.listing_id = l.id

@@ -33,6 +33,7 @@ const COURT_BID_START_OFFSET_DAYS = parseInt(process.env.COURT_BID_START_OFFSET_
 const COURT_BID_DAYS = Math.max(1, parseInt(process.env.COURT_BID_DAYS ?? '180', 10) || 180);
 const COURT_PAGE_SIZE = Math.max(1, parseInt(process.env.COURT_PAGE_SIZE ?? '40', 10) || 40);
 const MIN_REQ_INTERVAL_MS = Math.max(250, parseInt(process.env.COURT_MIN_REQ_INTERVAL_MS ?? '2500', 10) || 2500);
+const REQ_TIMEOUT_MS = Math.max(1000, parseInt(process.env.COURT_REQ_TIMEOUT_MS ?? '20000', 10) || 20000);
 const PAGE_DWELL_MIN_MS = Math.max(0, parseInt(process.env.COURT_PAGE_DWELL_MIN_MS ?? '3000', 10) || 3000);
 const PAGE_DWELL_MAX_MS = Math.max(PAGE_DWELL_MIN_MS, parseInt(process.env.COURT_PAGE_DWELL_MAX_MS ?? '7000', 10) || 7000);
 const DETAIL_DWELL_MIN_MS = Math.max(0, parseInt(process.env.COURT_DETAIL_DWELL_MIN_MS ?? '4000', 10) || 4000);
@@ -118,6 +119,16 @@ export function isKnownForIncremental(filter: Pick<CrawlFilter, 'incremental' | 
   return filter.incremental === true && filter.knownKeys?.has(key) === true;
 }
 
+export function shouldFetchPhotoDetail(
+  filter: Pick<CrawlFilter, 'photosOnly' | 'photoKeys' | 'maxPhotoDetails'>,
+  key: string,
+  fetched: number,
+): boolean {
+  return filter.photosOnly === true
+    && filter.photoKeys?.has(key) !== true
+    && (filter.maxPhotoDetails == null || fetched < filter.maxPhotoDetails);
+}
+
 /** 이번 실행에서 이 신규 물건의 상세를 지금 받을지 — 신규 상세 예산(maxNewDetails) 내에서만.
  *  예산 소진 시 메타만 저장(권리분석 없음 → 다음 실행에서 다시 신규로 잡혀 이어짐). 미설정이면 무제한. */
 export function shouldFetchDetailNow(known: boolean, nNewDetail: number, maxNewDetails?: number): boolean {
@@ -167,7 +178,7 @@ async function crawlFetchRetry(
   let lastErr: unknown;
   for (let i = 0; i < tries; i++) {
     try {
-      return await courtAuctionFetch(url, init);
+      return await courtAuctionFetch(url, { ...init, signal: AbortSignal.timeout(REQ_TIMEOUT_MS) });
     } catch (e) {
       lastErr = e;
       if (i < tries - 1) {
@@ -279,6 +290,77 @@ export function parseMoney(s: string | undefined): number {
   if (!s) return 0;
   const n = parseInt(s.replace(/,/g, '').trim(), 10);
   return isNaN(n) ? 0 : n;
+}
+
+
+const PHOTO_KEY_RE = /(url|src|path|file|photo|image|img|thumb|thum)/i;
+const PHOTO_URL_RE = /\.(?:jpe?g|png|webp|gif)(?:\?|#|$)|(?:photo|image|img|thumb|thum|atch|file|down|download)/i;
+const NON_LISTING_IMAGE_RE = /logo|icon|btn|button|blank|spacer|bg[_-]|banner|sprite|\.svg(?:\?|#|$)/i;
+// 법원 상세는 사진을 접두사 없는 base64로 주기도 한다. 매직 바이트의 base64 표기로 형식을 판별한다.
+const INLINE_PHOTO_PREFIXES: ReadonlyArray<readonly [string, string]> = [
+  ['/9j/', 'image/jpeg'],
+  ['R0lGOD', 'image/gif'],
+  ['iVBORw0KGgo', 'image/png'],
+  ['UklGR', 'image/webp'],
+];
+// URL로 보이지 않는 긴 base64 덩어리 — 사이트 경로로 붙여 요청하면 매번 타임아웃까지 기다린다.
+const LONG_BASE64_RE = /^[A-Za-z0-9+/=]{80,}$/;
+
+function normalizeInlineCourtPhoto(raw: string): string | null {
+  const compact = raw.replace(/\s+/g, '');
+  if (!LONG_BASE64_RE.test(compact)) return null;
+  const match = INLINE_PHOTO_PREFIXES.find(([prefix]) => compact.startsWith(prefix));
+  return match ? `data:${match[1]};base64,${compact}` : null;
+}
+
+function normalizeCourtPhotoUrl(raw: string, baseUrl: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed || /^data:/i.test(trimmed) || NON_LISTING_IMAGE_RE.test(trimmed)) return null;
+  const inlinePhoto = normalizeInlineCourtPhoto(trimmed);
+  if (inlinePhoto) return inlinePhoto;
+  if (LONG_BASE64_RE.test(trimmed.replace(/\s+/g, ''))) return null;
+  if (!PHOTO_URL_RE.test(trimmed)) return null;
+  try {
+    if (trimmed.startsWith('//')) return `https:${trimmed}`;
+    return new URL(trimmed, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+export function extractCourtPhotoUrls(detail: unknown, baseUrl = BASE): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const visited = new Set<object>();
+
+  function pushCandidate(value: string): void {
+    const normalized = normalizeCourtPhotoUrl(value, baseUrl);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+
+  function walk(value: unknown, keyHint = ''): void {
+    if (out.length >= 15 || value == null) return;
+    if (typeof value === 'string') {
+      if (PHOTO_KEY_RE.test(keyHint) || PHOTO_URL_RE.test(value)) pushCandidate(value);
+      return;
+    }
+    if (typeof value !== 'object') return;
+    if (visited.has(value)) return;
+    visited.add(value);
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item, keyHint);
+      return;
+    }
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      walk(nested, key);
+      if (out.length >= 15) return;
+    }
+  }
+
+  walk(detail);
+  return out.slice(0, 15);
 }
 
 /** 법원코드 → 법원명 */
@@ -584,10 +666,11 @@ export function parseCourtDetail(dma: any): CourtDetailParsed {
   addNote('인수권리', info.ndstrcRghCtt);
   addNote('법정지상권', info.sprfcExstcDts);
 
-  // 최선순위 설정(말소기준권리) — "… : YYYY.MM.DD. 근저당권" 류에서 날짜+종류 추출
+  // 최선순위 설정(말소기준권리) — "… : YYYY.MM.DD. 근저당권" 류에서 날짜+종류 추출.
+  // 구분자 뒤 공백 유무가 사건마다 다름("2022.7.5."/"2022. 7. 5.") — \s*로 둘 다 인식.
   const registry: RegistryEntry[] = [];
   const senior = String(info.tprtyRnkHypthcStngDts ?? '');
-  const dre = /(\d{4})[.\-](\d{1,2})[.\-](\d{1,2})/g;
+  const dre = /(\d{4})\s*[.\-]\s*(\d{1,2})\s*[.\-]\s*(\d{1,2})/g;
   let dm: RegExpExecArray | null;
   while ((dm = dre.exec(senior))) {
     const iso = parseKoreanDate(`${dm[1]}.${dm[2]}.${dm[3]}`);
@@ -627,6 +710,13 @@ function applyDetail(scraped: ScrapedListing, detail: any): void {
     caseNo: scraped.listing.caseNo, itemNo: scraped.listing.itemNo, docType: 'sale_statement',
     parsedJson: { tenants: d.tenants, notes: d.notes },
   });
+  const photos = extractCourtPhotoUrls(detail);
+  if (photos.length) {
+    docs.push({
+      caseNo: scraped.listing.caseNo, itemNo: scraped.listing.itemNo, docType: 'site_metrics',
+      parsedJson: { source: 'courtauction', photos },
+    });
+  }
   scraped.docs = docs;
 }
 
@@ -655,6 +745,7 @@ export class CourtAuctionAdapter implements Adapter {
     let nKnownSkip = 0;    // 증분: 기존 물건 상세 건너뛰고 메타만
     let nNewDetail = 0;    // 증분: 신규라 상세까지 받은 건수
     let nRefreshDetail = 0; // 증분: 임박 기존 물건 상세 재수집(명세서 변경감지용)
+    let nPhotoDetail = 0; // 사진 보강: 활성 사진이 없는 물건 상세 재수집
     let nDeferred = 0;     // 신규지만 상세 예산(maxNewDetails) 소진 — 메타만 저장, 다음 실행에서 이어감
 
     // 임박 기존 물건 상세 재수집 창(명세서 변경감지). KST 기준 오늘 ~ 오늘+refreshDays.
@@ -733,16 +824,20 @@ export class CourtAuctionAdapter implements Adapter {
           const known = isKnownForIncremental(filter, key);
           const decision: 'new' | 'refresh' | 'skip' = !fetchDetail_
             ? 'skip'
-            : !filter.incremental
-              ? 'new'
-              : detailDecision(known, scraped.listing.saleDate ?? null, todayStr, thresholdStr,
-                  { nNew: nNewDetail, nRefresh: nRefreshDetail },
-                  { maxNew: filter.maxNewDetails, maxRefresh, refreshDays });
+            : filter.photosOnly
+              ? (shouldFetchPhotoDetail(filter, key, nPhotoDetail) ? 'refresh' : 'skip')
+              : !filter.incremental
+                ? 'new'
+                : detailDecision(known, scraped.listing.saleDate ?? null, todayStr, thresholdStr,
+                    { nNew: nNewDetail, nRefresh: nRefreshDetail },
+                    { maxNew: filter.maxNewDetails, maxRefresh, refreshDays });
           if (decision !== 'skip') {
             try {
               const detail = await fetchDetail(scraped.listing.caseNo, court.code, scraped.listing.itemNo ?? '1', srchInfo, cookies);
               applyDetail(scraped, detail); // scraped.docs 채움 → runAdapter가 이전 문서와 비교해 명세서 변경 감지
-              if (decision === 'new') {
+              if (filter.photosOnly) {
+                nPhotoDetail++;
+              } else if (decision === 'new') {
                 nNewDetail++;
                 if (filter.maxNewDetails != null && nNewDetail === filter.maxNewDetails) {
                   console.log(`[courtauction] 신규 상세 예산 ${filter.maxNewDetails}건 소진 — 이후 신규는 메타만(다음 실행에서 이어감)`);

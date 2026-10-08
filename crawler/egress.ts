@@ -17,9 +17,8 @@ export function configuredHomeIps(value: string | undefined): Set<string> {
 
 export function classifyEgress(profile: EgressProfile, homeIps = configuredHomeIps(process.env.CRAWL_HOME_IPS)): EgressKind {
   const ip = profile.ip?.trim();
-  if (ip && homeIps.has(ip)) return 'home';
   const org = profile.org ?? '';
   if (DATACENTER_ORG_RE.test(org)) return 'datacenter';
-  if (RESIDENTIAL_ORG_RE.test(org)) return 'residential_isp';
+  if (RESIDENTIAL_ORG_RE.test(org)) return ip && homeIps.has(ip) ? 'home' : 'residential_isp';
   return 'unknown';
 }

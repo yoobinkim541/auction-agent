@@ -31,3 +31,12 @@ web/.vercel/
 artifacts/ml/
 .venv-ml/
 .vercel
+
+.superdesign/tmp/
+
+# Superpowers isolated implementation worktrees
+.worktrees/
+
+# Runtime caches (served from the server, not versioned)
+artifacts/listing-photos/
+__pycache__/

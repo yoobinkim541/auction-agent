@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily bounded listing photo backfill
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=gyeongmae-photo-backfill.service
+
+[Install]
+WantedBy=timers.target

@@ -3,6 +3,7 @@ import { eok } from '../shared/format.ts';
 
 export interface BidPrepRow {
   case_no: string;
+  item_no: string;
   property_type: string;
   address: string;
   court: string;
@@ -31,7 +32,7 @@ export function formatBidPrep(rows: BidPrepRow[], tomorrow: string, dashboardBas
     out.push(`${i + 1}. ${r.case_no} · ${TYPE[r.property_type] ?? r.property_type} · ${r.address.slice(0, 22)}${r.total_score != null ? ` ⭐${r.total_score}` : ''}${r.is_favorite ? ' ★' : ''}`);
     out.push(`   ${r.court} · 최저가 ${eok(r.min_bid_price)} · 보증금 ${manwon(depositWon(r.min_bid_price))} (10%)`);
     if (r.bid_guide) out.push(`   🎯 ${r.bid_guide}`);
-    if (dashboardBase) out.push(`   ${dashboardBase.replace(/\/+$/, '')}/#case=${encodeURIComponent(r.case_no)}`);
+    if (dashboardBase) out.push(`   ${dashboardBase.replace(/\/+$/, '')}/#case=${encodeURIComponent(r.case_no)}&item=${encodeURIComponent(r.item_no || '1')}`);
   });
   out.push('');
   out.push('준비물: 신분증 · 도장 · 보증금(수표 1매 권장) · 사건번호 메모');

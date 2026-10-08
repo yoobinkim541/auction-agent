@@ -1,0 +1,13 @@
+[Unit]
+Description=Gyeongmae bounded listing photo backfill
+After=network.target gyeongmae-api.service
+OnFailure=gyeongmae-alert@%n.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Environment=PHOTO_BACKFILL_MAX=50
+ExecStart=/home/ubuntu/projects/gyeongmae-agent/deploy/photo-backfill.sh
+TimeoutStartSec=3600
+StandardOutput=append:/home/ubuntu/projects/gyeongmae-agent/photo-backfill.log
+StandardError=append:/home/ubuntu/projects/gyeongmae-agent/photo-backfill.log

@@ -44,7 +44,7 @@ TEXT="${ICON} [${TITLE}] ${STATUS}
 ${BODY}"
 TEXT=${TEXT:0:3900} # 텔레그램 메시지 한도(4096자) 여유 컷
 
-RES=$(curl -sS --max-time 15 --retry 2 -X POST \
+RES=$(curl -4 -sS --max-time 15 --retry 2 -X POST \
   "https://api.telegram.org/bot${GM_TELEGRAM_BOT_TOKEN}/sendMessage" \
   --data-urlencode "chat_id=${GM_TELEGRAM_CHAT_ID}" \
   --data-urlencode "text=${TEXT}" \

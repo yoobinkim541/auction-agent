@@ -33,6 +33,21 @@ try:
 except Exception:
     XGBOOST_AVAILABLE = False
 
+try:
+    from .ensemble import (
+        blend_predictions,
+        current_expected_bid_predict,
+        fit_nonnegative_blend_weights,
+        group_median_predict,
+    )
+except ImportError:
+    from ensemble import (
+        blend_predictions,
+        current_expected_bid_predict,
+        fit_nonnegative_blend_weights,
+        group_median_predict,
+    )
+
 NUMERIC_FEATURES = [
     "appraisal_value",
     "expected_bid",
@@ -43,13 +58,19 @@ NUMERIC_FEATURES = [
     "max_safe_bid",
     "inq_cnt",
     "interest_cnt",
+    "fail_count",
+    "area_m2",
+    "building_area_m2",
+    "is_collective_building",
+    "assumed_amount",
+    "has_opposition_tenant",
     "min_bid_ratio",
     "expected_to_appraisal",
     "min_to_appraisal",
     "expected_to_min",
     "market_to_appraisal",
 ]
-CATEGORICAL_FEATURES = ["property_type", "court", "recommendation", "region"]
+CATEGORICAL_FEATURES = ["property_type", "court", "recommendation", "region", "risk_grade", "market_confidence"]
 
 
 def boolish(series: pd.Series) -> pd.Series:
@@ -80,7 +101,7 @@ def load_dataset(path: Path) -> pd.DataFrame:
         df[col] = pd.to_datetime(df[col], errors="coerce")
     if "item_no" in df.columns:
         df["item_no"] = df["item_no"].map(lambda x: "1" if pd.isna(x) or str(x).strip() in {"", "nan"} else str(x).replace(".0", ""))
-    for col in ["matched", "sold", "passed_filter", "would_have_won_under_max_safe_bid", "has_opposition_tenant"]:
+    for col in ["matched", "sold", "passed_filter", "would_have_won_under_max_safe_bid", "has_opposition_tenant", "is_collective_building"]:
         if col in df.columns:
             df[col] = boolish(df[col])
     numeric_cols = [c for c in NUMERIC_FEATURES + ["sold_amount", "sale_ratio", "realized_bid_margin", "assumed_amount"] if c in df.columns]
@@ -98,8 +119,56 @@ def load_dataset(path: Path) -> pd.DataFrame:
 def time_split(df: pd.DataFrame, test_ratio: float = 0.3) -> tuple[pd.DataFrame, pd.DataFrame]:
     if len(df) < 2:
         return df.copy(), df.iloc[0:0].copy()
-    cut = max(1, min(len(df) - 1, int(math.floor(len(df) * (1 - test_ratio)))))
-    return df.iloc[:cut].copy(), df.iloc[cut:].copy()
+    ordered = df.sort_values(["sale_date", "case_no", "item_no"]).copy()
+    dates = ordered["sale_date"].dropna().drop_duplicates().sort_values().tolist()
+    if len(dates) < 2:
+        cut = max(1, min(len(ordered) - 1, int(math.floor(len(ordered) * (1 - test_ratio)))))
+        return ordered.iloc[:cut].copy(), ordered.iloc[cut:].copy()
+    cutoff_index = max(1, min(len(dates) - 1, int(math.floor(len(dates) * (1 - test_ratio)))))
+    cutoff = dates[cutoff_index]
+    train = ordered[ordered["sale_date"] < cutoff].copy()
+    test = ordered[ordered["sale_date"] >= cutoff].copy()
+    if {"case_no", "item_no"}.issubset(ordered.columns):
+        test_keys = set(zip(test["case_no"].astype(str), test["item_no"].astype(str)))
+        train_keys = list(zip(train["case_no"].astype(str), train["item_no"].astype(str)))
+        train = train[[key not in test_keys for key in train_keys]].copy()
+    if train.empty or test.empty:
+        cut = max(1, min(len(ordered) - 1, int(math.floor(len(ordered) * (1 - test_ratio)))))
+        return ordered.iloc[:cut].copy(), ordered.iloc[cut:].copy()
+    return train, test
+
+
+def rolling_time_splits(
+    df: pd.DataFrame,
+    n_splits: int = 3,
+    test_ratio: float = 0.2,
+    min_train_rows: int = 30,
+) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
+    """Return chronological, case/item-purged validation windows."""
+    ordered = df.sort_values(["sale_date", "case_no", "item_no"]).copy()
+    dates = ordered["sale_date"].dropna().drop_duplicates().sort_values().tolist()
+    if len(dates) < 2:
+        return []
+    test_date_count = max(1, int(math.floor(len(dates) * test_ratio)))
+    first_start = max(1, len(dates) - n_splits * test_date_count)
+    splits: list[tuple[pd.DataFrame, pd.DataFrame]] = []
+    for split_index in range(n_splits):
+        start = first_start + split_index * test_date_count
+        end = min(len(dates), start + test_date_count)
+        if start >= end:
+            continue
+        train = ordered[ordered["sale_date"] < dates[start]].copy()
+        test_mask = ordered["sale_date"] >= dates[start]
+        if end < len(dates):
+            test_mask &= ordered["sale_date"] < dates[end]
+        test = ordered[test_mask].copy()
+        if {"case_no", "item_no"}.issubset(ordered.columns):
+            test_keys = set(zip(test["case_no"].astype(str), test["item_no"].astype(str)))
+            train_keys = list(zip(train["case_no"].astype(str), train["item_no"].astype(str)))
+            train = train[[key not in test_keys for key in train_keys]].copy()
+        if len(train) >= min_train_rows and not test.empty:
+            splits.append((train, test))
+    return splits
 
 
 def pct(value: float | None) -> str:
@@ -118,7 +187,7 @@ def make_preprocessor(df: pd.DataFrame):
     numeric = [c for c in NUMERIC_FEATURES if c in df.columns and df[c].notna().any()]
     categorical = [c for c in CATEGORICAL_FEATURES if c in df.columns and df[c].notna().any()]
     return ColumnTransformer([
-        ("num", Pipeline([("impute", SimpleImputer(strategy="median"))]), numeric),
+        ("num", Pipeline([("impute", SimpleImputer(strategy="median", add_indicator=True))]), numeric),
         ("cat", Pipeline([("impute", SimpleImputer(strategy="most_frequent")), ("onehot", OneHotEncoder(handle_unknown="ignore", min_frequency=5, sparse_output=False))]), categorical),
     ]), numeric + categorical
 
@@ -127,10 +196,82 @@ def regression_models(random_state: int):
     models = {
         "dummy_median": DummyRegressor(strategy="median"),
         "hist_gbr": HistGradientBoostingRegressor(max_iter=200, learning_rate=0.05, l2_regularization=0.05, random_state=random_state),
+        "hist_absolute": HistGradientBoostingRegressor(loss="absolute_error", max_iter=220, learning_rate=0.04, l2_regularization=0.05, random_state=random_state),
     }
     if XGBOOST_AVAILABLE:
         models["xgboost"] = XGBRegressor(n_estimators=250, max_depth=3, learning_rate=0.05, subsample=0.9, colsample_bytree=0.9, objective="reg:squarederror", random_state=random_state)
     return models
+
+
+def fit_regression_predictions(
+    train: pd.DataFrame,
+    target: pd.DataFrame,
+    random_state: int,
+    model_names: list[str] | None = None,
+) -> dict[str, np.ndarray]:
+    """Fit each requested regressor on train only and predict target."""
+    models = regression_models(random_state)
+    selected_names = model_names or list(models)
+    predictions: dict[str, np.ndarray] = {}
+    for name in selected_names:
+        preprocessor, features = make_preprocessor(train)
+        pipe = Pipeline([("prep", preprocessor), ("model", models[name])])
+        pipe.fit(train[features], train["sale_ratio"])
+        predictions[name] = np.clip(pipe.predict(target[features]), 0, 2.5)
+    return predictions
+
+
+def ensemble_components(
+    train: pd.DataFrame,
+    target: pd.DataFrame,
+    random_state: int,
+) -> dict[str, np.ndarray]:
+    """Build all report-only ensemble components from a train window."""
+    model_names = [name for name in regression_models(random_state) if name != "dummy_median"]
+    components = fit_regression_predictions(train, target, random_state, model_names)
+    components["group_median"] = group_median_predict(train, target)
+    current = current_expected_bid_predict(target)
+    if np.isfinite(current).mean() >= 0.5:
+        components["current_expected_bid"] = current
+    return components
+
+
+def fit_ensemble_weights(
+    train: pd.DataFrame,
+    validation: pd.DataFrame,
+    random_state: int,
+) -> dict[str, float]:
+    """Fit weights on an older validation window, never on the outer holdout."""
+    weights, _ = fit_ensemble_validation(train, validation, random_state)
+    return weights
+
+
+def fit_ensemble_validation(
+    train: pd.DataFrame,
+    validation: pd.DataFrame,
+    random_state: int,
+) -> tuple[dict[str, float], float]:
+    """Fit blend weights and a validation-derived downside buffer."""
+    components = ensemble_components(train, validation, random_state)
+    target = validation["sale_ratio"].to_numpy(dtype=float)
+    valid_rows = np.isfinite(target)
+    for values in components.values():
+        valid_rows &= np.isfinite(values)
+    if int(valid_rows.sum()) < max(20, len(components) * 5):
+        weights = {name: 1.0 / len(components) for name in components}
+    else:
+        weights = fit_nonnegative_blend_weights(
+            target[valid_rows],
+            {name: values[valid_rows] for name, values in components.items()},
+        )
+    if int(valid_rows.sum()) < 10:
+        return weights, 0.02
+    validation_prediction = blend_predictions(
+        {name: values[valid_rows] for name, values in components.items()}, weights,
+    )
+    downside_error = np.maximum(validation_prediction - target[valid_rows], 0.0)
+    buffer = float(np.clip(np.quantile(downside_error, 0.75), 0.02, 0.3))
+    return weights, buffer
 
 
 def classifier_models(random_state: int):
@@ -150,7 +291,6 @@ def eval_regression(df: pd.DataFrame, random_state: int) -> tuple[list[dict], pd
     train, test = time_split(sold)
     if len(train) < 30 or len(test) < 10 or not SKLEARN_AVAILABLE:
         return [], None
-    preprocessor, features = make_preprocessor(train)
     results = []
     predictions = test[["case_no", "item_no", "sale_date", "address", "sale_ratio", "expected_bid", "sold_amount"]].copy()
     current = test[test["expected_bid"].notna() & test["appraisal_value"].notna() & (test["appraisal_value"] > 0)].copy()
@@ -163,10 +303,8 @@ def eval_regression(df: pd.DataFrame, random_state: int) -> tuple[list[dict], pd
             "mae_sale_ratio": mean_absolute_error(current["sale_ratio"], current_pred),
             "rmse_sale_ratio": mean_squared_error(current["sale_ratio"], current_pred) ** 0.5,
         })
-    for name, model in regression_models(random_state).items():
-        pipe = Pipeline([("prep", preprocessor), ("model", model)])
-        pipe.fit(train[features], train["sale_ratio"])
-        pred = np.clip(pipe.predict(test[features]), 0, 2.5)
+    outer_model_predictions = fit_regression_predictions(train, test, random_state)
+    for name, pred in outer_model_predictions.items():
         results.append({
             "model": name,
             "train_rows": len(train),
@@ -176,7 +314,76 @@ def eval_regression(df: pd.DataFrame, random_state: int) -> tuple[list[dict], pd
         })
         if name != "dummy_median":
             predictions[f"pred_{name}"] = pred
+
+    inner_train, inner_validation = time_split(train, test_ratio=0.25)
+    if len(inner_train) >= 30 and len(inner_validation) >= 10:
+        weights, downside_buffer = fit_ensemble_validation(inner_train, inner_validation, random_state)
+        outer_components = {
+            name: values
+            for name, values in outer_model_predictions.items()
+            if name in weights
+        }
+        outer_components["group_median"] = group_median_predict(train, test)
+        if "current_expected_bid" in weights:
+            outer_components["current_expected_bid"] = current_expected_bid_predict(test)
+        ensemble_pred = blend_predictions(outer_components, weights)
+        conservative_pred = np.clip(ensemble_pred - downside_buffer, 0.001, 2.5)
+        ensemble_rows = np.isfinite(ensemble_pred) & test["sale_ratio"].notna().to_numpy()
+        if int(ensemble_rows.sum()) >= 10:
+            results.append({
+                "model": "ensemble_blend",
+                "train_rows": len(train),
+                "test_rows": int(ensemble_rows.sum()),
+                "mae_sale_ratio": mean_absolute_error(test.loc[ensemble_rows, "sale_ratio"], ensemble_pred[ensemble_rows]),
+                "rmse_sale_ratio": mean_squared_error(test.loc[ensemble_rows, "sale_ratio"], ensemble_pred[ensemble_rows]) ** 0.5,
+                "blend_weights": weights,
+                "downside_buffer": downside_buffer,
+            })
+            conservative_rows = np.isfinite(conservative_pred) & test["sale_ratio"].notna().to_numpy()
+            results.append({
+                "model": "ensemble_conservative",
+                "train_rows": len(train),
+                "test_rows": int(conservative_rows.sum()),
+                "mae_sale_ratio": mean_absolute_error(test.loc[conservative_rows, "sale_ratio"], conservative_pred[conservative_rows]),
+                "rmse_sale_ratio": mean_squared_error(test.loc[conservative_rows, "sale_ratio"], conservative_pred[conservative_rows]) ** 0.5,
+                "blend_weights": weights,
+                "downside_buffer": downside_buffer,
+            })
+            predictions["pred_group_median"] = outer_components["group_median"]
+            predictions["pred_ensemble_blend"] = ensemble_pred
+            predictions["pred_conservative_ensemble"] = conservative_pred
     return sorted(results, key=lambda r: r["mae_sale_ratio"]), predictions
+
+
+def eval_rolling_ensemble(df: pd.DataFrame, random_state: int, n_splits: int = 3) -> list[dict]:
+    """Evaluate the ensemble across several forward-only, purged time windows."""
+    sold = df[df["sold"] & df["sale_ratio"].notna()].copy()
+    results: list[dict] = []
+    for fold_index, (train, test) in enumerate(rolling_time_splits(sold, n_splits=n_splits, test_ratio=0.2), start=1):
+        inner_train, inner_validation = time_split(train, test_ratio=0.25)
+        if len(inner_train) < 30 or len(inner_validation) < 10:
+            continue
+        weights, downside_buffer = fit_ensemble_validation(inner_train, inner_validation, random_state)
+        model_predictions = fit_regression_predictions(train, test, random_state)
+        components = {name: values for name, values in model_predictions.items() if name in weights}
+        components["group_median"] = group_median_predict(train, test)
+        if "current_expected_bid" in weights:
+            components["current_expected_bid"] = current_expected_bid_predict(test)
+        prediction = blend_predictions(components, weights)
+        valid = np.isfinite(prediction) & test["sale_ratio"].notna().to_numpy()
+        current = current_expected_bid_predict(test)
+        current_valid = valid & np.isfinite(current)
+        if int(valid.sum()) < 10:
+            continue
+        results.append({
+            "fold": fold_index,
+            "train_rows": len(train),
+            "test_rows": int(valid.sum()),
+            "ensemble_mae": mean_absolute_error(test.loc[valid, "sale_ratio"], prediction[valid]),
+            "current_mae": mean_absolute_error(test.loc[current_valid, "sale_ratio"], current[current_valid]) if current_valid.any() else np.nan,
+            "downside_buffer": downside_buffer,
+        })
+    return results
 
 
 def eval_classifier(df: pd.DataFrame, random_state: int) -> list[dict]:
@@ -199,6 +406,39 @@ def eval_classifier(df: pd.DataFrame, random_state: int) -> list[dict]:
             "accuracy": accuracy_score(test["positive_margin"], pred),
             "balanced_accuracy": balanced_accuracy_score(test["positive_margin"], pred),
             "roc_auc": roc_auc_score(test["positive_margin"], proba),
+        })
+    return sorted(results, key=lambda r: r["roc_auc"], reverse=True)
+
+
+def eval_sale_outcome(df: pd.DataFrame, random_state: int) -> list[dict]:
+    """Evaluate sold versus unsold only when trusted matched outcomes provide both classes."""
+    labelled = df[df["matched"] & df["sold"].notna()].copy()
+    if labelled.empty:
+        return []
+    labelled["sale_outcome"] = labelled["sold"].astype(bool)
+    train, test = time_split(labelled)
+    if (
+        len(train) < 30
+        or len(test) < 10
+        or train["sale_outcome"].nunique() < 2
+        or test["sale_outcome"].nunique() < 2
+        or not SKLEARN_AVAILABLE
+    ):
+        return []
+    preprocessor, features = make_preprocessor(train)
+    results = []
+    for name, model in classifier_models(random_state).items():
+        pipe = Pipeline([("prep", preprocessor), ("model", model)])
+        pipe.fit(train[features], train["sale_outcome"])
+        pred = pipe.predict(test[features])
+        proba = pipe.predict_proba(test[features])[:, 1] if hasattr(pipe, "predict_proba") else pred.astype(float)
+        results.append({
+            "model": name,
+            "train_rows": len(train),
+            "test_rows": len(test),
+            "accuracy": accuracy_score(test["sale_outcome"], pred),
+            "balanced_accuracy": balanced_accuracy_score(test["sale_outcome"], pred),
+            "roc_auc": roc_auc_score(test["sale_outcome"], proba),
         })
     return sorted(results, key=lambda r: r["roc_auc"], reverse=True)
 
@@ -310,6 +550,8 @@ def write_report(df: pd.DataFrame, output: Path, random_state: int) -> None:
     matched = df[df["matched"]]
     sold = matched[matched["sold"]]
     regression, predictions = eval_regression(df, random_state)
+    rolling = eval_rolling_ensemble(df, random_state) if SKLEARN_AVAILABLE else []
+    sale_outcome = eval_sale_outcome(df, random_state)
     classification = eval_classifier(df, random_state)
     baseline = group_baseline(df)
     coverage = feature_coverage(df)
@@ -351,11 +593,38 @@ def write_report(df: pd.DataFrame, output: Path, random_state: int) -> None:
                 "rmse_sale_ratio": lambda x: f"{x:.4f}",
             }),
             "",
+            "## Sale Outcome Classification",
+            *table(sale_outcome, ["model", "train_rows", "test_rows", "roc_auc", "balanced_accuracy", "accuracy"], {
+                "roc_auc": lambda x: f"{x:.4f}",
+                "balanced_accuracy": lambda x: f"{x:.4f}",
+                "accuracy": lambda x: f"{x:.4f}",
+            }),
+            "",
             "## Positive Margin Classification",
             *table(classification, ["model", "train_rows", "test_rows", "roc_auc", "balanced_accuracy", "accuracy"], {
                 "roc_auc": lambda x: f"{x:.4f}",
                 "balanced_accuracy": lambda x: f"{x:.4f}",
                 "accuracy": lambda x: f"{x:.4f}",
+            }),
+            "",
+        ]
+        ensemble_row = next((row for row in regression if row.get("model") == "ensemble_blend"), None)
+        if ensemble_row:
+            weights = ensemble_row.get("blend_weights", {})
+            weight_text = ", ".join(f"{name}={value:.3f}" for name, value in weights.items())
+            lines += [
+                "## Ensemble Blend",
+                f"- 내부 시간순 검증창에서 학습한 비음수 가중치: `{weight_text}`",
+                f"- 과대예측 방지 하방 버퍼: `{ensemble_row.get('downside_buffer', 0.0):.4f}`",
+                "- 외부 holdout에서만 성능을 기록했으며, 운영 추천·입찰가에는 아직 반영하지 않습니다.",
+                "",
+            ]
+        lines += [
+            "## Rolling Time Validation",
+            *table(rolling, ["fold", "train_rows", "test_rows", "ensemble_mae", "current_mae", "downside_buffer"], {
+                "ensemble_mae": lambda x: f"{x:.4f}",
+                "current_mae": lambda x: f"{x:.4f}" if pd.notna(x) else "-",
+                "downside_buffer": lambda x: f"{x:.4f}",
             }),
             "",
         ]

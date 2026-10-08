@@ -35,6 +35,7 @@ export function buildReport(args: {
 }): ListingReport {
   const { rights, loc, listing } = args;
   const dataComplete = args.dataComplete !== false;
+  const tenantDepositParseFailed = rights.tenants.some((tenant) => tenant.tenant.depositParseFailed);
   const checklist: PreBidItem[] = buildPreBidChecklist(args);
   const dangerCount = checklist.filter((c) => c.severity === 'danger').length;
   const warnCount = checklist.filter((c) => c.severity === 'warn').length;
@@ -61,7 +62,7 @@ export function buildReport(args: {
     `[${recLabel}] 시세 ${eok(loc.marketPrice)} · 최저가 ${eok(listing.minBidPrice)}` +
     ` · 안전마진 ${pct(loc.safetyMargin)}` +
     (trueMargin != null ? ` · 진짜마진 ${pct(trueMargin)}` : '') +
-    (rights.assumedAmount > 0 ? ` · 인수 ${eok(rights.assumedAmount)}` : ' · 인수 없음') +
+    (tenantDepositParseFailed ? ' · 인수금액 미확인' : rights.assumedAmount > 0 ? ` · 인수 ${eok(rights.assumedAmount)}` : ' · 인수 없음') +
     ` · 위험 ${dangerCount}/주의 ${warnCount}건`;
 
   const summary: string[] = [];
@@ -74,7 +75,7 @@ export function buildReport(args: {
   const rightsSummary =
     `말소기준권리: ${rights.malsoBasis.note || '-'}. ` +
     `위험등급 ${rights.riskGrade}. ` +
-    `인수금액 ${won(rights.assumedAmount)}. ` +
+    `${tenantDepositParseFailed ? '인수금액 미확인(임차인 보증금 파싱 실패). ' : `인수금액 ${won(rights.assumedAmount)}. `}` +
     (rights.redFlags.length ? `특수권리/플래그 ${rights.redFlags.length}건(${rights.redFlags.map((f) => f.message.split(' — ')[0]).join(', ')}).` : '특수권리 플래그 없음.');
 
   const locationSummary =
@@ -88,7 +89,9 @@ export function buildReport(args: {
     ? `가정 낙찰가 ${won(ac.bidPrice)}(${ac.bidBasis}) + 취득세 ${won(ac.acqTax)}(${ac.acqTaxRatePct}%) + 명도비 ${won(ac.moveOutCost)} + 채권 ${won(ac.bondCost)}` +
       (ac.assumedAmount > 0 ? ` + 인수 ${won(ac.assumedAmount)}` : '') +
       ` = 총 ${won(ac.totalCost)}. 진짜 안전마진 ${pct(ac.trueSafetyMargin)}.`
-    : '취득비용 산정 불가(시세/공시가격 부족).';
+    : tenantDepositParseFailed
+      ? '임차인 보증금 파싱 실패 — 원본 확인 전 인수금액과 안전 입찰가 산정 보류.'
+      : '취득비용 산정 불가(시세/공시가격 부족).';
 
   return {
     headline, recommendation, summary, rightsSummary, locationSummary, costSummary,

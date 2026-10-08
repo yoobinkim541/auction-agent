@@ -1,0 +1,14 @@
+[Unit]
+Description=Gyeongmae daily learning batch (AI opinions, postmortem, ML)
+After=network.target postgresql.service gyeongmae-parse.service
+Wants=postgresql.service
+OnFailure=gyeongmae-alert@%n.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/projects/gyeongmae-agent/deploy/daily-learn.sh
+# claude CLI 45회(3s 간격·백오프) + ML 재학습. 파싱과 분리돼 이 한도는 학습 단계만 묶는다.
+TimeoutStartSec=7200
+StandardOutput=append:/home/ubuntu/projects/gyeongmae-agent/learn.log
+StandardError=append:/home/ubuntu/projects/gyeongmae-agent/learn.log

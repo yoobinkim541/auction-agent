@@ -8,8 +8,7 @@
  */
 import 'dotenv/config';
 import {
-  saveRightsAnalysis, saveLocationAnalysis, saveScore,
-  fetchListingsForAnalysis, fetchListingDocs, type ListingRow, query, backfillFailCountFromSaleRounds,
+  fetchListingsForAnalysis, fetchListingDocs, type ListingRow, query,
   fetchDeonakTenants, fetchListingsByIds,
 } from '../shared/db.ts';
 import type { Listing, RightsInput, RegistryEntry, Tenant, SiteMetrics } from '../shared/types.ts';
@@ -17,7 +16,7 @@ import { analyzeRights } from './rights/engine.ts';
 import { analyzeLocation } from './location/index.ts';
 import { scoreListing, maxSafeBid, DEFAULT_SCORE_CONFIG } from './select/score.ts';
 import { computeAcquisitionCost, expectedBid, marketFromSiteComps, classifyLandUseFlags, decideBidForCost } from './cost/acquisition.ts';
-import { loadSaleRatioTable } from './cost/sale-ratio-table.ts';
+import { loadSaleRatioTable, roundBandFromMinBid } from './cost/sale-ratio-table.ts';
 import { buildReport } from './report/build.ts';
 import { bandLine, compsStats, fetchCompsWithFallback, regionKey, recentSalesLines, winRateGuide, type CompSale } from './predict/comps.ts';
 import { attachGlossary } from './report/glossary.ts';
@@ -27,6 +26,8 @@ import { fetchRentDeals, estimateRent, estimateRentFromSalePrice } from './incom
 import { analyzeIncome } from './income/yield.ts';
 import { analyzeEviction } from './eviction/index.ts';
 import { parseKoreanDate, extractLabeledKoreanMoney } from '../crawler/normalize.ts';
+import { cacheListingPhotos } from '../shared/listing-photos.ts';
+import { persistPrecisionStages } from './precision/persist.ts';
 
 /** 사용자 취득세 가정(개인 1주택 기본). 다주택/법인이면 여기 또는 향후 설정에서 조정. */
 const TAX_ASSUMPTION = { homeCountAfter: 1 } as const;
@@ -38,23 +39,26 @@ const marginVsMinBid = (price: number, minBid: number): number | null =>
   minBid > 0 ? Math.round(((price - minBid) / price) * 1e5) / 1e5 : null;
 
 /**
- * 매각물건명세서 "매각효력" 노트에서 임차인 정보 추출.
- * 임차권등기 유형의 임차인은 구조화 테이블(임차인현황) 대신 매각효력 자연어 문장에
- * 보증금·전입일·확정일이 기재되는 경우가 많음. 이를 보완 파싱하여 엔진에 전달한다.
+ * 매각물건명세서 비고 노트에서 임차인 정보 추출.
+ * 임차권등기 유형의 임차인은 구조화 테이블(임차인현황) 대신 "매각효력"·"인수권리" 등
+ * 제목이 다른 자연어 문장(비고란 표기가 사건마다 다름)에 보증금·전입일·확정일이
+ * 기재되는 경우가 많음. 이를 보완 파싱하여 엔진에 전달한다.
  * — 출처 표기(raw 필드)로 구분, 크롤러 파싱 결과가 있으면 이 함수는 호출되지 않음.
+ * 오탐 방지는 "대항할 수 있는" + 보증금/전입일 중 최소 하나(하단)로 충분해 제목 단어를
+ * 요구하지 않는다(제목 요구 시 실제 표기 다양성 때문에 대다수를 놓침).
  */
-function extractTenantsFromNotes(notes: string[]): Tenant[] {
+export function extractTenantsFromNotes(notes: string[]): Tenant[] {
   const tenants: Tenant[] = [];
   for (const note of notes) {
-    if (!/매각효력/.test(note)) continue;
     if (!/대항할\s*수\s*있는/.test(note)) continue;
     // 단일 메모에 복수 임차인이 기재될 수 있으므로 블록 단위로 분리
     // "매수인에게 대항할 수 있는 ..." 또는 "대항할 수 있는 임차인이 있음 ..."
     const blocks = note.split(/(?=매수인에게\s*대항할|대항할\s*수\s*있는\s*임차인)/);
     for (const block of blocks) {
       if (!/대항할\s*수\s*있는/.test(block)) continue;
-      const deposit = extractLabeledKoreanMoney(block, '(?:임차보증금|임대차보증금)', ['전입일자', '주민등록일자', '확정일자', '배당요구', '점유']);
-      const moveInM = block.match(/(?:전입일자|주민등록일자)\s*(\d{4}[.년-]\d{1,2}[.월-]\d{1,2})/);
+      const deposit = extractLabeledKoreanMoney(block, '(?:임차보증금|임대차보증금)', ['전입일자', '전입일', '주민등록일자', '확정일자', '배당요구', '점유']);
+      const explicitNoDeposit = /(?:임차보증금|임대차보증금)\s*(?:금\s*)?(?:없음|해당\s*없음|0\s*원?)/.test(block);
+      const moveInM = block.match(/(?:전입일자|전입일|주민등록일자)\s*(\d{4}[.년-]\d{1,2}[.월-]\d{1,2})/);
       const fixedM = block.match(/확정일자\s*(?:\(\s*1차\s*\))?\s*(\d{4}[.년-]\d{1,2}[.월-]\d{1,2})/);
       if (deposit == null && !moveInM) continue; // 최소 하나 이상의 정량 정보 필요
       tenants.push({
@@ -62,6 +66,7 @@ function extractTenantsFromNotes(notes: string[]): Tenant[] {
         occupancyDate: moveInM ? parseKoreanDate(moveInM[1]) : undefined,
         fixedDate: fixedM ? parseKoreanDate(fixedM[1]) : undefined,
         deposit: deposit ?? 0,
+        depositParseFailed: deposit == null && !explicitNoDeposit,
         demandedDistribution: false, // 임차권등기는 별도 배당요구 없이 우선변제
         occupied: true,
         raw: `(매각효력노트추출) ${block.slice(0, 300)}`,
@@ -90,12 +95,12 @@ function rowToListing(r: ListingRow): Listing {
     isCollectiveBuilding: r.is_collective_building ?? false,
     source: r.source,
     sourceUrl: r.source_url ?? undefined,
-    crawledAt: new Date().toISOString(),
+    crawledAt: r.crawled_at instanceof Date ? r.crawled_at.toISOString() : r.crawled_at,
   };
 }
 
 /** 등기/임차인 문서(parsed_json)로 RightsInput을 구성. 없으면 빈 입력(엔진이 경고). */
-async function buildRightsInput(listingId: number, listing: Listing): Promise<{ input: RightsInput; siteAssumed: number | null; appraisalHighlights: string[]; siteMetrics: SiteMetrics; gongPrice?: number; scanNotes: string[]; appraisalText: string }> {
+async function buildRightsInput(listingId: number, listing: Listing): Promise<{ input: RightsInput; siteAssumed: number | null; appraisalHighlights: string[]; siteMetrics: SiteMetrics; gongPrice?: number; scanNotes: string[]; appraisalText: string; documents: unknown[] }> {
   const data = await fetchListingDocs(listingId);
 
   let registry: RegistryEntry[] = [];
@@ -146,6 +151,17 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<{ 
   const deonakTenants = await fetchDeonakTenants(listingId, listing.itemNo ?? '1');
   if (deonakTenants && deonakTenants.length) tenants = deonakTenants as Tenant[];
 
+  tenants = tenants.map((tenant) => {
+    const invalidDeposit = tenant.depositParseFailed === true
+      || !Number.isSafeInteger(tenant.deposit)
+      || tenant.deposit < 0;
+    return {
+      ...tenant,
+      deposit: invalidDeposit ? 0 : tenant.deposit,
+      depositParseFailed: invalidDeposit,
+    };
+  });
+
   return {
     input: {
       listing: {
@@ -169,6 +185,7 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<{ 
     gongPrice,
     scanNotes: notes,
     appraisalText,
+    documents: data.map((document) => document.parsed_json),
   };
 }
 
@@ -183,7 +200,7 @@ async function main() {
   const ids = idsArg ? idsArg.split('=')[1]!.split(',').map((x) => parseInt(x, 10)).filter(Number.isFinite) : null;
   let listings = ids && ids.length
     ? await fetchListingsByIds(ids)
-    : await fetchListingsForAnalysis(6000, !reanalyzeAll); // 증분 스윕으로 재고 4천+ — 2000이면 --all이 절반을 놓침(활성 우선 정렬과 세트)
+    : await fetchListingsForAnalysis(7500, !reanalyzeAll); // 활성 매물풀(~6.5천)+헤드룸. --all은 미분석·오래된 순 정렬이라 이 한도가 활성풀보다 커야 굶주림이 안 남음(2026-09-10 6000→7500).
   if (limit) listings = listings.slice(0, limit); // 소규모 검증/점진 적재용
   const concurrency = Math.max(1, parseInt(process.env.ANALYZE_CONCURRENCY ?? '6', 10));
   console.log(`분석 대상 매물: ${listings.length}건 ${ids ? `[--ids ${ids.length}건]` : reanalyzeAll ? '(전체 재분석)' : '(신규만 — 전체는 --all)'}${limit ? ` [--limit ${limit}]` : ''} | 병렬 ${concurrency}`);
@@ -199,7 +216,7 @@ async function main() {
 
   // 실증 낙찰가율 테이블(우리 낙찰결과 기반) — 실거래 낙찰사례 없는 물건의 예상낙찰가 폴백 근거.
   //   배치 시작 시 1회 로드 → 워커가 재사용(prevMarket과 동일 패턴).
-  const saleRatioTable = await loadSaleRatioTable(query as (sql: string, params?: unknown[]) => Promise<{ property_type: string; address: string; ratio: number }[]>);
+  const saleRatioTable = await loadSaleRatioTable(query as Parameters<typeof loadSaleRatioTable>[0]);
   {
     const top = saleRatioTable.summary().slice(0, 6).map((s) => `${s.key}:${s.medianPct}%(${s.n})`).join(' · ');
     console.log(`[analyze] 실증 낙찰가율 테이블 로드 — ${top}`);
@@ -235,8 +252,9 @@ async function main() {
     const listing = rowToListing(r);
     try {
       // 1) 권리분석 (결정형 엔진) + 사이트 예상 낙찰자인수(권위값) 반영
-      const { input, siteAssumed, appraisalHighlights, siteMetrics, gongPrice, scanNotes, appraisalText } = await buildRightsInput(r.id, listing);
+      const { input, siteAssumed, appraisalHighlights, siteMetrics, gongPrice, scanNotes, appraisalText, documents } = await buildRightsInput(r.id, listing);
       const rights = analyzeRights(input);
+      const tenantDepositParseFailed = rights.tenants.some((tenant) => tenant.tenant.depositParseFailed);
       // courtauction 원천: 등기부·임차인 데이터 없음 → 거짓 "클린" 방지
       if (r.source === 'courtauction' && input.registry.length === 0) {
         rights.riskGrade = 'review_required';
@@ -262,7 +280,13 @@ async function main() {
       loc.building = siteMetrics.building;
       loc.adminOffices = siteMetrics.adminOffices;
       loc.siteComps = siteMetrics.siteComps;
-      loc.photos = siteMetrics.photos;
+      if (siteMetrics.photos?.length) {
+        try {
+          loc.photos = await cacheListingPhotos(r.id, listing.caseNo, listing.itemNo ?? '1', siteMetrics.photos);
+        } catch (err) {
+          console.warn(`[analyze] 사진 캐시 실패 ${listing.caseNo}/${listing.itemNo ?? '1'}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
       loc.landUseFlags = classifyLandUseFlags(siteMetrics.landUseText);
       if (siteMetrics.transit?.length) {
         const nearest = [...siteMetrics.transit].sort((a, b) => a.distanceM - b.distanceM)[0]!;
@@ -294,8 +318,10 @@ async function main() {
         }
       }
 
-      // 예상낙찰가(감정가×낙찰가율) — 실거래 낙찰사례 없으면 실증 낙찰가율(종류×지역) 폴백
-      const empRatio = saleRatioTable.lookup(listing.propertyType, listing.address);
+      // 예상낙찰가(감정가×낙찰가율) — 실거래 낙찰사례 없으면 실증 낙찰가율(종류×지역×회차밴드) 폴백
+      const empRatio = saleRatioTable.lookup(
+        listing.propertyType, listing.address, roundBandFromMinBid(listing.minBidPrice, listing.appraisalValue),
+      );
       const eb = expectedBid(listing.appraisalValue, siteMetrics.sameBuildingSaleRatios, siteMetrics.nearbySaleRatios, listing.minBidPrice, empRatio);
       loc.expectedBidPrice = eb.price;
       loc.expectedBidBasis = eb.basis;
@@ -305,18 +331,22 @@ async function main() {
       // 예상낙찰가가 없고(sale ratio 미확보) 최저가가 시세의 5% 미만이면 시세×80%로 보수 추정.
       // (극단적으로 낮은 min_bid를 그대로 사용하면 trueSafetyMargin이 허위로 95%+가 됨)
       const { bidForCost, bidBasis } = decideBidForCost(eb.price, eb.basis, listing.minBidPrice, loc.marketPrice);
-      loc.acquisitionCost = computeAcquisitionCost({
-        propertyType: listing.propertyType,
-        address: listing.address,
-        areaM2: listing.areaM2,
-        bidPrice: bidForCost,
-        bidBasis,
-        gongPrice,
-        moveOutCost: siteMetrics.moveOutCost,
-        assumedAmount: rights.assumedAmount,
-        marketPrice: loc.marketPrice,
-        taxOptions: { ...TAX_ASSUMPTION, officetelAsHouse: false },
-      });
+      if (!tenantDepositParseFailed) {
+        loc.acquisitionCost = computeAcquisitionCost({
+          propertyType: listing.propertyType,
+          address: listing.address,
+          areaM2: listing.areaM2,
+          bidPrice: bidForCost,
+          bidBasis,
+          gongPrice,
+          moveOutCost: siteMetrics.moveOutCost,
+          assumedAmount: rights.assumedAmount,
+          marketPrice: loc.marketPrice,
+          taxOptions: { ...TAX_ASSUMPTION, officetelAsHouse: false },
+        });
+      } else {
+        loc.safetyMargin = null;
+      }
 
       // 2-c) 임대수익·출구 엔진 (MOLIT 전월세 → 전세가율·수익률·현금흐름·세후 매도 시나리오)
       try {
@@ -341,7 +371,7 @@ async function main() {
 
       // 3) 최대 안전 입찰가 — 취득세·명도비·채권 부대비용까지 포함해 목표 마진이 남는 상한
       const ac = loc.acquisitionCost;
-      rights.maxSafeBid = maxSafeBid(loc.marketPrice, rights.assumedAmount, 0.1,
+      rights.maxSafeBid = tenantDepositParseFailed ? null : maxSafeBid(loc.marketPrice, rights.assumedAmount, 0.1,
         ac ? { taxRatePct: ac.acqTaxRatePct, fixedCosts: ac.moveOutCost + ac.bondCost } : undefined);
 
       // 3-b) 매물별 보고서 + 입찰 전 필수 확인사항(법률문서 스캔)
@@ -397,18 +427,27 @@ async function main() {
         }
       }
 
-      // 5) 점수 (데이터 불완전이면 통과 불가 — 등기 미수집 상태에서 점수 통과하면 오탐)
-      const score = scoreListing(listing.caseNo, rights, loc, listing.propertyType, listing.address, DEFAULT_SCORE_CONFIG, { inq: listing.inquiryCount ?? null, interest: listing.interestCount ?? null });
+      // 5) 결정형 분석 저장 후 신뢰·정밀 추천을 순차 평가한다.
+      const analysisAt = new Date().toISOString();
+
+      // 6) 레거시 점수는 마지막에 저장하고, 정밀 평가 내부 오류가 난 행은 통과시키지 않는다.
+      let score = scoreListing(listing.caseNo, rights, loc, listing.propertyType, listing.address, DEFAULT_SCORE_CONFIG, { inq: listing.inquiryCount ?? null, interest: listing.interestCount ?? null });
       if (!dataComplete && score.passedFilter) {
         score.passedFilter = false;
         score.reason = (score.reason ? score.reason + '; ' : '') + '등기 미수집 — 권리분석 보류';
       }
-
-      // 6) 저장
-      await saveRightsAnalysis(r.id, rights, modelVersion, citations);
-      await saveLocationAnalysis(r.id, loc);
-      await backfillFailCountFromSaleRounds(r.id, loc.saleRounds); // 부수효과 명시 호출(이전엔 save 내부 숨김)
-      await saveScore(r.id, score);
+      const persisted = await persistPrecisionStages({
+        listingId: r.id,
+        listing,
+        rights,
+        location: loc,
+        documents,
+        analysisAt,
+        score,
+        modelVersion,
+        citations,
+      });
+      score = persisted.score;
       // 분석 중 지오코딩으로 새로 얻은 좌표를 gm_listings에 캐시
       if (loc.resolvedLat != null && loc.resolvedLng != null && (r.lat == null || r.lng == null)) {
         await query('UPDATE gm_listings SET lat=$2, lng=$3 WHERE id=$1', [r.id, loc.resolvedLat, loc.resolvedLng]);

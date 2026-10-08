@@ -94,9 +94,13 @@ export function buildPreBidChecklist(args: {
 
   // 4) 임차인 대항력/배당
   for (const [i, ta] of rights.tenants.entries()) {
+    if (ta.tenant.depositParseFailed) {
+      push({ id: `tenant-deposit-parse-${ta.tenant.name ?? i}`, label: '임차인 보증금 미확인(파싱 실패)', category: '임차인배당', severity: 'danger', detail: '보증금 원문을 금액으로 안전하게 변환하지 못해 인수금액과 안전 입찰가를 산정하지 않았습니다. 원본 매각물건명세서와 임차인 정보를 직접 확인하세요.', source: '임차인현황/명세서 파싱', verify: '법원경매정보의 매각물건명세서 원문·전입세대·배당요구' });
+    }
     if (ta.hasOpposition) {
       const noDemand = !ta.tenant.demandedDistribution;
-      push({ id: `tenant-opp-${ta.tenant.name ?? ta.tenant.moveInDate ?? i}`, label: `선순위 대항력 임차인${noDemand ? '(배당요구 안 함 — 전액 인수)' : ''}`, category: '임차인배당', severity: 'danger', detail: `대항력 있는 임차인${ta.tenant.name ? ` ${ta.tenant.name}` : ''} 보증금 ${won(ta.tenant.deposit)}. ${noDemand ? '배당요구를 하지 않아 보증금 전액을 낙찰자가 인수.' : '배당에서 미회수 잔액을 낙찰자가 인수.'}`, source: '임차인현황/등기', verify: '전입세대열람·확정일자, 배당요구 여부·종기' });
+      const depositText = ta.tenant.depositParseFailed ? '미확인(파싱 실패)' : won(ta.tenant.deposit);
+      push({ id: `tenant-opp-${ta.tenant.name ?? ta.tenant.moveInDate ?? i}`, label: `선순위 대항력 임차인${noDemand ? '(배당요구 안 함 — 전액 인수)' : ''}`, category: '임차인배당', severity: 'danger', detail: `대항력 있는 임차인${ta.tenant.name ? ` ${ta.tenant.name}` : ''} 보증금 ${depositText}. ${noDemand ? '배당요구를 하지 않아 보증금 전액을 낙찰자가 인수.' : '배당에서 미회수 잔액을 낙찰자가 인수.'}`, source: '임차인현황/등기', verify: '전입세대열람·확정일자, 배당요구 여부·종기' });
     }
   }
   if (rights.malsoBasis.entry == null) {

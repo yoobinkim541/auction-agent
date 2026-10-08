@@ -1,8 +1,16 @@
 package com.gyeongmae.web;
 
 import com.gyeongmae.service.ListingService;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -10,6 +18,11 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api")
 public class ListingController {
+
+  private static final Set<String> DECISIONS = Set.of(
+      "reviewing", "favorite", "hold", "fieldwork", "bid_review", "rejected");
+  private static final Set<String> REASON_CODES = Set.of(
+      "price", "rights", "location", "field", "capital", "schedule", "preference", "data_missing");
 
   private final ListingService service;
 
@@ -31,11 +44,77 @@ public class ListingController {
     return ResponseEntity.ok(service.listSlimJson(passedOnly, type, q));
   }
 
-  /** 매물 상세 (사건번호) */
-  @GetMapping(value = "/listings/{caseNo}", produces = MediaType.APPLICATION_JSON_VALUE)
-  public ResponseEntity<String> detail(@PathVariable String caseNo) {
-    String json = service.detailJson(caseNo);
+  @GetMapping(value = "/recommendations/precision", produces = MediaType.APPLICATION_JSON_VALUE)
+  public ResponseEntity<String> precisionRecommendations(@RequestParam(defaultValue = "5") int limit) {
+    return ResponseEntity.ok(service.precisionRecommendationsJson(clampPrecisionLimit(limit)));
+  }
+
+  /** 매물 상세 (listing id) */
+  @GetMapping(value = "/listings/by-id/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
+  public ResponseEntity<String> detailById(@PathVariable long id) {
+    String json = service.detailByIdJson(id);
     return json == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(json);
+  }
+
+  /** 매물 상세 (사건번호 + 선택 물건번호). itemNo 없는 기존 링크는 단일물건 사건만 조회한다. */
+  @GetMapping(value = "/listings/{caseNo}", produces = MediaType.APPLICATION_JSON_VALUE)
+  public ResponseEntity<String> detail(
+      @PathVariable String caseNo,
+      @RequestParam(required = false) String itemNo) {
+    String json = service.detailJson(caseNo, itemNo);
+    return json == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(json);
+  }
+
+  @GetMapping(value = "/listings/{id}/decisions", produces = MediaType.APPLICATION_JSON_VALUE)
+  public ResponseEntity<String> decisionHistory(@PathVariable long id) {
+    String json = service.decisionHistoryJson(id);
+    return json == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(json);
+  }
+
+  @PostMapping(value = "/listings/{id}/decisions", consumes = MediaType.APPLICATION_JSON_VALUE,
+      produces = MediaType.APPLICATION_JSON_VALUE)
+  public ResponseEntity<?> recordDecision(@PathVariable long id, @RequestBody Map<String, Object> body) {
+    String decision = stringValue(body.get("decision"));
+    String reasonCode;
+    Long targetBid;
+    try {
+      reasonCode = aliasedStringValue(body, "reasonCode", "reason_code");
+      targetBid = aliasedTargetBidValue(body, "targetBid", "target_bid");
+    } catch (IllegalArgumentException e) {
+      return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+    }
+    if (decision == null || !DECISIONS.contains(decision)) {
+      return ResponseEntity.badRequest().body(Map.of("error", "valid decision required"));
+    }
+    if (reasonCode != null && !REASON_CODES.contains(reasonCode)) {
+      return ResponseEntity.badRequest().body(Map.of("error", "valid reasonCode required"));
+    }
+    if ((decision.equals("hold") || decision.equals("rejected")) && reasonCode == null) {
+      return ResponseEntity.badRequest().body(Map.of("error", "reasonCode required for hold or rejected"));
+    }
+
+    String note = stringValue(body.get("note"));
+    String json = service.recordDecision(id, decision, reasonCode, note == null ? "" : note, targetBid);
+    return json == null ? ResponseEntity.notFound().build() : ResponseEntity.status(201).body(json);
+  }
+
+  @GetMapping(value = "/review/decisions", produces = MediaType.APPLICATION_JSON_VALUE)
+  public ResponseEntity<String> decisionReview() {
+    return ResponseEntity.ok(service.decisionReviewJson());
+  }
+
+
+  /** 캐시된 매물 사진. active 메타 + 실제 파일이 모두 있어야 노출한다. */
+  @GetMapping("/listings/{id}/photos/{filename:.+}")
+  public ResponseEntity<Resource> photo(@PathVariable long id, @PathVariable String filename) throws IOException {
+    Path path = service.photoPath(id, filename);
+    if (path == null) return ResponseEntity.notFound().build();
+    String contentType = Files.probeContentType(path);
+    MediaType mediaType = contentType == null ? MediaType.APPLICATION_OCTET_STREAM : MediaType.parseMediaType(contentType);
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .contentType(mediaType)
+        .body(new FileSystemResource(path));
   }
 
   /** 관심 토글: POST /api/listings/{id}/favorite?value=true */
@@ -83,5 +162,52 @@ public class ListingController {
   @GetMapping("/review/ml")
   public Map<String, Object> mlReview() {
     return service.mlReview();
+  }
+
+  private static int clampPrecisionLimit(int limit) {
+    return Math.max(3, Math.min(7, limit));
+  }
+
+  private static String stringValue(Object value) {
+    if (value == null) return null;
+    String result = value.toString().trim();
+    return result.isEmpty() ? null : result;
+  }
+
+  private static String aliasedStringValue(Map<String, Object> body, String canonicalKey, String aliasKey) {
+    boolean canonicalPresent = body.containsKey(canonicalKey);
+    boolean aliasPresent = body.containsKey(aliasKey);
+    String canonical = canonicalPresent ? stringValue(body.get(canonicalKey)) : null;
+    String alias = aliasPresent ? stringValue(body.get(aliasKey)) : null;
+    if (canonicalPresent && aliasPresent && !Objects.equals(canonical, alias)) {
+      throw new IllegalArgumentException(canonicalKey + " and " + aliasKey + " conflict");
+    }
+    return canonicalPresent ? canonical : alias;
+  }
+
+  private static Long aliasedTargetBidValue(Map<String, Object> body, String canonicalKey, String aliasKey) {
+    boolean canonicalPresent = body.containsKey(canonicalKey);
+    boolean aliasPresent = body.containsKey(aliasKey);
+    Long canonical = canonicalPresent ? targetBidValue(body.get(canonicalKey)) : null;
+    Long alias = aliasPresent ? targetBidValue(body.get(aliasKey)) : null;
+    if (canonicalPresent && aliasPresent && !Objects.equals(canonical, alias)) {
+      throw new IllegalArgumentException(canonicalKey + " and " + aliasKey + " conflict");
+    }
+    return canonicalPresent ? canonical : alias;
+  }
+
+  private static Long targetBidValue(Object value) {
+    if (value == null) return null;
+    String text = value.toString().trim();
+    if (!text.matches("[0-9]+")) {
+      throw new IllegalArgumentException("targetBid must be a positive integer");
+    }
+    try {
+      long targetBid = Long.parseLong(text);
+      if (targetBid <= 0) throw new IllegalArgumentException("targetBid must be a positive integer");
+      return targetBid;
+    } catch (NumberFormatException e) {
+      throw new IllegalArgumentException("targetBid must be a positive integer");
+    }
   }
 }

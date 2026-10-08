@@ -114,6 +114,7 @@ function analyzeTenant(
   demandDeadline: string | undefined,
 ): TenantAnalysis {
   const notes: string[] = [];
+  if (t.depositParseFailed) notes.push('보증금 파싱 실패 — 원본 확인 전 금액·입찰가 산정 보류');
   // 대항요건: 점유(인도) + 전입신고 → 익일 0시 대항력 발생
   const reqDate = maxDate(t.occupancyDate, t.moveInDate);
   const hasRequisites = t.occupied && !!t.moveInDate && !!reqDate;
@@ -311,6 +312,8 @@ function scanRedFlags(
 // ── 메인 ────────────────────────────────────────────────────────
 export function analyzeRights(input: RightsInput): RightsAnalysisResult {
   const warnings: string[] = [];
+  const depositParseFailed = input.tenants.some((tenant) => tenant.depositParseFailed);
+  if (depositParseFailed) warnings.push('임차인 보증금 파싱 실패 — 원본 확인 전 인수금액·입찰가 산정 보류');
   const registry = [...input.registry].sort(compareEntries);
 
   const malso = findMalsoBasis(registry);
@@ -351,7 +354,7 @@ export function analyzeRights(input: RightsInput): RightsAnalysisResult {
   // 일부 경고(말소기준 불일치/부재)는 caution을 유발하지만, "집합건물 토지등기 미제공" 같은
   // 일반 정보성 경고는 표시만 하고 등급을 끌어내리지 않는다(아파트가 늘 caution이 되는 것 방지).
   const substantiveWarn = warnings.some((w) => w.includes('불일치') || w.includes('말소기준권리 후보'));
-  const needsReview = redFlags.some((f) => f.needsHumanReview);
+  const needsReview = depositParseFailed || redFlags.some((f) => f.needsHumanReview);
   const hasDanger = redFlags.some((f) => f.severity === 'danger');
   const hasWarn = redFlags.some((f) => f.severity === 'warn') || substantiveWarn;
   let riskGrade: RightsAnalysisResult['riskGrade'];

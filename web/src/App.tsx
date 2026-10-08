@@ -3,8 +3,9 @@ import { FLAG_LABEL, TYPE_LABEL, RISK, RECO } from './labels.ts';
 import { SkeletonList, Notice, ThSort, DDay, FieldProgress } from './ui.tsx';
 import {
   fetchDetail, triggerJob, fetchJobStatus, setFavorite, fetchMlReview,
-  apiBase, eok, pct,
-  type ListingItem, type MlReview, type MlSurpriseRow,
+  apiBase, eok, pct, fetchPrecisionRecommendations, detailIdentityKey,
+  detailResponseMatches, listingDetailTarget, mergeDetailSelection, parseDetailHash,
+  type ListingItem, type MlReview, type MlSurpriseRow, type DecisionEvent, type ListingDetailTarget,
 } from './api.ts';
 import { scoreClient, scoreBreakdown, type ScoreConfig, type ClientScore } from './scoring.ts';
 // 코드 스플릿 — 지도(leaflet)·비교·상세·설정·도움말은 열 때만 로드(초기 번들·첫 페인트 단축).
@@ -18,10 +19,14 @@ import { resolveRound, saleDaysDiff, localDateISO } from './listing-utils.ts';
 import { useListings } from './useListings.ts';
 import { useTodayActions } from './useTodayActions.ts';
 import { TodayActions } from './TodayActions.tsx';
+import { PrecisionInbox } from './PrecisionInbox.tsx';
 import { useIncrementalList } from './useIncremental.ts';
 import { exportCSV } from './export-csv.ts';
 import { loadConfig, saveConfig, loadUIState, saveUIState } from './persistence.ts';
 import { useMediaQuery } from './useMediaQuery.ts';
+import { buildTriageCards } from './triage.ts';
+import { useBackendStatus } from './backend-status.ts';
+import { applyIfCurrent, createRequestGate } from './precision.ts';
 
 const TODAY = localDateISO(); // KST 기준 로컬 날짜(UTC slice는 00:00~09:00 KST 구간에서 어제 날짜)
 
@@ -64,6 +69,10 @@ const SORT_DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
 export default function App() {
   const { rows, setRows, loading, err, lastCrawl, load } = useListings();
   const { actions: todayActions, loading: todayActionsLoading, error: todayActionsError, reload: reloadTodayActions } = useTodayActions(20);
+  const backendStatus = useBackendStatus();
+  const [precisionItems, setPrecisionItems] = useState<ListingItem[]>([]);
+  const [precisionLoading, setPrecisionLoading] = useState(true);
+  const [precisionError, setPrecisionError] = useState<string | null>(null);
   const [onlyPassed, setOnlyPassed] = useState<boolean>(() => loadUIState().onlyPassed ?? false);
   const [onlyFavorite, setOnlyFavorite] = useState(false);
   const [onlyMultiRound, setOnlyMultiRound] = useState<boolean>(() => loadUIState().onlyMultiRound ?? false);
@@ -94,16 +103,39 @@ export default function App() {
   const [jobStatus, setJobStatus] = useState<{ msg: string; ok: boolean } | null>(null);
   const jobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const precisionRequestGateRef = useRef(createRequestGate());
+  const detailRequestGateRef = useRef(createRequestGate());
+
+  const loadPrecision = useCallback(() => {
+    const requestGate = precisionRequestGateRef.current;
+    const requestGeneration = requestGate.begin();
+    setPrecisionLoading(true);
+    setPrecisionError(null);
+    return fetchPrecisionRecommendations(5)
+      .then((items) => { applyIfCurrent(requestGate, requestGeneration, () => setPrecisionItems(items)); })
+      .catch(() => { applyIfCurrent(requestGate, requestGeneration, () => setPrecisionError('정밀 추천 API 오류')); })
+      .finally(() => { applyIfCurrent(requestGate, requestGeneration, () => setPrecisionLoading(false)); });
+  }, []);
 
   // 데이터 로드(rows·lastCrawl·load)는 useListings()로 이동(위 destructure)
-  // 딥링크: URL #case=<사건번호> 로 진입하면 해당 매물 상세를 자동으로 연다(다이제스트/봇 링크용).
+  // 딥링크: listing id 또는 사건/물건번호로 정확한 매물 상세를 연다. 기존 단일사건 #case 링크도 유지한다.
   useEffect(() => {
-    const m = window.location.hash.match(/#case=(.+)/);
-    if (!m) return;
-    fetchDetail(decodeURIComponent(m[1]!)).then((full) => { if (full) setSelected(full); }).catch(() => {});
+    const target = parseDetailHash(window.location.hash);
+    if (!target) return;
+    const requestGate = detailRequestGateRef.current;
+    const requestGeneration = requestGate.begin();
+    fetchDetail(target).then((full) => {
+      if (!detailResponseMatches(target, full)) return;
+      detailCacheRef.current.set(detailIdentityKey(listingDetailTarget(full)), full);
+      applyIfCurrent(requestGate, requestGeneration, () => setSelected(full));
+    }).catch(() => {});
   }, []);
   useEffect(() => { saveConfig(cfg); }, [cfg]);
   useEffect(() => { saveUIState({ sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete, groupByCase }); }, [sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete, groupByCase]);
+  useEffect(() => {
+    void loadPrecision();
+    return () => { precisionRequestGateRef.current.invalidate(); };
+  }, [loadPrecision]);
 
   // useCallback — 안정 참조여야 React.memo 행이 스킵된다(load도 useListings에서 안정화).
   const toggleFav = useCallback((item: ListingItem) => {
@@ -112,8 +144,9 @@ export default function App() {
     // 함수형 업데이트 — 상세 로드로 교체된 최신 selected(전체 데이터)를 slim 으로 덮어쓰지 않도록
     setSelected((cur) => (cur && cur.id === item.id ? { ...cur, is_favorite: nv } : cur));
     // 상세 캐시도 동기화 — 재오픈 시 별 상태가 토글 이전 값으로 되돌아가는 문제 방지
-    const cached = detailCacheRef.current.get(item.case_no);
-    if (cached) detailCacheRef.current.set(item.case_no, { ...cached, is_favorite: nv });
+    const cacheKey = detailIdentityKey(listingDetailTarget(item));
+    const cached = detailCacheRef.current.get(cacheKey);
+    if (cached) detailCacheRef.current.set(cacheKey, { ...cached, is_favorite: nv });
     setFavorite(item.id, nv).catch(() => load());
   }, [setRows, load]);
 
@@ -142,6 +175,7 @@ export default function App() {
               showJob(`✓ ${label} 완료 (${elapsedStr})`, true);
               load();
               reloadTodayActions();
+              void loadPrecision();
             } else if (s?.state === 'error') {
               stopPoll();
               showJob(`✕ ${label} 실패`, false);
@@ -160,27 +194,51 @@ export default function App() {
   };
 
   const handleSelect = useCallback((item: ListingItem) => {
-    const cached = detailCacheRef.current.get(item.case_no);
-    if (cached) { setSelected(cached); return; }
+    const target = listingDetailTarget(item);
+    const cacheKey = detailIdentityKey(target);
+    const requestGate = detailRequestGateRef.current;
+    const requestGeneration = requestGate.begin();
+    const cached = detailCacheRef.current.get(cacheKey);
+    if (cached) {
+      setSelected(mergeDetailSelection(cached, item));
+      return;
+    }
     setSelected(item);
-    setDetailLoading(item.case_no);
-    fetchDetail(item.case_no)
+    setDetailLoading(cacheKey);
+    fetchDetail(target)
       .then((full) => {
-        detailCacheRef.current.set(item.case_no, full);
-        setSelected((cur) => (cur?.case_no === item.case_no ? full : cur));
+        if (!detailResponseMatches(target, full)) return;
+        const merged = mergeDetailSelection(full, item);
+        detailCacheRef.current.set(cacheKey, merged);
+        applyIfCurrent(requestGate, requestGeneration, () => {
+          setSelected((cur) => (cur?.id === item.id ? merged : cur));
+        });
       })
       .catch(() => {})
-      .finally(() => setDetailLoading((cur) => (cur === item.case_no ? null : cur)));
+      .finally(() => setDetailLoading((cur) => (cur === cacheKey ? null : cur)));
   }, []);
 
-  const openCaseFromReview = useCallback((caseNo: string) => {
-    const cached = detailCacheRef.current.get(caseNo);
+  const updateCurrentDecision = useCallback((event: DecisionEvent) => {
+    setPrecisionItems((items) => items.map((item) => item.id === event.listing_id ? { ...item, current_decision: event } : item));
+    setSelected((item) => item?.id === event.listing_id ? { ...item, current_decision: event } : item);
+  }, []);
+
+  const openCaseFromReview = useCallback((target: ListingDetailTarget) => {
+    const cacheKey = detailIdentityKey(target);
+    const requestGate = detailRequestGateRef.current;
+    const requestGeneration = requestGate.begin();
+    const cached = detailCacheRef.current.get(cacheKey);
     if (cached) { setSelected(cached); return; }
-    setDetailLoading(caseNo);
-    fetchDetail(caseNo)
-      .then((full) => { detailCacheRef.current.set(caseNo, full); setSelected(full); })
+    setDetailLoading(cacheKey);
+    fetchDetail(target)
+      .then((full) => {
+        if (!detailResponseMatches(target, full)) return;
+        detailCacheRef.current.set(cacheKey, full);
+        detailCacheRef.current.set(detailIdentityKey(listingDetailTarget(full)), full);
+        applyIfCurrent(requestGate, requestGeneration, () => setSelected(full));
+      })
       .catch(() => {})
-      .finally(() => setDetailLoading((cur) => (cur === caseNo ? null : cur)));
+      .finally(() => setDetailLoading((cur) => (cur === cacheKey ? null : cur)));
   }, []);
 
   // 단일 패스 스코어링 — rows·cfg 변경 시에만 1회. (과거: view/stats/allScored 3중 패스가 매 상호작용 재계산)
@@ -215,6 +273,7 @@ export default function App() {
   const caseGroups = useMemo(() => groupRowsByCase(viewFull), [viewFull]);
   const view = useMemo(() => (groupByCase ? caseGroups.map((g) => g.rows[0]!) : viewFull), [groupByCase, caseGroups, viewFull]);
   const caseSizes = useMemo(() => new Map(caseGroups.map((g) => [g.caseNo, g.rows.length] as const)), [caseGroups]);
+  const triageCards = useMemo(() => buildTriageCards(viewFull, TODAY, 4), [viewFull]);
 
   // 점진 렌더 — 처음 60행만 마운트, 스크롤 시 60씩 추가(표·카드 공용).
   // 필터/정렬/탭 변경은 view 참조가 바뀌어 자동으로 처음부터. (수천 행 일괄 마운트가 렌더링 병목이었음)
@@ -250,6 +309,10 @@ export default function App() {
     setOnlyPassedAvoid(false); setOnlyToday(false); setFilterDate(null); setMaxGapEok(0);
     setType('all'); setQ('');
   };
+  const navAll = () => { setShowReview(false); setShowCfg(false); setOnlyFavorite(false); setOnlyPassed(false); window.scrollTo(0, 0); };
+  const navRecommend = () => { setShowReview(false); setShowCfg(false); setOnlyFavorite(false); setOnlyPassed(true); window.scrollTo(0, 0); };
+  const navFavorite = () => { setShowReview(false); setShowCfg(false); setOnlyFavorite(true); window.scrollTo(0, 0); };
+  const navFieldwork = () => { setShowReview(false); setShowCfg(false); setSort('fieldwork'); setSortDir('desc'); window.scrollTo(0, 0); };
 
   const stats = useMemo(() => {
     const all = scored; // 단일 패스 재사용(별도 scoreClient 패스 제거)
@@ -286,9 +349,60 @@ export default function App() {
   const selNavPos = selNavIdx >= 0 ? `${selNavIdx + 1} / ${view.length}` : undefined;
 
   return (
-    <div className="app">
-      <header>
-        <h1>경매 매물 분석 <span className="sub">권리분석 · 입지분석</span>{lastCrawl && <span className="crawl-date">데이터 기준 {lastCrawl.date}</span>}</h1>
+    <div className="app app-hybrid">
+      <aside className="ops-sidebar" aria-label="운영 내비게이션">
+        <div className="ops-brand">
+          <b>GYEONGMAE AGENT</b>
+          <span>Operations Cockpit</span>
+          <button className={`backend-pill backend-${backendStatus.view.tone}`} onClick={backendStatus.reload} title={backendStatus.view.detail}>
+            {backendStatus.view.label}
+          </button>
+        </div>
+
+        {!loading && rows.length > 0 && (
+          <section className="ops-health" aria-label="운영 현황">
+            <div className="ops-side-head">
+              <span>Operational Health</span>
+              <time>{TODAY.slice(5).replace('-', '.')}</time>
+            </div>
+            <div className="ops-health-grid">
+              <button onClick={navAll}><span>전체 분석</span><b>{stats.total}</b></button>
+              <button className="ops-good" onClick={navRecommend}><span>분석 통과</span><b>{stats.passed}</b></button>
+              <button className="ops-danger" onClick={() => { setOnlyToday((v) => !v); setFilterDate(null); }}><span>오늘 기일</span><b>{stats.todayUrgent}</b></button>
+              <button className="ops-review" onClick={() => { setCfg((c) => ({ ...c, includeReviewRequired: !c.includeReviewRequired })); setOnlyPassed(true); }}><span>검토 필요</span><b>{stats.reviewCount}</b></button>
+            </div>
+          </section>
+        )}
+
+        <nav className="ops-nav">
+          <span>Navigation</span>
+          <button className={activeTab === 'all' ? 'on' : ''} onClick={navAll}>📋 전체 매물</button>
+          <button className={activeTab === 'recommend' ? 'on' : ''} onClick={navRecommend}>🎯 추천 매물</button>
+          <button className={activeTab === 'fav' ? 'on' : ''} onClick={navFavorite}>★ 관심 매물 <em>{favCount}</em></button>
+          <button onClick={navFieldwork}>🚶 현장 임장</button>
+          <button className={activeTab === 'review' ? 'on' : ''} onClick={() => { setShowReview((s) => !s); setShowCfg(false); window.scrollTo(0, 0); }}>🧠 복기 / ML</button>
+        </nav>
+
+        <div className="ops-quick">
+          <label>
+            <span>Quick Filter</span>
+            <select value={type} onChange={(e) => setType(e.target.value)}>
+              <option value="all">전체 종류</option>
+              {Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </label>
+          <button onClick={load}>↻ 데이터 동기화</button>
+        </div>
+      </aside>
+
+      <main className="content-area">
+      <header className="dash-header">
+        <div className="dash-title-row">
+          <h1>경매 매물 분석 <span className="sub">권리분석 · 입지분석</span>{lastCrawl && <span className="crawl-date">데이터 기준 {lastCrawl.date}</span>}</h1>
+          <button className={`backend-pill backend-${backendStatus.view.tone}`} onClick={backendStatus.reload} title={backendStatus.view.detail}>
+            {backendStatus.view.label}
+          </button>
+        </div>
         {lastCrawl?.blocked && (
           <div className="stale-banner blocked" role="alert">
             ⛔ <strong>크롤 차단 의심</strong> — 법원경매 최근 수집이 0건/실패입니다{lastCrawl.daysAgo < 900 ? ` (마지막 정상 수집 ${lastCrawl.daysAgo}일 전)` : ''}.
@@ -414,12 +528,50 @@ export default function App() {
         </div>
       )}
 
+      <PrecisionInbox
+        items={precisionItems}
+        loading={precisionLoading}
+        error={precisionError}
+        onOpen={handleSelect}
+        onReload={() => { void loadPrecision(); }}
+        onLegacy={() => { setShowReview(false); setViewMode('list'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+      />
+
       <TodayActions
         actions={todayActions}
         loading={todayActionsLoading}
         error={todayActionsError}
         onOpenCase={openCaseFromReview}
       />
+
+      {!showReview && !loading && !err && triageCards.length > 0 && (
+        <section className="triage-panel" aria-label="우선순위 액션">
+          <div className="panel-head">
+            <div>
+              <h2>우선순위 액션</h2>
+              <p>입찰임박·인수주의·추천·임장대기를 먼저 꺼내 발품 순서를 정합니다.</p>
+            </div>
+            <span className="panel-count">{triageCards.length}건</span>
+          </div>
+          <div className="triage-grid">
+            {triageCards.map((card) => (
+              <button key={`${card.kind}:${card.row.id}`} className={`triage-card triage-${card.tone}`} onClick={() => handleSelect(card.row)} title={card.subtitle}>
+                <span className="triage-rail" />
+                <span className="triage-label">{card.label}</span>
+                <span className="triage-main">
+                  <strong>{card.title}</strong>
+                  <em>{card.subtitle}</em>
+                </span>
+                <span className="triage-metric">{card.metric}</span>
+                <span className="triage-foot">
+                  <b>{card.footLeft}</b>
+                  <small>{card.footRight}</small>
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="controls">
         <details className="filter-menu">
@@ -519,10 +671,51 @@ export default function App() {
       )}
 
       {!showReview && viewMode === 'list' && view.length > 0 && !isMobile && (
+        <section className="deal-board" aria-label="추천 딜 보드">
+          <div className="panel-head">
+            <div>
+              <h2>추천 딜 보드</h2>
+              <p>현재 조건에서 먼저 열어볼 상위 매물입니다. 카드로 판단하고 표로 검증하세요.</p>
+            </div>
+            <span className="panel-count">TOP {Math.min(6, visible.length)}</span>
+          </div>
+          <div className="deal-grid">
+            {visible.slice(0, 6).map(({ item, sc }) => {
+              const risk = RISK[item.rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
+              const reco = item.location?.report?.recommendation;
+              const trueMgn = item.location?.acquisition_cost?.trueSafetyMargin;
+              const assumed = item.rights?.assumed_amount ?? 0;
+              return (
+                <button key={`deal:${item.id}`} className={`deal-card-ui deal-${reco ?? 'none'}${assumed > 0 ? ' deal-assumed' : ''}`} onClick={() => handleSelect(item)}>
+                  <ListingPhoto item={item} className="deal-photo" />
+                  <span className="deal-topline">
+                    <b>{TYPE_LABEL[item.property_type] ?? item.property_type}</b>
+                    <DDay dateStr={item.sale_date} />
+                  </span>
+                  <strong className="deal-address">{item.address}</strong>
+                  <span className="deal-case mono">{item.case_no}{item.item_no && item.item_no !== '1' ? `-${item.item_no}` : ''}</span>
+                  <span className="deal-metrics">
+                    <span><small>최저가</small><b>{eok(item.min_bid_price)}</b></span>
+                    <span><small>진짜마진</small><b className={(trueMgn ?? 0) < 0 ? 'danger' : 'good'}>{pct(trueMgn)}</b></span>
+                    <span><small>인수</small><b className={assumed > 0 ? 'danger' : ''}>{assumed > 0 ? eok(assumed) : '0'}</b></span>
+                  </span>
+                  <span className="deal-foot">
+                    <span className={`badge ${risk.cls}`}>{risk.label}</span>
+                    {reco && <span className={`badge ${RECO[reco]?.cls ?? ''}`}>{RECO[reco]?.label ?? reco}</span>}
+                    <b className="deal-score">{sc.totalScore}</b>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {!showReview && viewMode === 'list' && view.length > 0 && !isMobile && (
         <table className="grid">
           <thead>
             <tr>
-              <th></th><th>사건번호</th><th>종류</th><th>소재지</th>
+              <th></th><th className="photo-head">사진</th><th>사건번호</th><th>종류</th><th>소재지</th>
               <ThSort col="appraisal" cur={sort} dir={sortDir} onSort={handleSort}>감정가</ThSort>
               <ThSort col="price" cur={sort} dir={sortDir} onSort={handleSort}>최저가</ThSort>
               <ThSort col="safety" cur={sort} dir={sortDir} onSort={handleSort}><span title="안전마진 / 진짜마진(취득비용 반영)">마진</span></ThSort>
@@ -556,8 +749,9 @@ export default function App() {
 
       {selected && <Suspense fallback={null}><Detail
         row={selected} onClose={() => setSelected(null)} onFav={() => toggleFav(selected)}
-        loading={detailLoading === selected.case_no}
+        loading={detailLoading === detailIdentityKey(listingDetailTarget(selected))}
         onPrev={selNavPrev} onNext={selNavNext} position={selNavPos}
+        onDecisionSaved={updateCurrentDecision}
       /></Suspense>}
 
       {showCompare && (
@@ -594,6 +788,7 @@ export default function App() {
           <span className="tb-ico">⚙</span>조건
         </button>
       </nav>
+      </main>
     </div>
   );
 }
@@ -629,7 +824,7 @@ function CalibrationChip({ row }: { row: ListingItem }) {
   return <span className={`ml-ref-chip${cls}`} title={`${hint} · 운영 반영 전 참고용`}>{caution ? '과다주의' : 'ML'} {eok(row.ml_calibration.reference_bid_price)}</span>;
 }
 
-function ReviewPanel({ onOpenCase }: { onOpenCase: (caseNo: string) => void }) {
+function ReviewPanel({ onOpenCase }: { onOpenCase: (target: ListingDetailTarget) => void }) {
   const [data, setData] = useState<MlReview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -703,7 +898,7 @@ function ReviewPanel({ onOpenCase }: { onOpenCase: (caseNo: string) => void }) {
         <div className="review-card">
           <h3>결과 미매칭 재시도 큐</h3>
           <table className="mini-table"><thead><tr><th>사건</th><th>D+</th><th>우선</th><th>점수</th></tr></thead><tbody>
-            {data.retryQueue.slice(0, 12).map((r) => <tr key={`${r.case_no}-${r.item_no}`}><td><button className="link-btn mono" onClick={() => onOpenCase(r.case_no)}>{r.case_no}{r.item_no !== '1' ? `-${r.item_no}` : ''}</button></td><td>{r.days_overdue}</td><td>{r.retry_priority}</td><td>{r.total_score ?? '-'}</td></tr>)}
+            {data.retryQueue.slice(0, 12).map((r) => <tr key={`${r.case_no}-${r.item_no}`}><td><button className="link-btn mono" onClick={() => onOpenCase({ caseNo: r.case_no, itemNo: r.item_no })}>{r.case_no}{r.item_no !== '1' ? `-${r.item_no}` : ''}</button></td><td>{r.days_overdue}</td><td>{r.retry_priority}</td><td>{r.total_score ?? '-'}</td></tr>)}
           </tbody></table>
         </div>
         <div className="review-card">
@@ -739,14 +934,14 @@ function surpriseMetric(row: MlSurpriseRow): string {
   return `점수 ${row.total_score ?? '-'}`;
 }
 
-function SurpriseTable({ title, rows, onOpenCase }: { title: string; rows: MlSurpriseRow[]; onOpenCase: (caseNo: string) => void }) {
+function SurpriseTable({ title, rows, onOpenCase }: { title: string; rows: MlSurpriseRow[]; onOpenCase: (target: ListingDetailTarget) => void }) {
   return (
     <div className="surprise-box">
       <h4>{title}</h4>
       {rows.length === 0 ? <p className="muted">케이스 없음</p> : (
         <table className="mini-table surprise-table"><thead><tr><th>사건</th><th>주소</th><th>핵심</th><th>마진</th></tr></thead><tbody>
           {rows.map((r) => <tr key={`${r.surprise_kind}-${r.case_no}-${r.item_no}`}>
-            <td><button className="link-btn mono" onClick={() => onOpenCase(r.case_no)}>{r.case_no}{r.item_no !== '1' ? `-${r.item_no}` : ''}</button></td>
+            <td><button className="link-btn mono" onClick={() => onOpenCase({ caseNo: r.case_no, itemNo: r.item_no })}>{r.case_no}{r.item_no !== '1' ? `-${r.item_no}` : ''}</button></td>
             <td title={r.address}>{r.address.slice(0, 18)}</td>
             <td>{surpriseMetric(r)}</td>
             <td>{fmtRate(r.realized_bid_margin ?? r.true_margin)}</td>
@@ -765,11 +960,22 @@ interface RowBaseProps {
   groupByCase: boolean; caseSize: number;
 }
 
+function ListingPhoto({ item, className = '' }: { item: ListingItem; className?: string }) {
+  return (
+    <div className={`listing-photo ${className}`.trim()} title={item.cover_photo_url ? '대표사진' : '사진 준비 중'}>
+      {item.cover_photo_url
+        ? <img src={item.cover_photo_url} loading="lazy" decoding="async" alt={`${item.case_no} 대표사진`} />
+        : <span aria-hidden="true">📷</span>}
+    </div>
+  );
+}
+
 const ListingRow = memo(function ListingRow({ item: r, sc, onSelect, onFav, today, groupByCase, caseSize }: RowBaseProps & { today: string }) {
   const risk = RISK[r.rights?.risk_grade ?? ''] ?? { label: '-', cls: '' };
   return (
     <tr className={`row${r.location?.report?.recommendation === 'consider' ? ' row-consider' : ''}${sc.passed && r.location?.report?.recommendation === 'avoid' ? ' row-pass-avoid' : ''}`}>
       <td className="star" onClick={() => onFav(r)} title="관심">{r.is_favorite ? '★' : '☆'}</td>
+      <td className="row-photo-cell" onClick={() => onSelect(r)}><ListingPhoto item={r} /></td>
       <td className="mono" onClick={() => onSelect(r)}>
         {r.case_no}
         {r.crawled_at && r.crawled_at.slice(0, 10) >= today && <span className="new-chip" title={`신규 수집: ${r.crawled_at.slice(0, 10)}`}>NEW</span>}
@@ -844,6 +1050,7 @@ const ListingCard = memo(function ListingCard({ item: r, sc, onSelect, onFav, gr
       style={{ animationDelay: `${Math.min(index, 12) * 28}ms` }}
       onClick={() => onSelect(r)}
     >
+      <ListingPhoto item={r} className="card-photo" />
       <div className="card-top">
         <span className="card-addr">{r.address}</span>
         <span className="card-star" onClick={(e) => { e.stopPropagation(); onFav(r); }}>{r.is_favorite ? '★' : '☆'}</span>

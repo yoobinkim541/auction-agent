@@ -1,0 +1,9 @@
+[Unit]
+Description=매일 10:15 경매 학습 부가 배치(파싱 창 06:00+4h 이후)
+
+[Timer]
+OnCalendar=*-*-* 10:15:00 Asia/Seoul
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped, parseCourtDetail, parseCourtExtra, isKnownForIncremental, shouldFetchDetailNow, detailDecision } from './courtauction.ts';
+import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped, parseCourtDetail, parseCourtExtra, isKnownForIncremental, shouldFetchDetailNow, detailDecision, shouldFetchPhotoDetail, extractCourtPhotoUrls } from './courtauction.ts';
 
 describe('parseCourtExtra', () => {
   it('빈/미설정 → 빈 배열', () => {
@@ -211,11 +211,63 @@ describe('parseCourtDetail', () => {
     expect(d.siteAssumedAmount).toBeNull(); // 유치권 등 자동 인수 처리 안 함(보수적)
   });
 
+  it('최선순위설정 날짜의 구분자 뒤 공백("2022. 7. 5.")도 인식한다', () => {
+    const d = parseCourtDetail({
+      dspslGdsDxdyInfo: { tprtyRnkHypthcStngDts: '최선순위설정: 2022. 7. 5. 가압류', gdsSpcfcRmk: '' },
+    });
+    expect(d.registry.length).toBe(1);
+    expect(d.registry[0]?.receiptDate).toBe('2022-07-05');
+  });
+
   it('빈/누락 dma_result → 빈 결과(throw 없음)', () => {
     const d = parseCourtDetail({});
     expect(d.registry).toEqual([]);
     expect(d.statementSeniorDate).toBeUndefined();
     expect(d.notes).toEqual([]);
+  });
+});
+
+
+describe('extractCourtPhotoUrls', () => {
+  it('상세 dma_result에서 법원 매물 사진 URL만 추출한다', () => {
+    const detail = {
+      photoList: [
+        { fileUrl: '/down/image/photo1.jpg' },
+        { imgUrl: 'https://www.courtauction.go.kr/down/image/photo2.jpeg?x=1' },
+        { fileUrl: '/images/logo.png' },
+        { fileUrl: 'data:image/png;base64,abc' },
+        { fileUrl: '/down/image/photo1.jpg' },
+      ],
+      nested: { thumUrl: '/files/thumb_photo3.png' },
+    };
+
+    expect(extractCourtPhotoUrls(detail)).toEqual([
+      'https://www.courtauction.go.kr/down/image/photo1.jpg',
+      'https://www.courtauction.go.kr/down/image/photo2.jpeg?x=1',
+      'https://www.courtauction.go.kr/files/thumb_photo3.png',
+    ]);
+  });
+
+  it('법원 상세의 JPEG base64 사진을 data URL로 추출한다', () => {
+    const rawJpegBase64 = `/9j/${'A'.repeat(160)}`;
+
+    expect(extractCourtPhotoUrls({ photoList: [{ photo: rawJpegBase64 }] })).toEqual([
+      `data:image/jpeg;base64,${rawJpegBase64}`,
+    ]);
+  });
+
+  it.each([
+    ['gif', 'R0lGODlhTwK8AvcAAA', 'image/gif'],
+    ['png', 'iVBORw0KGgoAAAANSU', 'image/png'],
+    ['webp', 'UklGRiQAAABXRUJQVl', 'image/webp'],
+  ])('법원 상세의 %s base64 사진도 data URL로 추출한다', (_label, prefix, mime) => {
+    const raw = `${prefix}${'A/b+'.repeat(40)}`;
+    expect(extractCourtPhotoUrls({ photoList: [{ photo: raw }] })).toEqual([`data:${mime};base64,${raw}`]);
+  });
+
+  it('알 수 없는 긴 base64 문자열은 사이트 URL로 붙이지 않는다', () => {
+    const raw = `Qk2${'A/img+file'.repeat(20)}`;
+    expect(extractCourtPhotoUrls({ photoList: [{ photo: raw }] })).toEqual([]);
   });
 });
 
@@ -249,6 +301,20 @@ describe('shouldFetchDetailNow (신규 상세 예산)', () => {
   });
   it('신규 + 예산 소진 → false(메타만, 다음 실행 이월)', () => {
     expect(shouldFetchDetailNow(false, 200, 200)).toBe(false);
+  });
+});
+
+describe('shouldFetchPhotoDetail (사진 보강 예산)', () => {
+  const filter = { photosOnly: true, photoKeys: new Set(['2024타경1|1']), maxPhotoDetails: 2 };
+
+  it('활성 사진이 없는 사건만 bounded 상세를 받는다', () => {
+    expect(shouldFetchPhotoDetail(filter, '2024타경2|1', 0)).toBe(true);
+    expect(shouldFetchPhotoDetail(filter, '2024타경2|1', 2)).toBe(false);
+  });
+
+  it('이미 사진이 있거나 일반 모드면 받지 않는다', () => {
+    expect(shouldFetchPhotoDetail(filter, '2024타경1|1', 0)).toBe(false);
+    expect(shouldFetchPhotoDetail({ photosOnly: false }, '2024타경2|1', 0)).toBe(false);
   });
 });
 

@@ -6,12 +6,14 @@
 # 크롤이 실패해도(접속차단·로그인 폼 변경·네트워크 등) 분석은 항상 수행한다.
 #   분석은 DB(기존 등기/명세서 + gm_molit_cache 영구 캐시)만으로도 income·시세·리포트를 갱신하므로,
 #   크롤 한 번의 실패가 전체 분석 갱신을 막아선 안 된다. (과거: set -e + crawl 실패 → analyze 통째 스킵 버그)
-cd /home/ubuntu/projects/gyeongmae-agent || exit 1
+GYEONGMAE_PROJECT_DIR="${GYEONGMAE_PROJECT_DIR:-/home/ubuntu/projects/gyeongmae-agent}"
+cd "$GYEONGMAE_PROJECT_DIR" || exit 1
 export PATH="/home/ubuntu/.local/bin:$PATH"
 NOTIFY="scripts/notify-telegram.sh"   # 경매 전용 봇(GM_TELEGRAM_*) — 스톡봇(.hermes) 공용 스크립트 대체
+source deploy/precision-daily-gate.sh
 echo "[$(date '+%F %T')] === parse start ==="
 
-COURT_BID_DAYS="${COURT_BID_DAYS:-180}" npm run crawl -- --source=courtauction --incremental --max=10000 --max-new=500 --all-types --region=서울,경기
+COURT_BID_DAYS="${COURT_BID_DAYS:-180}" npm run crawl -- --source=courtauction --incremental --max=10000 --max-new=500 --all-types --region=서울,경기,인천
 CRAWL_RC=$?
 if [ "$CRAWL_RC" = "0" ]; then
   echo "[$(date '+%F %T')] crawl ok"
@@ -32,6 +34,26 @@ echo "[$(date '+%F %T')] === parse done (analyze rc=$rc) ==="
 npm run snapshot 2>&1 || echo "[snapshot] 실패(무시)"
 npm run collect:results 2>&1 || echo "[collect:results] 실패(무시)"
 
+# 미매칭 스냅샷 재수집(Phase2 미매칭률 감소) — bounded batch, 24h 쿨다운·항목간 지연은 스크립트 내부에서 관리.
+#   400 = 2026-08-26 버스트 차단 사건 이전 단일 실행 기준 무지연 500건까지 무차단 확인됨 + 이후 항목간 300ms 지연 추가로 여유 확보.
+OUTCOME_RETRY_LIMIT="${OUTCOME_RETRY_LIMIT:-400}" \
+OUTCOME_RETRY_TIME_BUDGET_MS="${OUTCOME_RETRY_TIME_BUDGET_MS:-1200000}" \
+  npm run retry:outcomes 2>&1 || echo "[retry:outcomes] 실패(무시)"
+
+# 분석과 정밀 감사를 모두 통과해야 정밀 다이제스트를 허용한다.
+# 분석 실패 시 오래된 평가를 행동 가능한 추천으로 보내지 않고, analyze rc와 레거시 데이터는 보존한다.
+PRECISION_DIGEST_ALLOWED=0
+if [ "$rc" = "0" ]; then
+  PRECISION_DIGEST_ALLOWED=1
+  if ! run_precision_refresh_and_audit; then
+    PRECISION_DIGEST_ALLOWED=0
+  fi
+else
+  echo "[precision] analyze 실패(rc=$rc) — 정밀 갱신·다이제스트 생략"
+fi
+
+# 학습 부가 배치(AI 소견·복기·ML)는 deploy/daily-learn.sh로 분리 — gyeongmae-learn.timer가 파싱 창 이후 실행.
+
 # 관심물건(★) 변동 알림(발품절감 ②·⑤) — 기일/유찰/최저가/문서갱신 diff. 변동 있을 때만 stdout → 발송.
 WATCH=$(npm run --silent watch:favs 2>/dev/null)
 if [ -n "$WATCH" ]; then
@@ -47,13 +69,9 @@ if [ "$HRC" != "0" ]; then
     "신규 수집 굶음 — 차단/계정플래그/프록시 점검. ${SUMMARY}" 2>/dev/null || true
 fi
 
-# 일일 추천 다이제스트 + 복기(학습) 커버리지 한 줄을 텔레그램으로(stdout만 발생 = 안전).
-DIGEST=$(npm run --silent digest 2>/dev/null)
+# 일일 정밀 추천 다이제스트 + 복기(학습) 커버리지 한 줄. 감사 실패 시 정밀 다이제스트만 생략한다.
 EVAL=$(npm run --silent eval:report -- --summary 2>/dev/null)
-if [ -n "$DIGEST" ]; then
-  bash "$NOTIFY" "경매 추천" "완료" "${DIGEST}
-${EVAL}" 2>/dev/null || true
-fi
+run_precision_digest "$PRECISION_DIGEST_ALLOWED" "$EVAL"
 
 # 학습 게이트 도달(매칭≥EVAL_GATE) 첫날 1회 — 전체 복기 리포트 + "이어서 진행" 알림. 마커로 재발송 방지.
 GATE_MARK="$HOME/.gyeongmae-phase2-alerted"

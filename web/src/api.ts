@@ -5,6 +5,38 @@
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined) || '';
 export const apiBase = BASE || '(상대경로 /api → Vercel 프록시)';
 
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), 15_000);
+  const headers = { Accept: 'application/json', ...(init.headers ?? {}) };
+  try {
+    const res = await fetch(`${BASE}${path}`, { ...init, headers, signal: init.signal ?? controller.signal });
+    if (!res.ok) {
+      let detail = '';
+      try {
+        const body = (await res.json()) as { error?: string; message?: string };
+        detail = body.error || body.message || '';
+      } catch {
+        detail = await res.text().catch(() => '');
+      }
+      throw new ApiError(res.status, `API ${res.status}${detail ? `: ${detail}` : ''}`);
+    }
+    return (await res.json()) as T;
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw new Error('API timeout');
+    throw e;
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
+}
+
 // Spring /api/listings 가 반환하는 행 형태 (Postgres가 조립한 중첩 JSON)
 export interface RightsObj {
   malso_basis?: { note?: string; date?: string | null } | null;
@@ -127,6 +159,7 @@ export interface ListingItem {
   area_m2: number | null;
   source: string;
   source_url: string | null;
+  cover_photo_url?: string | null;
   court_check_url?: string | null;
   deonakchal_check_url?: string | null;
   ml_calibration?: MlCalibrationObj | null;
@@ -146,6 +179,51 @@ export interface ListingItem {
   safety_margin_score: number | null;
   clean_rights_score: number | null;
   reason: string | null;
+  precision?: PrecisionObj | null;
+  current_decision?: DecisionEvent | null;
+}
+
+export type PrecisionStatus = 'recommended' | 'conditional' | 'hold' | 'rejected';
+export type PrecisionConfidence = 'high' | 'medium' | 'low';
+export type DecisionKind = 'reviewing' | 'favorite' | 'hold' | 'fieldwork' | 'bid_review' | 'rejected';
+export type DecisionReason = 'price' | 'rights' | 'location' | 'field' | 'capital' | 'schedule' | 'preference' | 'data_missing';
+
+export interface PrecisionObj {
+  status: PrecisionStatus;
+  confidence: PrecisionConfidence;
+  conservative_value: number | null;
+  recommended_bid: number | null;
+  hard_cap_bid: number | null;
+  reason_codes: string[];
+  strengths: string[];
+  risks: string[];
+  required_checks: string[];
+  evaluator_version: string;
+  evaluated_at: string;
+}
+
+export interface DecisionEvent {
+  id: number;
+  listing_id: number;
+  decision: DecisionKind;
+  reason_code: DecisionReason | null;
+  note: string;
+  target_bid: number | null;
+  precision_snapshot?: PrecisionObj | Record<string, unknown>;
+  created_at: string;
+}
+
+export interface DecisionInput {
+  decision: DecisionKind;
+  reasonCode?: DecisionReason;
+  note?: string;
+  targetBid?: number;
+}
+
+export interface ListingDetailTarget {
+  id?: number;
+  caseNo?: string;
+  itemNo?: string | null;
 }
 
 
@@ -237,18 +315,26 @@ export interface MlReview {
   reportMarkdown: string;
 }
 
+export interface BackendHealth {
+  ok: boolean;
+  service?: string;
+  version?: string;
+  time?: string;
+  [key: string]: unknown;
+}
+
+export async function fetchBackendHealth(): Promise<BackendHealth> {
+  return apiJson<BackendHealth>('/api/health');
+}
+
 export async function fetchTodayActions(limit = 20): Promise<TodayAction[]> {
   const qs = new URLSearchParams();
   qs.set('limit', String(limit));
-  const res = await fetch(`${BASE}/api/actions/today?${qs.toString()}`);
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return (await res.json()) as TodayAction[];
+  return apiJson<TodayAction[]>(`/api/actions/today?${qs.toString()}`);
 }
 
 export async function fetchMlReview(): Promise<MlReview> {
-  const res = await fetch(`${BASE}/api/review/ml`);
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return (await res.json()) as MlReview;
+  return apiJson<MlReview>('/api/review/ml');
 }
 
 export async function fetchListings(params: { passedOnly?: boolean; type?: string; q?: string } = {}): Promise<ListingItem[]> {
@@ -256,15 +342,70 @@ export async function fetchListings(params: { passedOnly?: boolean; type?: strin
   if (params.passedOnly) qs.set('passedOnly', 'true');
   if (params.type && params.type !== 'all') qs.set('type', params.type);
   if (params.q) qs.set('q', params.q);
-  const res = await fetch(`${BASE}/api/listings?${qs.toString()}`);
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return (await res.json()) as ListingItem[];
+  return apiJson<ListingItem[]>(`/api/listings?${qs.toString()}`);
 }
 
-export async function fetchDetail(caseNo: string): Promise<ListingItem> {
-  const res = await fetch(`${BASE}/api/listings/${encodeURIComponent(caseNo)}`);
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return (await res.json()) as ListingItem;
+export async function fetchPrecisionRecommendations(limit = 5): Promise<ListingItem[]> {
+  const clampedLimit = Math.max(3, Math.min(7, Math.trunc(limit) || 5));
+  return apiJson<ListingItem[]>(`/api/recommendations/precision?limit=${clampedLimit}`);
+}
+
+export async function fetchDecisions(id: number): Promise<DecisionEvent[]> {
+  return apiJson<DecisionEvent[]>(`/api/listings/${id}/decisions`);
+}
+
+export async function saveDecision(id: number, input: DecisionInput): Promise<DecisionEvent> {
+  return apiJson<DecisionEvent>(`/api/listings/${id}/decisions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+}
+
+export function detailIdentityKey(target: ListingDetailTarget): string {
+  if (target.id != null && Number.isInteger(target.id) && target.id > 0) return `listing:${target.id}`;
+  const itemNo = target.itemNo?.trim() || '1';
+  return `case:${target.caseNo ?? ''}/item:${itemNo}`;
+}
+
+export function listingDetailTarget(item: Pick<ListingItem, 'id' | 'case_no' | 'item_no'>): ListingDetailTarget {
+  return { id: item.id, caseNo: item.case_no, itemNo: item.item_no };
+}
+
+export function parseDetailHash(hash: string): ListingDetailTarget | null {
+  const params = new URLSearchParams(hash.replace(/^#/, ''));
+  const rawId = params.get('listing');
+  const id = rawId != null && /^[1-9][0-9]*$/.test(rawId) ? Number(rawId) : undefined;
+  const caseNo = params.get('case')?.trim() || undefined;
+  const itemNo = params.get('item')?.trim() || undefined;
+  if (id !== undefined) return { id, ...(caseNo ? { caseNo } : {}), ...(itemNo ? { itemNo } : {}) };
+  if (caseNo) return { caseNo, ...(itemNo ? { itemNo } : {}) };
+  return null;
+}
+
+export function detailResponseMatches(target: ListingDetailTarget, response: ListingItem): boolean {
+  if (target.id != null) return response.id === target.id;
+  if (response.case_no !== target.caseNo) return false;
+  return !target.itemNo || (response.item_no?.trim() || '1') === (target.itemNo.trim() || '1');
+}
+
+export function mergeDetailSelection(full: ListingItem, summary?: ListingItem): ListingItem {
+  if (!summary || summary.id !== full.id) return full;
+  return {
+    ...full,
+    ...(summary.precision !== undefined ? { precision: summary.precision } : {}),
+    ...(summary.current_decision !== undefined ? { current_decision: summary.current_decision } : {}),
+  };
+}
+
+export async function fetchDetail(target: string | ListingDetailTarget): Promise<ListingItem> {
+  if (typeof target === 'string') {
+    return apiJson<ListingItem>(`/api/listings/${encodeURIComponent(target)}`);
+  }
+  if (target.id != null) return apiJson<ListingItem>(`/api/listings/by-id/${target.id}`);
+  if (!target.caseNo) throw new Error('상세 조회 식별자가 없습니다');
+  const itemQuery = target.itemNo ? `?itemNo=${encodeURIComponent(target.itemNo)}` : '';
+  return apiJson<ListingItem>(`/api/listings/${encodeURIComponent(target.caseNo)}${itemQuery}`);
 }
 
 export async function triggerJob(job: 'crawl' | 'analyze' | 'eval' | 'ingest-legal'): Promise<void> {
@@ -312,9 +453,7 @@ function postJob(job: 'crawl' | 'analyze' | 'eval' | 'ingest-legal', token: stri
 
 export interface JobStatus { state: 'idle' | 'running' | 'ok' | 'error'; startedAt?: string; finishedAt?: string; exitCode?: number; error?: string; }
 export async function fetchJobStatus(): Promise<Record<string, JobStatus>> {
-  const res = await fetch(`${BASE}/api/jobs/status`);
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return (await res.json()) as Record<string, JobStatus>;
+  return apiJson<Record<string, JobStatus>>('/api/jobs/status');
 }
 
 export async function setFavorite(id: number, value: boolean): Promise<void> {
@@ -326,9 +465,7 @@ export async function setFavorite(id: number, value: boolean): Promise<void> {
 export interface FieldworkNote { item_key: string; checked: boolean; note: string; updated_at?: string }
 
 export async function fetchFieldworkNotes(id: number): Promise<FieldworkNote[]> {
-  const res = await fetch(`${BASE}/api/listings/${id}/fieldwork`);
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return (await res.json()) as FieldworkNote[];
+  return apiJson<FieldworkNote[]>(`/api/listings/${id}/fieldwork`);
 }
 
 export async function saveFieldworkNote(id: number, itemKey: string, checked: boolean, note: string): Promise<void> {

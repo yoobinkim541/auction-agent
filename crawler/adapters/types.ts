@@ -23,6 +23,12 @@ export interface CrawlFilter {
   refreshImminentDays?: number;
   /** 임박 기존 물건 상세 재수집 일일 상한 — 시간 유계화. 미설정 시 기본 250. */
   maxRefreshDetails?: number;
+  /** 사진이 없는 기존 물건만 상세를 재수집하는 보강 모드. */
+  photosOnly?: boolean;
+  /** 활성 사진이 이미 있는 물건의 사건|물건 키 집합. */
+  photoKeys?: Set<string>;
+  /** photosOnly 실행에서 상세를 받을 최대 건수. */
+  maxPhotoDetails?: number;
 }
 
 /** 한 매물 수집 결과: 마스터 + (가능하면) 권리분석 입력 + 문서 */

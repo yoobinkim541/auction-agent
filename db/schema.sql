@@ -97,6 +97,27 @@ create table if not exists gm_location_analysis (
   unique (listing_id)
 );
 
+
+
+create table if not exists gm_listing_photos (
+  id           bigint generated always as identity primary key,
+  listing_id   bigint references gm_listings(id) on delete cascade,
+  case_no      text not null,
+  item_no      text not null default '1',
+  source       text not null default 'courtauction',
+  source_url   text not null,
+  cache_path   text not null,
+  public_url   text not null,
+  content_hash text not null,
+  status       text not null default 'active' check (status in ('active','deleted','failed')),
+  delete_reason text,
+  captured_at  timestamptz not null default now(),
+  deleted_at   timestamptz,
+  unique (listing_id, content_hash)
+);
+create index if not exists idx_gm_listing_photos_listing_active on gm_listing_photos (listing_id, status);
+create index if not exists idx_gm_listing_photos_case_item on gm_listing_photos (case_no, item_no, status);
+
 create table if not exists gm_scores (
   id                  bigint generated always as identity primary key,
   listing_id          bigint references gm_listings(id) on delete cascade,
@@ -213,6 +234,147 @@ create table if not exists gm_auction_results (
 );
 create index if not exists idx_gm_auction_results_date on gm_auction_results (dxdy_date);
 
+create table if not exists gm_data_trust (
+  listing_id bigint primary key references gm_listings(id) on delete cascade,
+  status text not null check (status in ('trusted','hold','quarantined')),
+  score int not null check (score between 0 and 100),
+  reason_codes jsonb not null default '[]'::jsonb,
+  checks jsonb not null default '{}'::jsonb,
+  evaluator_version text not null,
+  input_hash text not null,
+  evaluated_at timestamptz not null default now()
+);
+
+create table if not exists gm_precision_evaluations (
+  listing_id bigint primary key references gm_listings(id) on delete cascade,
+  status text not null check (status in ('recommended','conditional','hold','rejected')),
+  confidence text not null check (confidence in ('high','medium','low')),
+  conservative_value bigint,
+  recommended_bid bigint,
+  hard_cap_bid bigint,
+  reason_codes jsonb not null default '[]'::jsonb,
+  strengths jsonb not null default '[]'::jsonb,
+  risks jsonb not null default '[]'::jsonb,
+  required_checks jsonb not null default '[]'::jsonb,
+  evaluator_version text not null,
+  input_hash text not null,
+  evaluated_at timestamptz not null default now(),
+  constraint gm_precision_recommended_bid_bounds check (
+    status <> 'recommended'
+    or (recommended_bid is not null and hard_cap_bid is not null and recommended_bid <= hard_cap_bid)
+  )
+);
+create index if not exists gm_precision_evaluations_status_idx
+  on gm_precision_evaluations (status, confidence, evaluated_at desc);
+
+create table if not exists gm_decision_events (
+  id bigint generated always as identity primary key,
+  listing_id bigint not null references gm_listings(id) on delete cascade,
+  decision text not null check (decision in ('reviewing','favorite','hold','fieldwork','bid_review','rejected')),
+  reason_code text,
+  note text not null default '',
+  target_bid bigint,
+  precision_snapshot jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists gm_decision_events_listing_created_idx
+  on gm_decision_events (listing_id, created_at desc, id desc);
+
+create or replace view gm_current_decisions as
+  select distinct on (listing_id)
+         id, listing_id, decision, reason_code, note, target_bid, precision_snapshot, created_at
+    from gm_decision_events
+   order by listing_id, created_at desc, id desc;
+
+create or replace view gm_decision_preference_summary as
+  with totals as (
+    select count(*)::int as sample_size
+      from gm_decision_events
+  )
+  select e.decision,
+         e.reason_code,
+         count(*)::int as event_count,
+         totals.sample_size,
+         (totals.sample_size >= 50) as eligible_for_personalization
+    from gm_decision_events e
+   cross join totals
+   group by e.decision, e.reason_code, totals.sample_size;
+
+create or replace view gm_precision_shortlist as
+with eligible as (
+  select
+    l.id as listing_id,
+    l.case_no,
+    l.item_no,
+    l.address,
+    l.property_type,
+    l.sale_date,
+    l.min_bid_price,
+    t.status as trust_status,
+    r.assumed_amount,
+    p.status,
+    p.confidence,
+    p.conservative_value,
+    p.recommended_bid,
+    p.hard_cap_bid,
+    p.reason_codes,
+    p.strengths,
+    p.risks,
+    p.required_checks,
+    p.evaluator_version,
+    p.evaluated_at,
+    p.conservative_value - p.recommended_bid as conservative_margin,
+    row_number() over (
+      partition by l.case_no
+      order by
+        case p.confidence when 'high' then 3 when 'medium' then 2 else 1 end desc,
+        p.conservative_value - p.recommended_bid desc nulls last,
+        l.sale_date asc nulls last,
+        l.id asc
+    ) as case_rank
+  from gm_precision_evaluations p
+  join gm_listings l on l.id = p.listing_id
+  join gm_data_trust t on t.listing_id = l.id
+  join gm_rights_analysis r on r.listing_id = l.id
+  join gm_location_analysis loc on loc.listing_id = l.id
+  where p.status = 'recommended'
+    and (l.sale_date is null or l.sale_date >= current_date)
+    and t.status = 'trusted'
+    and p.evaluated_at >= l.crawled_at
+    and t.evaluated_at >= l.crawled_at
+    and r.analyzed_at >= l.crawled_at
+    and loc.analyzed_at >= l.crawled_at
+    and r.assumed_amount = 0
+    and p.hard_cap_bid >= l.min_bid_price
+    and p.recommended_bid is not null
+    and p.recommended_bid >= l.min_bid_price
+    and p.recommended_bid <= p.hard_cap_bid
+)
+select
+  listing_id, case_no, item_no, address, property_type, sale_date, min_bid_price,
+  trust_status, assumed_amount, status, confidence, conservative_value, recommended_bid,
+  hard_cap_bid, reason_codes, strengths, risks, required_checks, evaluator_version,
+  evaluated_at, conservative_margin
+from eligible
+where case_rank = 1
+order by
+  case confidence when 'high' then 3 when 'medium' then 2 else 1 end desc,
+  conservative_margin desc nulls last,
+  sale_date asc nulls last,
+  listing_id asc;
+
+create table if not exists gm_outcome_trust (
+  case_no text not null, item_no text not null, sale_date date not null,
+  status text not null check (status in ('trusted','hold','quarantined')),
+  sold boolean not null default false,
+  appraisal_value bigint,
+  sold_amount bigint,
+  sale_ratio numeric, reason_codes jsonb not null default '[]'::jsonb,
+  checks jsonb not null default '{}'::jsonb, evaluator_version text not null,
+  evaluated_at timestamptz not null default now(),
+  primary key (case_no,item_no,sale_date)
+);
+
 -- 관심물건(★) 변동 감시 상태(발품절감 ②) — watch-favorites가 직전 상태와 diff 후 갱신.
 create table if not exists gm_watch_state (
   listing_id    bigint primary key references gm_listings(id) on delete cascade,
@@ -265,6 +427,7 @@ create table if not exists gm_prediction_snapshots (
   case_no        text not null,
   item_no        text not null default '1',
   sale_date      date,                             -- 이 예측이 겨눈 매각기일
+  appraisal_value bigint,                           -- 스냅샷 당시 감정가(사후 listing 변경 격리)
   expected_bid   bigint,                           -- 예상낙찰가(loc.expected_bid_price)
   market_price   bigint,                           -- 추정시세
   min_bid_price  bigint,                           -- 스냅샷 시점 최저가
@@ -288,19 +451,31 @@ create or replace view gm_outcome_eval as
       from gm_listings order by case_no, coalesce(item_no,'1'), crawled_at desc nulls last
   )
   select s.case_no, s.item_no, s.sale_date,
-         l.property_type, l.court, l.address, l.appraisal_value,
+         l.property_type, l.court, l.address, coalesce(s.appraisal_value, l.appraisal_value) as appraisal_value,
          s.expected_bid, s.market_price, s.min_bid_price, s.total_score, s.passed_filter,
          s.recommendation, s.true_margin, s.max_safe_bid, s.inq_cnt, s.interest_cnt,
          r.sold, r.sold_amount, r.result_cd, r.min_price as result_min_price,
          (r.dxdy_date is not null) as matched,
          case when r.sold then r.sold_amount - s.expected_bid end as residual,
          case when r.sold and s.expected_bid > 0 then (r.sold_amount - s.expected_bid)::float8 / s.expected_bid end as residual_pct,
-         case when r.sold and l.appraisal_value > 0 then r.sold_amount::float8 / l.appraisal_value end as sale_ratio,
+         case when r.sold and coalesce(s.appraisal_value, l.appraisal_value) > 0 then r.sold_amount::float8 / coalesce(s.appraisal_value, l.appraisal_value) end as sale_ratio,
          case when r.sold and s.max_safe_bid is not null then r.sold_amount <= s.max_safe_bid end as would_have_won_under_max_safe_bid,
          case when r.sold and s.market_price > 0 then (s.market_price - r.sold_amount)::float8 / s.market_price end as realized_bid_margin
     from gm_prediction_snapshots s
     join L l on l.case_no = s.case_no and l.item_no = s.item_no
     left join gm_auction_results r on r.case_no = s.case_no and r.item_no = s.item_no and r.dxdy_date = s.sale_date;
+
+create or replace view gm_trusted_outcome_eval as
+  select e.*
+    from gm_outcome_eval e
+    join gm_outcome_trust t
+     on t.case_no = e.case_no
+     and t.item_no = coalesce(nullif(e.item_no, ''), '1')
+     and t.sale_date = e.sale_date
+   where t.status = 'trusted'
+     and t.sold is not distinct from e.sold
+     and t.appraisal_value is not distinct from e.appraisal_value
+     and t.sold_amount is not distinct from e.sold_amount;
 
 
 -- Phase2 operational review/cache views.
@@ -317,7 +492,7 @@ create or replace view gm_ml_price_calibration as
            end as region,
            sale_ratio,
            realized_bid_margin
-      from gm_outcome_eval
+      from gm_trusted_outcome_eval
      where sale_date < current_date
        and sold
        and sale_ratio is not null
@@ -346,7 +521,7 @@ create or replace view gm_rights_risk_eval as
             where coalesce((t->>'hasOpposition')::boolean, false)
          ) as has_opposition_tenant,
          jsonb_array_length(coalesce(r.red_flags, '[]'::jsonb)) as red_flag_count
-    from gm_outcome_eval e
+    from gm_trusted_outcome_eval e
     left join latest_listing l on l.case_no = e.case_no and l.item_no = coalesce(nullif(e.item_no,''),'1')
     left join gm_rights_analysis r on r.listing_id = l.listing_id
    where e.sale_date < current_date;
@@ -379,12 +554,14 @@ create table if not exists gm_shadow_scores (
   model_name text not null,
   model_version text not null,
   predicted_sale_ratio double precision not null,
+  conservative_sale_ratio double precision,
   confidence double precision,
   feature_snapshot_hash text not null,
   features jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   unique (case_no, item_no, sale_date, model_name, model_version),
   check (predicted_sale_ratio > 0),
+  check (conservative_sale_ratio is null or conservative_sale_ratio > 0),
   check (confidence is null or (confidence >= 0 and confidence <= 1))
 );
 
@@ -422,9 +599,10 @@ create or replace view gm_shadow_score_eval as
          e.sold_amount, e.sale_ratio, e.realized_bid_margin,
          case when e.sale_ratio is not null then s.predicted_sale_ratio - e.sale_ratio end as sale_ratio_error,
          case when e.sale_ratio is not null then abs(s.predicted_sale_ratio - e.sale_ratio) end as abs_sale_ratio_error,
-         (e.sale_date <= current_date - 14) as eligible_for_review
+         (e.sale_date <= current_date - 14) as eligible_for_review,
+         s.conservative_sale_ratio
     from gm_shadow_scores s
-    left join gm_outcome_eval e
+    left join gm_trusted_outcome_eval e
       on e.case_no = s.case_no
      and coalesce(nullif(e.item_no,''),'1') = s.item_no
      and e.sale_date = s.sale_date;

@@ -40,6 +40,11 @@ describe('applyListingFilters', () => {
     expect(applyListingFilters(rows, base({ q: '마포' }))).toHaveLength(1);
     expect(applyListingFilters(rows, base({ q: '부산' }))[0]!.item.case_no).toBe('2024-2'); // 법원 매칭
   });
+  it('사건번호 표기 변형(공백·하이픈)을 같은 사건으로 검색', () => {
+    const target = row({ address: '서울', property_type: 'apartment', case_no: '2024타경12345' });
+    expect(applyListingFilters([target], base({ q: '2024 타경 12345' }))).toHaveLength(1);
+    expect(applyListingFilters([target], base({ q: '2024-12345' }))).toHaveLength(1);
+  });
   it('다회차(round≥2 또는 fail_count≥1)', () => {
     const r2 = row({ address: '서울', property_type: 'apartment', case_no: 'm2', sale_date: '2026-06-22', location: { sale_rounds: [{ date: '2026-06-22', round: 2 }] } });
     const r1 = row({ address: '서울', property_type: 'apartment', case_no: 'm1', sale_date: '2026-06-22', location: { sale_rounds: [{ date: '2026-06-22', round: 1 }] }, fail_count: 0 });

@@ -9,6 +9,22 @@ export type SortKey = 'score' | 'safety' | 'trueSafety' | 'sale' | 'price' | 'ap
 
 export interface ScoredRow { item: ListingItem; sc: ClientScore }
 
+function normalizeCaseSearch(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s\-‐‑‒–—]/g, '');
+}
+
+/** 법원 표기(2024타경12345)와 사용자가 입력하는 축약 표기(2024-12345)를 함께 검색한다. */
+export function caseNoMatches(caseNo: string | null | undefined, query: string): boolean {
+  const normalizedCase = normalizeCaseSearch(caseNo ?? '');
+  const normalizedQuery = normalizeCaseSearch(query);
+  if (!normalizedCase || !normalizedQuery) return false;
+  if (normalizedCase.includes(normalizedQuery)) return true;
+
+  const caseDigits = normalizedCase.replace(/[^0-9]/g, '');
+  const queryDigits = normalizedQuery.replace(/[^0-9]/g, '');
+  return queryDigits.length >= 5 && caseDigits.includes(queryDigits);
+}
+
 export interface FilterState {
   cfg: ScoreConfig;
   hideExpired: boolean;
@@ -72,7 +88,7 @@ export function applyListingFilters(rows: ScoredRow[], f: FilterState): ScoredRo
   if (f.type !== 'all') v = v.filter((x) => x.item.property_type === f.type);
   if (f.q.trim()) {
     const qt = f.q.trim();
-    v = v.filter((x) => x.item.address.includes(qt) || x.item.case_no.includes(qt) || (x.item.court ?? '').includes(qt));
+    v = v.filter((x) => x.item.address.includes(qt) || caseNoMatches(x.item.case_no, qt) || (x.item.court ?? '').includes(qt));
   }
   return v;
 }

@@ -10,6 +10,7 @@ import { diffFavorite, formatWatch, type FavChangeBlock, type FavSnapshot } from
 
 interface FavRow extends FavSnapshot {
   listing_id: number;
+  item_no: string;
   prev_sale_date: string | null;
   prev_min_bid: number | null;
   prev_fail: number | null;
@@ -22,7 +23,8 @@ const INTEREST_JUMP = Number(process.env.WATCH_INTEREST_JUMP) || 3; // 관심 �
 
 async function main(): Promise<void> {
   const favs = await query<FavRow>(
-    `select l.id as listing_id, l.case_no, l.address, l.sale_date::text, l.min_bid_price::float8,
+    `select l.id as listing_id, l.case_no, coalesce(nullif(l.item_no, ''), '1') as item_no,
+            l.address, l.sale_date::text, l.min_bid_price::float8,
             l.fail_count,
             exists(select 1 from gm_auction_results r
                     where r.case_no = l.case_no and r.item_no = coalesce(l.item_no,'1') and r.sold) as sold,
@@ -50,7 +52,7 @@ async function main(): Promise<void> {
       if (!f.sold && f.interest_cnt != null && f.prev_interest != null && f.interest_cnt - f.prev_interest >= INTEREST_JUMP) {
         lines.push(`🔥 관심 급증 +${f.interest_cnt - f.prev_interest} (총 ${f.interest_cnt}명) — 경쟁 열기 상승`);
       }
-      blocks.push({ caseNo: f.case_no, address: f.address, lines });
+      blocks.push({ caseNo: f.case_no, itemNo: f.item_no, address: f.address, lines });
     }
     // 상태 upsert(첫 관측은 씨딩만 — 다음 실행부터 diff)
     await query(
@@ -64,17 +66,18 @@ async function main(): Promise<void> {
   }
 
   // 문서 갱신(⑤) — ★매물의 미통지 변경을 블록에 병합 후 notified 마킹
-  const docChanges = await query<{ id: number; listing_id: number; case_no: string; address: string; doc_types: string | null }>(
-    `select dc.id, dc.listing_id, dc.case_no, l.address, dc.doc_types
+  const docChanges = await query<{ id: number; listing_id: number; case_no: string; item_no: string; address: string; doc_types: string | null }>(
+    `select dc.id, dc.listing_id, dc.case_no, coalesce(nullif(l.item_no, ''), '1') as item_no,
+            l.address, dc.doc_types
        from gm_doc_changes dc join gm_listings l on l.id = dc.listing_id
       where dc.notified = false and l.is_favorite = true
       order by dc.changed_at`,
   );
   for (const c of docChanges) {
     const line = `📄 문서 갱신(${c.doc_types ?? '?'}) — 명세서·현황 변경 여부 재확인 권장`;
-    const b = blocks.find((x) => x.caseNo === c.case_no);
+    const b = blocks.find((x) => x.caseNo === c.case_no && x.itemNo === c.item_no);
     if (b) b.lines.push(line);
-    else blocks.push({ caseNo: c.case_no, address: c.address, lines: [line] });
+    else blocks.push({ caseNo: c.case_no, itemNo: c.item_no, address: c.address, lines: [line] });
   }
   if (docChanges.length) {
     await query(`update gm_doc_changes set notified = true where id = any($1::bigint[])`, [docChanges.map((c) => c.id)]);
