@@ -36,3 +36,7 @@ artifacts/ml/
 
 # Superpowers isolated implementation worktrees
 .worktrees/
+
+# Runtime caches (served from the server, not versioned)
+artifacts/listing-photos/
+__pycache__/
