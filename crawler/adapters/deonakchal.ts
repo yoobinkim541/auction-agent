@@ -654,10 +654,13 @@ export async function parseDetail(page: Page, productId: string): Promise<Detail
     const moveIn = joined.match(/전입일자\s*:\s*(\d{4}-\d{2}-\d{2})/)?.[1];
     const fixed = joined.match(/확정일자\s*:\s*(\d{4}-\d{2}-\d{2})/)?.[1];
     const demand = joined.match(/배당요구\s*:\s*(\d{4}-\d{2}-\d{2})/)?.[1];
+    const deposit = extractLabeledKoreanMoney(joined, '보증금', ['월차임', '차임', '전입일자', '확정일자', '배당요구', '점유', '대항력']);
+    const explicitNoDeposit = /보증금\s*:?\s*(?:금\s*)?(?:없음|해당\s*없음|0\s*원?)/.test(joined);
     tenants.push({
       name: row[1],
       moveInDate: moveIn, occupancyDate: moveIn, fixedDate: fixed,
-      deposit: extractLabeledKoreanMoney(joined, '보증금', ['월차임', '차임', '전입일자', '확정일자', '배당요구', '점유', '대항력']) ?? 0,
+      deposit: deposit ?? 0,
+      depositParseFailed: deposit == null && !explicitNoDeposit,
       demandedDistribution: !!demand, demandDate: demand, occupied: true,
       raw: joined,
     });

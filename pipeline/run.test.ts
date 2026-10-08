@@ -50,3 +50,18 @@ describe('extractTenantsFromNotes', () => {
     expect(tenants).toHaveLength(2);
   });
 });
+
+describe('extractTenantsFromNotes — 보증금 파싱 실패 표시', () => {
+  it('보증금 원문을 금액으로 바꾸지 못하면 depositParseFailed로 표시하고 0으로 두지 않는다', () => {
+    const tenants = extractTenantsFromNotes(['매수인에게 대항할 수 있는 임차인이 있음(임대차보증금 미상, 전입일자 2021.01.01)']);
+    expect(tenants).toHaveLength(1);
+    expect(tenants[0]!.depositParseFailed).toBe(true);
+  });
+
+  it('보증금 없음이 명시되면 파싱 실패가 아니다', () => {
+    const tenants = extractTenantsFromNotes(['매수인에게 대항할 수 있는 임차인이 있음(임대차보증금 없음, 전입일자 2021.01.01)']);
+    expect(tenants).toHaveLength(1);
+    expect(tenants[0]!.deposit).toBe(0);
+    expect(tenants[0]!.depositParseFailed).toBe(false);
+  });
+});

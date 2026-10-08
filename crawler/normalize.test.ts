@@ -77,3 +77,10 @@ describe('parseAreaToM2', () => {
   it('빈값 → undefined', () => expect(parseAreaToM2('')).toBeUndefined());
   it('null → undefined', () => expect(parseAreaToM2(null)).toBeUndefined());
 });
+
+describe('parseKoreanMoney — 추측하지 않는 엄격 파싱', () => {
+  it('소수점 억 표기는 null', () => expect(parseKoreanMoney('1.5억')).toBeNull());
+  it('잘못된 콤마 묶음은 null', () => expect(parseKoreanMoney('12,34')).toBeNull());
+  it('금액 뒤 잡문자는 null', () => expect(parseKoreanMoney('5억가량')).toBeNull());
+  it('숫자 잡문자 혼합은 null', () => expect(parseKoreanMoney('약100,000,000')).toBeNull());
+});

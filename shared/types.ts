@@ -301,6 +301,8 @@ export interface Tenant {
   fixedDate?: string;
   /** 보증금 (원) */
   deposit: number;
+  /** 보증금 원문을 안전하게 해석하지 못해 사람 확인이 필요한지 여부 */
+  depositParseFailed?: boolean;
   /** 월차임 (원) */
   monthlyRent?: number;
   /** 배당요구 여부 */

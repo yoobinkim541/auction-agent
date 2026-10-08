@@ -10,6 +10,12 @@ export function parseKoreanMoney(input: string | null | undefined): number | nul
   const s = input.replace(/[\s원]/g, '');
   if (!s) return null;
 
+  const parseNumber = (token: string): number | null => {
+    if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)$/.test(token)) return null;
+    const value = Number(token.replace(/,/g, ''));
+    return Number.isSafeInteger(value) ? value : null;
+  };
+
   // 억/만/천/백 단위 표기 (예: "5억3천만", "5억3,000만", "53,000만") — CJK 누진 파싱
   if (/[억만천백]/.test(s)) {
     const UNIT: Record<string, number> = { 억: 100_000_000, 만: 10_000, 천: 1_000, 백: 100 };
@@ -17,8 +23,8 @@ export function parseKoreanMoney(input: string | null | undefined): number | nul
     let section = 0; // 천·백 누계(다음 큰 단위에 합산)
     let cur = 0; // 직전 숫자
     let sawUnit = false;
-    const tokens = s.match(/[0-9,]+|[억만천백]/g);
-    if (!tokens) return null;
+    const tokens = s.match(/\d[\d,]*|[억만천백]/g);
+    if (!tokens || tokens.join('') !== s) return null;
     for (const tk of tokens) {
       const u = UNIT[tk];
       if (u !== undefined) {
@@ -32,16 +38,16 @@ export function parseKoreanMoney(input: string | null | undefined): number | nul
           cur = 0;
         }
       } else {
-        const n = parseInt(tk.replace(/,/g, ''), 10);
-        if (!Number.isNaN(n)) cur = n;
+        const n = parseNumber(tk);
+        if (n === null) return null;
+        cur = n;
       }
     }
     total += section + cur; // 단위 없는 잔여 끝자리
-    return sawUnit && total > 0 ? total : null;
+    return sawUnit && total > 0 && Number.isSafeInteger(total) ? total : null;
   }
   // 순수 숫자(콤마)
-  const digits = s.replace(/[^0-9]/g, '');
-  return digits ? parseInt(digits, 10) : null;
+  return parseNumber(s);
 }
 
 function escapeRegExp(s: string): string {

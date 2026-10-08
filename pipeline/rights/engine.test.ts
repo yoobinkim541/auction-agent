@@ -212,3 +212,11 @@ describe('레드플래그', () => {
     expect(res.redFlags.some((f) => f.kind === 'senior_tenant')).toBe(true);
   });
 });
+
+describe('analyzeRights — 보증금 파싱 실패', () => {
+  it('임차인 보증금 파싱 실패는 사람 검토로 올리고 클린으로 판정하지 않는다', () => {
+    const res = analyzeRights(makeInput({ tenants: [tenant({ moveInDate: '2020-01-01', occupancyDate: '2020-01-01', depositParseFailed: true })] }));
+    expect(res.riskGrade).toBe('review_required');
+    expect(res.warnings.some((w) => w.includes('보증금 파싱 실패'))).toBe(true);
+  });
+});

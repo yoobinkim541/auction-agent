@@ -57,6 +57,7 @@ export function extractTenantsFromNotes(notes: string[]): Tenant[] {
     for (const block of blocks) {
       if (!/대항할\s*수\s*있는/.test(block)) continue;
       const deposit = extractLabeledKoreanMoney(block, '(?:임차보증금|임대차보증금)', ['전입일자', '전입일', '주민등록일자', '확정일자', '배당요구', '점유']);
+      const explicitNoDeposit = /(?:임차보증금|임대차보증금)\s*(?:금\s*)?(?:없음|해당\s*없음|0\s*원?)/.test(block);
       const moveInM = block.match(/(?:전입일자|전입일|주민등록일자)\s*(\d{4}[.년-]\d{1,2}[.월-]\d{1,2})/);
       const fixedM = block.match(/확정일자\s*(?:\(\s*1차\s*\))?\s*(\d{4}[.년-]\d{1,2}[.월-]\d{1,2})/);
       if (deposit == null && !moveInM) continue; // 최소 하나 이상의 정량 정보 필요
@@ -65,6 +66,7 @@ export function extractTenantsFromNotes(notes: string[]): Tenant[] {
         occupancyDate: moveInM ? parseKoreanDate(moveInM[1]) : undefined,
         fixedDate: fixedM ? parseKoreanDate(fixedM[1]) : undefined,
         deposit: deposit ?? 0,
+        depositParseFailed: deposit == null && !explicitNoDeposit,
         demandedDistribution: false, // 임차권등기는 별도 배당요구 없이 우선변제
         occupied: true,
         raw: `(매각효력노트추출) ${block.slice(0, 300)}`,
@@ -148,6 +150,17 @@ async function buildRightsInput(listingId: number, listing: Listing): Promise<{ 
   // [교차보강] deonakchal 임차인이 있으면 최우선(courtauction은 임차인 표 미파싱). 별도 테이블이라 courtauction 재크롤로 안 지워짐.
   const deonakTenants = await fetchDeonakTenants(listingId, listing.itemNo ?? '1');
   if (deonakTenants && deonakTenants.length) tenants = deonakTenants as Tenant[];
+
+  tenants = tenants.map((tenant) => {
+    const invalidDeposit = tenant.depositParseFailed === true
+      || !Number.isSafeInteger(tenant.deposit)
+      || tenant.deposit < 0;
+    return {
+      ...tenant,
+      deposit: invalidDeposit ? 0 : tenant.deposit,
+      depositParseFailed: invalidDeposit,
+    };
+  });
 
   return {
     input: {
@@ -241,6 +254,7 @@ async function main() {
       // 1) 권리분석 (결정형 엔진) + 사이트 예상 낙찰자인수(권위값) 반영
       const { input, siteAssumed, appraisalHighlights, siteMetrics, gongPrice, scanNotes, appraisalText, documents } = await buildRightsInput(r.id, listing);
       const rights = analyzeRights(input);
+      const tenantDepositParseFailed = rights.tenants.some((tenant) => tenant.tenant.depositParseFailed);
       // courtauction 원천: 등기부·임차인 데이터 없음 → 거짓 "클린" 방지
       if (r.source === 'courtauction' && input.registry.length === 0) {
         rights.riskGrade = 'review_required';
@@ -317,18 +331,22 @@ async function main() {
       // 예상낙찰가가 없고(sale ratio 미확보) 최저가가 시세의 5% 미만이면 시세×80%로 보수 추정.
       // (극단적으로 낮은 min_bid를 그대로 사용하면 trueSafetyMargin이 허위로 95%+가 됨)
       const { bidForCost, bidBasis } = decideBidForCost(eb.price, eb.basis, listing.minBidPrice, loc.marketPrice);
-      loc.acquisitionCost = computeAcquisitionCost({
-        propertyType: listing.propertyType,
-        address: listing.address,
-        areaM2: listing.areaM2,
-        bidPrice: bidForCost,
-        bidBasis,
-        gongPrice,
-        moveOutCost: siteMetrics.moveOutCost,
-        assumedAmount: rights.assumedAmount,
-        marketPrice: loc.marketPrice,
-        taxOptions: { ...TAX_ASSUMPTION, officetelAsHouse: false },
-      });
+      if (!tenantDepositParseFailed) {
+        loc.acquisitionCost = computeAcquisitionCost({
+          propertyType: listing.propertyType,
+          address: listing.address,
+          areaM2: listing.areaM2,
+          bidPrice: bidForCost,
+          bidBasis,
+          gongPrice,
+          moveOutCost: siteMetrics.moveOutCost,
+          assumedAmount: rights.assumedAmount,
+          marketPrice: loc.marketPrice,
+          taxOptions: { ...TAX_ASSUMPTION, officetelAsHouse: false },
+        });
+      } else {
+        loc.safetyMargin = null;
+      }
 
       // 2-c) 임대수익·출구 엔진 (MOLIT 전월세 → 전세가율·수익률·현금흐름·세후 매도 시나리오)
       try {
@@ -353,7 +371,7 @@ async function main() {
 
       // 3) 최대 안전 입찰가 — 취득세·명도비·채권 부대비용까지 포함해 목표 마진이 남는 상한
       const ac = loc.acquisitionCost;
-      rights.maxSafeBid = maxSafeBid(loc.marketPrice, rights.assumedAmount, 0.1,
+      rights.maxSafeBid = tenantDepositParseFailed ? null : maxSafeBid(loc.marketPrice, rights.assumedAmount, 0.1,
         ac ? { taxRatePct: ac.acqTaxRatePct, fixedCosts: ac.moveOutCost + ac.bondCost } : undefined);
 
       // 3-b) 매물별 보고서 + 입찰 전 필수 확인사항(법률문서 스캔)
