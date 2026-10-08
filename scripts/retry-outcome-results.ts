@@ -1,7 +1,7 @@
 /**
  * Phase2 결과 retry worker — gm_result_retry_queue의 미매칭 스냅샷을 bounded batch로 재수집한다.
  * 사용: npm run retry:outcomes
- * 옵션: OUTCOME_RETRY_LIMIT=50 OUTCOME_RETRY_COOLDOWN_HOURS=24 OUTCOME_RETRY_DELAY_MS=300 OUTCOME_RETRY_DRY_RUN=true
+ * 옵션: OUTCOME_RETRY_LIMIT=50 OUTCOME_RETRY_TIME_BUDGET_MS=1200000 OUTCOME_RETRY_COOLDOWN_HOURS=24 OUTCOME_RETRY_DELAY_MS=300 OUTCOME_RETRY_DRY_RUN=true
  * (2026-08-26 버스트 차단 사건 이후 기본 300ms 지연 추가 — 항목 간 무지연 연속요청이 courtauction IP 차단 원인이었음)
  */
 import 'dotenv/config';
@@ -163,11 +163,13 @@ async function main(): Promise<void> {
   const limit = Math.max(1, Math.min(500, Number(process.env.OUTCOME_RETRY_LIMIT) || 50));
   const cooldownHours = Math.max(0, Math.min(24 * 30, Number(process.env.OUTCOME_RETRY_COOLDOWN_HOURS) || 24));
   const delayMs = Math.max(0, Math.min(10_000, Number(process.env.OUTCOME_RETRY_DELAY_MS) || 300));
+  const timeBudgetMs = Math.max(60_000, Math.min(60 * 60_000, Number(process.env.OUTCOME_RETRY_TIME_BUDGET_MS) || 20 * 60_000));
   const dryRun = process.env.OUTCOME_RETRY_DRY_RUN === 'true';
   const today = todayKst();
   const counters = emptyRetryCounters();
   const targets = await fetchTargets(limit, cooldownHours);
-  console.log(`[retry-outcomes] 대상 ${targets.length}건(limit=${limit}, cooldown=${cooldownHours}h, delay=${delayMs}ms, dryRun=${dryRun ? 'true' : 'false'})`);
+  const deadline = Date.now() + timeBudgetMs;
+  console.log(`[retry-outcomes] 대상 ${targets.length}건(limit=${limit}, budget=${Math.round(timeBudgetMs / 60_000)}m, cooldown=${cooldownHours}h, delay=${delayMs}ms, dryRun=${dryRun ? 'true' : 'false'})`);
 
   if (dryRun) {
     for (const row of targets) console.log(`[retry-outcomes] dry-run ${row.case_no}#${row.item_no} sale=${row.sale_date} court=${row.court} priority=${row.retry_priority}`);
@@ -177,6 +179,10 @@ async function main(): Promise<void> {
 
   for (const row of targets) {
     if (counters.processed > 0 && delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+    if (Date.now() >= deadline) {
+      console.log(`[retry-outcomes] 시간 예산 소진 — 미처리 ${targets.length - counters.processed}건은 다음 실행으로 이월`);
+      break;
+    }
     counters.processed++;
     const cortOfcCd = courtCodeByName(row.court);
     if (!cortOfcCd) {
@@ -217,7 +223,7 @@ async function main(): Promise<void> {
     }
   }
 
-  console.log(`[retry-outcomes] 처리 ${counters.processed} · 성공 ${counters.success} · 빈결과 ${counters.empty} · 차단 ${counters.blocked} · 오류 ${counters.error} · 스킵 ${counters.skipped}`);
+  console.log(`[retry-outcomes] 처리 ${counters.processed} · 성공 ${counters.success} · 빈결과 ${counters.empty} · 차단 ${counters.blocked} · 오류 ${counters.error} · 스킵 ${counters.skipped} · 경과 ${Math.round((timeBudgetMs - Math.max(0, deadline - Date.now())) / 60_000)}m`);
   await pool().end();
 }
 

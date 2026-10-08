@@ -36,7 +36,9 @@ npm run collect:results 2>&1 || echo "[collect:results] 실패(무시)"
 
 # 미매칭 스냅샷 재수집(Phase2 미매칭률 감소) — bounded batch, 24h 쿨다운·항목간 지연은 스크립트 내부에서 관리.
 #   400 = 2026-08-26 버스트 차단 사건 이전 단일 실행 기준 무지연 500건까지 무차단 확인됨 + 이후 항목간 300ms 지연 추가로 여유 확보.
-OUTCOME_RETRY_LIMIT="${OUTCOME_RETRY_LIMIT:-400}" npm run retry:outcomes 2>&1 || echo "[retry:outcomes] 실패(무시)"
+OUTCOME_RETRY_LIMIT="${OUTCOME_RETRY_LIMIT:-400}" \
+OUTCOME_RETRY_TIME_BUDGET_MS="${OUTCOME_RETRY_TIME_BUDGET_MS:-1200000}" \
+  npm run retry:outcomes 2>&1 || echo "[retry:outcomes] 실패(무시)"
 
 # 분석과 정밀 감사를 모두 통과해야 정밀 다이제스트를 허용한다.
 # 분석 실패 시 오래된 평가를 행동 가능한 추천으로 보내지 않고, analyze rc와 레거시 데이터는 보존한다.

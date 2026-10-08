@@ -403,7 +403,9 @@ export async function fetchListingsForAnalysis(limit = 200, onlyNew = false): Pr
     `select gm_listings.id, case_no, coalesce(item_no,'1') as item_no, court, address, road_address, lat, lng, property_type, appraisal_value,
             min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url, crawled_at
      from gm_listings ${joins} ${where}
-     order by (sale_date is null or sale_date >= current_date) desc, ${orderBy} limit $1`,
+     order by (sale_date is null or sale_date >= current_date) desc,
+              case when sale_date >= current_date then sale_date end asc nulls last,
+              ${orderBy} limit $1`,
     [limit],
   );
 }
