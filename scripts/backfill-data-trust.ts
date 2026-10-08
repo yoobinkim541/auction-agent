@@ -167,6 +167,7 @@ export const LISTING_TRUST_SQL = `
     left join gm_rights_analysis r on r.listing_id = l.id
     left join gm_location_analysis loc on loc.listing_id = l.id
     left join gm_data_trust current_trust on current_trust.listing_id = l.id
+    left join gm_precision_evaluations current_precision on current_precision.listing_id = l.id
     left join lateral (
       select coalesce(jsonb_agg(d.parsed_json), '[]'::jsonb) as documents,
              max(d.created_at) as updated_at
@@ -175,13 +176,16 @@ export const LISTING_TRUST_SQL = `
     ) docs on true
    where $2::int is null
      or ($3::boolean)
-     or (greatest(l.crawled_at, r.analyzed_at, loc.analyzed_at, docs.updated_at)
-            >= now() - make_interval(days => $2::int)
-          and (current_trust.evaluated_at is null
+     or ((current_trust.evaluated_at is null
             or current_trust.evaluated_at < greatest(
               l.crawled_at, r.analyzed_at, loc.analyzed_at, docs.updated_at
-            )))
-   order by greatest(l.crawled_at, r.analyzed_at, loc.analyzed_at, docs.updated_at) desc, l.id desc
+            ))
+          and (greatest(l.crawled_at, r.analyzed_at, loc.analyzed_at, docs.updated_at)
+                 >= now() - make_interval(days => $2::int)
+            -- 정밀 재평가가 최신 신뢰도를 읽도록 추천·조건부 물건의 신뢰도도 기간과 무관하게 갱신한다.
+            or current_precision.status in ('recommended', 'conditional')))
+   order by case current_precision.status when 'recommended' then 0 when 'conditional' then 1 else 2 end,
+            greatest(l.crawled_at, r.analyzed_at, loc.analyzed_at, docs.updated_at) desc, l.id desc
    limit $1`;
 
 export const OUTCOME_TRUST_SQL = `

@@ -226,6 +226,20 @@ describe('extractCourtPhotoUrls', () => {
       `data:image/jpeg;base64,${rawJpegBase64}`,
     ]);
   });
+
+  it.each([
+    ['gif', 'R0lGODlhTwK8AvcAAA', 'image/gif'],
+    ['png', 'iVBORw0KGgoAAAANSU', 'image/png'],
+    ['webp', 'UklGRiQAAABXRUJQVl', 'image/webp'],
+  ])('법원 상세의 %s base64 사진도 data URL로 추출한다', (_label, prefix, mime) => {
+    const raw = `${prefix}${'A/b+'.repeat(40)}`;
+    expect(extractCourtPhotoUrls({ photoList: [{ photo: raw }] })).toEqual([`data:${mime};base64,${raw}`]);
+  });
+
+  it('알 수 없는 긴 base64 문자열은 사이트 URL로 붙이지 않는다', () => {
+    const raw = `Qk2${'A/img+file'.repeat(20)}`;
+    expect(extractCourtPhotoUrls({ photoList: [{ photo: raw }] })).toEqual([]);
+  });
 });
 
 describe('isKnownForIncremental (증분 상세 skip 판정)', () => {

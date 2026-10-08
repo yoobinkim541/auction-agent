@@ -56,13 +56,17 @@ export const PRECISION_BACKFILL_SQL = `
     left join gm_location_analysis loc on loc.listing_id = l.id
     left join gm_precision_evaluations current_precision on current_precision.listing_id = l.id
    where $2::int is null
-      or (greatest(l.crawled_at, r.analyzed_at, loc.analyzed_at, t.evaluated_at)
-            >= now() - make_interval(days => $2::int)
-          and (current_precision.evaluated_at is null
+      or ((current_precision.evaluated_at is null
             or current_precision.evaluated_at < greatest(
               l.crawled_at, r.analyzed_at, loc.analyzed_at, t.evaluated_at
-            )))
-   order by greatest(l.crawled_at, r.analyzed_at, loc.analyzed_at, t.evaluated_at) desc, l.id desc
+            ))
+          and (greatest(l.crawled_at, r.analyzed_at, loc.analyzed_at, t.evaluated_at)
+                 >= now() - make_interval(days => $2::int)
+            -- 입력이 바뀐 추천·조건부 평가는 기간과 무관하게 재평가한다(오래된 추천이 다이제스트로 나가지 않게).
+            or current_precision.status in ('recommended', 'conditional')))
+   -- 행동 가능한 평가를 limit보다 먼저 소진한다. 크롤이 수천 건을 갱신해도 밀리지 않는다.
+   order by case current_precision.status when 'recommended' then 0 when 'conditional' then 1 else 2 end,
+            greatest(l.crawled_at, r.analyzed_at, loc.analyzed_at, t.evaluated_at) desc, l.id desc
    limit $1`;
 
 const numberOrNull = (value: string | number | null): number | null => {

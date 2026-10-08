@@ -50,16 +50,7 @@ else
   echo "[precision] analyze 실패(rc=$rc) — 정밀 갱신·다이제스트 생략"
 fi
 
-# 학습 부가 배치(전부 bounded·claude CLI는 스크립트 내부 백오프). 실패해도 본 배치 무관.
-#  - registry-opinion: EMPTY_REGISTRY 단독 hold 물건에 AI 1차 소견(다음날 analyze가 조회해 hold→conditional 완화).
-#  - eval:postmortem: 서프라이즈 케이스 정성 복기(Phase3) 점진 축적.
-#  - ml:eval: 오프라인 ML 리포트 갱신(report-only, 운영 미반영).
-#  - ml:shadow: trusted 결과로 앙상블 재학습 후 예정 매물 shadow 점수만 갱신.
-# claude CLI 호출량 억제(memo 단계와 합산): registry 30 + postmortem 최대 15(타입3×5) + 3s 간격.
-REGISTRY_OPINION_LIMIT="${REGISTRY_OPINION_LIMIT:-30}" npm run registry-opinion:backfill 2>&1 || echo "[registry-opinion] 실패(무시)"
-POSTMORTEM_LIMIT="${POSTMORTEM_LIMIT:-5}" npm run eval:postmortem 2>&1 || echo "[eval:postmortem] 실패(무시)"
-npm run ml:eval 2>&1 || echo "[ml:eval] 실패(무시)"
-ML_SHADOW_LEAD_DAYS="${ML_SHADOW_LEAD_DAYS:-30}" npm run ml:shadow 2>&1 || echo "[ml:shadow] 실패(무시)"
+# 학습 부가 배치(AI 소견·복기·ML)는 deploy/daily-learn.sh로 분리 — gyeongmae-learn.timer가 파싱 창 이후 실행.
 
 # 관심물건(★) 변동 알림(발품절감 ②·⑤) — 기일/유찰/최저가/문서갱신 diff. 변동 있을 때만 stdout → 발송.
 WATCH=$(npm run --silent watch:favs 2>/dev/null)

@@ -368,4 +368,32 @@ describeDatabase('precision production SQL against temporary PostgreSQL fixtures
       expect(ids((await client.query<{ id: string | number }>(PRECISION_BACKFILL_SQL, [1, 2])).rows)).toEqual([2]);
     });
   });
+  it('reevaluates stale actionable rows first, even past the limit and the since-days window', async () => {
+    await withTemporaryDatabase(async (client) => {
+      // 1: recommended, inputs changed 5 days ago (outside since-days=2) after its evaluation
+      // 2..4: recently crawled, never evaluated (would otherwise fill the limit)
+      await client.query(`
+        insert into gm_listings values
+          (1, 'case-1', '1', 'court', 'address-1', 'apartment', 200, 300, 0, 'courtauction', current_date + 9, now() - interval '5 days'),
+          (2, 'case-2', '1', 'court', 'address-2', 'apartment', 200, 100, 0, 'courtauction', current_date + 9, now() - interval '1 minute'),
+          (3, 'case-3', '1', 'court', 'address-3', 'apartment', 200, 100, 0, 'courtauction', current_date + 9, now() - interval '2 minutes'),
+          (4, 'case-4', '1', 'court', 'address-4', 'apartment', 200, 100, 0, 'courtauction', current_date + 9, now() - interval '3 minutes');
+        insert into gm_data_trust values
+          (1, 'trusted', '[]', now() - interval '6 days');
+        insert into gm_precision_evaluations
+          (listing_id, status, confidence, conservative_value, recommended_bid, hard_cap_bid,
+           reason_codes, evaluated_at)
+        values (1, 'recommended', 'high', 220, 120, 150, '[]', now() - interval '6 days');
+      `);
+
+      expect(ids((await client.query<{ id: string | number }>(PRECISION_BACKFILL_SQL, [2, 2])).rows)).toEqual([1, 2]);
+      expect(ids((await client.query<{ id: string | number }>(LISTING_TRUST_SQL, [2, 2, false])).rows)).toEqual([1, 2]);
+
+      // once reevaluated (no longer stale), it drops back out
+      await client.query(`update gm_precision_evaluations set evaluated_at = now() where listing_id = 1`);
+      await client.query(`update gm_data_trust set evaluated_at = now() where listing_id = 1`);
+      expect(ids((await client.query<{ id: string | number }>(PRECISION_BACKFILL_SQL, [2, 2])).rows)).toEqual([2, 3]);
+      expect(ids((await client.query<{ id: string | number }>(LISTING_TRUST_SQL, [2, 2, false])).rows)).toEqual([2, 3]);
+    });
+  });
 });
