@@ -336,9 +336,14 @@ with eligible as (
   join gm_listings l on l.id = p.listing_id
   join gm_data_trust t on t.listing_id = l.id
   join gm_rights_analysis r on r.listing_id = l.id
+  join gm_location_analysis loc on loc.listing_id = l.id
   where p.status = 'recommended'
     and (l.sale_date is null or l.sale_date >= current_date)
     and t.status = 'trusted'
+    and p.evaluated_at >= l.crawled_at
+    and t.evaluated_at >= l.crawled_at
+    and r.analyzed_at >= l.crawled_at
+    and loc.analyzed_at >= l.crawled_at
     and r.assumed_amount = 0
     and p.hard_cap_bid >= l.min_bid_price
     and p.recommended_bid is not null
