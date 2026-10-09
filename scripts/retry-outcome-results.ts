@@ -1,7 +1,7 @@
 /**
  * Phase2 결과 retry worker — gm_result_retry_queue의 미매칭 스냅샷을 bounded batch로 재수집한다.
  * 사용: npm run retry:outcomes
- * 옵션: OUTCOME_RETRY_LIMIT=50 OUTCOME_RETRY_TIME_BUDGET_MS=1200000 OUTCOME_RETRY_COOLDOWN_HOURS=24 OUTCOME_RETRY_DELAY_MS=300 OUTCOME_RETRY_DRY_RUN=true
+ * 옵션(예산 최대 180분): OUTCOME_RETRY_LIMIT=50 OUTCOME_RETRY_TIME_BUDGET_MS=1200000 OUTCOME_RETRY_COOLDOWN_HOURS=24 OUTCOME_RETRY_DELAY_MS=300 OUTCOME_RETRY_DRY_RUN=true
  * (2026-08-26 버스트 차단 사건 이후 기본 300ms 지연 추가 — 항목 간 무지연 연속요청이 courtauction IP 차단 원인이었음)
  */
 import 'dotenv/config';
@@ -163,7 +163,7 @@ async function main(): Promise<void> {
   const limit = Math.max(1, Math.min(500, Number(process.env.OUTCOME_RETRY_LIMIT) || 50));
   const cooldownHours = Math.max(0, Math.min(24 * 30, Number(process.env.OUTCOME_RETRY_COOLDOWN_HOURS) || 24));
   const delayMs = Math.max(0, Math.min(10_000, Number(process.env.OUTCOME_RETRY_DELAY_MS) || 300));
-  const timeBudgetMs = Math.max(60_000, Math.min(60 * 60_000, Number(process.env.OUTCOME_RETRY_TIME_BUDGET_MS) || 20 * 60_000));
+  const timeBudgetMs = Math.max(60_000, Math.min(180 * 60_000, Number(process.env.OUTCOME_RETRY_TIME_BUDGET_MS) || 20 * 60_000));
   const dryRun = process.env.OUTCOME_RETRY_DRY_RUN === 'true';
   const today = todayKst();
   const counters = emptyRetryCounters();
