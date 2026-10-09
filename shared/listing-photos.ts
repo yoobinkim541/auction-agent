@@ -7,6 +7,7 @@ import {
   markListingPhotosDeletedByCase,
   saveListingPhotoMetadata,
 } from './db.ts';
+import { repairStoredPhotoSource } from './inline-photo.ts';
 
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 const PHOTO_FETCH_TIMEOUT_MS = 15_000;
@@ -112,7 +113,10 @@ export async function cacheListingPhotos(
   } catch {
     // 테스트·DB 장애 시에도 파일 캐시는 계속 시도하고 메타데이터 저장에서 재시도한다.
   }
-  for (const sourceUrl of sourceUrls) {
+  for (const storedUrl of sourceUrls) {
+    // 과거 크롤이 저장한 깨진 base64 주소는 요청 전에 복구한다(analyze는 DB에 저장된 주소를 읽는다).
+    const sourceUrl = repairStoredPhotoSource(storedUrl);
+    if (sourceUrl === null) continue;
     if (seen.has(sourceUrl)) continue;
     seen.add(sourceUrl);
     if (!sourceUrl.startsWith('data:') && existingSources.has(sourceUrl)) continue;

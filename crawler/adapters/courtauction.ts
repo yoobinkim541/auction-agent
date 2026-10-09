@@ -25,6 +25,7 @@ import type { Adapter, CrawlFilter, CrawlSink, ScrapedListing } from './types.ts
 import type { Listing, RegistryEntry, Tenant, ListingDoc } from '../../shared/types.ts';
 import { parseKoreanDate, normalizeCaseNo, mapRightKind } from '../normalize.ts';
 import { courtAuctionFetch } from '../proxy.ts'; // COURTAUCTION_PROXY 전용 egress — 더낙찰 CRAWL_PROXY와 분리
+import { inlinePhotoDataUrl, isBase64Blob } from '../../shared/inline-photo.ts';
 
 const BASE = 'https://www.courtauction.go.kr';
 const UA = 'gyeongmae-agent/0.1 (personal research; contact: owner)';
@@ -296,29 +297,13 @@ export function parseMoney(s: string | undefined): number {
 const PHOTO_KEY_RE = /(url|src|path|file|photo|image|img|thumb|thum)/i;
 const PHOTO_URL_RE = /\.(?:jpe?g|png|webp|gif)(?:\?|#|$)|(?:photo|image|img|thumb|thum|atch|file|down|download)/i;
 const NON_LISTING_IMAGE_RE = /logo|icon|btn|button|blank|spacer|bg[_-]|banner|sprite|\.svg(?:\?|#|$)/i;
-// 법원 상세는 사진을 접두사 없는 base64로 주기도 한다. 매직 바이트의 base64 표기로 형식을 판별한다.
-const INLINE_PHOTO_PREFIXES: ReadonlyArray<readonly [string, string]> = [
-  ['/9j/', 'image/jpeg'],
-  ['R0lGOD', 'image/gif'],
-  ['iVBORw0KGgo', 'image/png'],
-  ['UklGR', 'image/webp'],
-];
-// URL로 보이지 않는 긴 base64 덩어리 — 사이트 경로로 붙여 요청하면 매번 타임아웃까지 기다린다.
-const LONG_BASE64_RE = /^[A-Za-z0-9+/=]{80,}$/;
-
-function normalizeInlineCourtPhoto(raw: string): string | null {
-  const compact = raw.replace(/\s+/g, '');
-  if (!LONG_BASE64_RE.test(compact)) return null;
-  const match = INLINE_PHOTO_PREFIXES.find(([prefix]) => compact.startsWith(prefix));
-  return match ? `data:${match[1]};base64,${compact}` : null;
-}
 
 function normalizeCourtPhotoUrl(raw: string, baseUrl: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed || /^data:/i.test(trimmed) || NON_LISTING_IMAGE_RE.test(trimmed)) return null;
-  const inlinePhoto = normalizeInlineCourtPhoto(trimmed);
+  const inlinePhoto = inlinePhotoDataUrl(trimmed);
   if (inlinePhoto) return inlinePhoto;
-  if (LONG_BASE64_RE.test(trimmed.replace(/\s+/g, ''))) return null;
+  if (isBase64Blob(trimmed)) return null;
   if (!PHOTO_URL_RE.test(trimmed)) return null;
   try {
     if (trimmed.startsWith('//')) return `https:${trimmed}`;

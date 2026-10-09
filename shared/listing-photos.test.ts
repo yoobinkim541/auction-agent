@@ -95,6 +95,26 @@ describe('listing photo cache download', () => {
   });
 });
 
+describe('stored inline photo sources', () => {
+  // 1x1 GIF — 과거 크롤이 법원 호스트 뒤에 붙여 저장한 base64 사진(https://www.courtauction.go.kr/R0lGOD...)
+  const TINY_GIF_BASE64 = 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+  const noFetch = (async () => { throw new Error('fetch must not be called'); }) as unknown as typeof fetch;
+
+  it('저장된 깨진 base64 사진 주소는 요청하지 않고 data URL로 복구해 캐시한다', async () => {
+    const urls = await cacheListingPhotos(78, '2026타경2', '1', [`https://www.courtauction.go.kr/${TINY_GIF_BASE64}`], noFetch);
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toMatch(/^\/api\/listings\/78\/photos\/[0-9a-f]{64}\.webp$/);
+  });
+
+  it('형식을 알 수 없는 긴 base64 주소는 요청하지 않고 건너뛴다', async () => {
+    let calls = 0;
+    const countingFetch = (async () => { calls++; throw new Error('unexpected fetch'); }) as unknown as typeof fetch;
+    const urls = await cacheListingPhotos(79, '2026타경3', '1', [`https://www.courtauction.go.kr/Qk2${'A/b+'.repeat(40)}`], countingFetch);
+    expect(urls).toEqual([]);
+    expect(calls).toBe(0);
+  });
+});
+
 describe('listing photo deletion', () => {
   it('삭제 대상 파일 목록을 받아 파일 삭제 수를 반환한다', async () => {
     const file = join(tempRoot, `gm-photo-${Date.now()}.jpg`);
