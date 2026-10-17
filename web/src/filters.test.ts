@@ -15,7 +15,7 @@ const base = (over: Partial<FilterState> = {}): FilterState => ({
   cfg: { ...DEFAULT_CONFIG, regionKeywords: [] },
   hideExpired: false, hideIncomplete: false, onlyPassed: false, onlyFavorite: false, onlyZeroPi: false,
   onlyConsider: false, onlyPassedAvoid: false, onlyToday: false, filterDate: '', onlyUrgent: false,
-  maxGapEok: 0, onlyMultiRound: false, type: 'all', q: '', today: '2026-06-22', ...over,
+  maxGapEok: 0, onlyMultiRound: false, onlyDecided: false, type: 'all', q: '', today: '2026-06-22', ...over,
 });
 
 describe('applyListingFilters', () => {
@@ -39,6 +39,12 @@ describe('applyListingFilters', () => {
   it('검색어(주소/사건번호/법원)', () => {
     expect(applyListingFilters(rows, base({ q: '마포' }))).toHaveLength(1);
     expect(applyListingFilters(rows, base({ q: '부산' }))[0]!.item.case_no).toBe('2024-2'); // 법원 매칭
+  });
+  it('내 결정 저널만(onlyDecided: true)', () => {
+    const withDec = row({ address: '서울 강남구', property_type: 'apartment', case_no: '2024-dec', current_decision: { decision: 'fieldwork' } });
+    const withoutDec = row({ address: '서울 강남구', property_type: 'apartment', case_no: '2024-nodec' });
+    const res = applyListingFilters([withDec, withoutDec], base({ onlyDecided: true }));
+    expect(res.map((x) => x.item.case_no)).toEqual(['2024-dec']);
   });
   it('사건번호 표기 변형(공백·하이픈)을 같은 사건으로 검색', () => {
     const target = row({ address: '서울', property_type: 'apartment', case_no: '2024타경12345' });

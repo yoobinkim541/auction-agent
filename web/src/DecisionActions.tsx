@@ -4,7 +4,7 @@ import {
   applyIfCurrent, createDecisionDraft, createRequestGate, decisionLabel,
   decisionReasonLabel, decisionReasons, decisions,
 } from './precision.ts';
-
+import { numberToKoreanHangeulAmount } from '../../shared/bid-sheet.ts';
 export function notifySavedDecision(saved: DecisionEvent, onSaved: (event: DecisionEvent) => void, isCurrent: () => boolean): boolean {
   onSaved(saved);
   return isCurrent();
@@ -124,6 +124,14 @@ export function DecisionActions({ listingId, onSaved }: { listingId: number; onS
           <label>
             <span>목표 입찰가{decision === 'bid_review' ? ' (필수, 양의 정수)' : ' (선택)'} </span>
             <input type="text" inputMode="numeric" pattern="[0-9]*" value={targetBid} onChange={(event) => setTargetBid(event.target.value)} />
+            {(() => {
+              const n = Number(targetBid);
+              return Number.isFinite(n) && n > 0 ? (
+                <span style={{ display: 'block', fontSize: '12px', color: 'var(--accent, #2563eb)', marginTop: '4px' }}>
+                  금 {numberToKoreanHangeulAmount(n)}
+                </span>
+              ) : null;
+            })()}
           </label>
           <button type="submit" className="decision-save">{saving ? '저장 중…' : '결정 저장'}</button>
         </fieldset>

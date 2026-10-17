@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseKoreanMoney, parseKoreanDate, mapPropertyType, mapRightKind, parseAreaToM2, extractAmountFromText, extractLabeledKoreanMoney } from './normalize.ts';
-
+import { parseKoreanMoney, parseKoreanDate, mapPropertyType, mapRightKind, parseAreaToM2, extractAmountFromText, extractLabeledKoreanMoney, normalizeCaseNo } from './normalize.ts';
 describe('parseKoreanMoney', () => {
   it('콤마 숫자', () => expect(parseKoreanMoney('530,000,000원')).toBe(530_000_000));
   it('억+만', () => expect(parseKoreanMoney('5억3,000만')).toBe(530_000_000));
@@ -83,4 +82,20 @@ describe('parseKoreanMoney — 추측하지 않는 엄격 파싱', () => {
   it('잘못된 콤마 묶음은 null', () => expect(parseKoreanMoney('12,34')).toBeNull());
   it('금액 뒤 잡문자는 null', () => expect(parseKoreanMoney('5억가량')).toBeNull());
   it('숫자 잡문자 혼합은 null', () => expect(parseKoreanMoney('약100,000,000')).toBeNull());
+});
+
+describe('normalizeCaseNo', () => {
+  it('사건번호 내 모든 공백을 제거한다', () => {
+    expect(normalizeCaseNo('2024 타경 12345')).toBe('2024타경12345');
+    expect(normalizeCaseNo('  2023 타경 987  ')).toBe('2023타경987');
+  });
+
+  it('null이나 undefined는 빈 문자열로 반환한다', () => {
+    expect(normalizeCaseNo(null)).toBe('');
+    expect(normalizeCaseNo(undefined)).toBe('');
+  });
+
+  it('이미 정규화된 사건번호는 그대로 유지한다', () => {
+    expect(normalizeCaseNo('2024타경12345')).toBe('2024타경12345');
+  });
 });

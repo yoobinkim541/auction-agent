@@ -36,7 +36,8 @@
     "trust:backfill": "tsx scripts/backfill-data-trust.ts",
     "precision:backfill": "tsx scripts/backfill-precision.ts",
     "precision:audit": "tsx scripts/precision-audit.ts",
-    "photos:migrate-webp": "tsx scripts/migrate-listing-photos-webp.ts"
+    "photos:migrate-webp": "tsx scripts/migrate-listing-photos-webp.ts",
+    "photos:backfill": "tsx scripts/backfill-listing-photos.ts"
   },
   "engines": {
     "node": ">=22"

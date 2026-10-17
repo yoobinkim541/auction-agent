@@ -47,6 +47,27 @@ async function toggleFav(caseNo: string): Promise<string> {
     : `☆ 관심 해제 — ${norm}`;
 }
 
+/** 텔레그램 인라인 버튼 1클릭 판단 저널 기록 (임장등록 / 제외). */
+async function recordDecisionFromBot(caseNo: string, itemNo: string, decision: 'fieldwork' | 'rejected'): Promise<string> {
+  const norm = caseNo.replace(/\s/g, '');
+  const item = itemNo || '1';
+  const listing = (await query<{ id: number; address: string }>(
+    `select id, address from gm_listings where case_no = $1 and coalesce(nullif(item_no,''),'1') = $2 limit 1`,
+    [norm, item],
+  ))[0];
+  if (!listing) return `매물 미확인: ${norm}`;
+  const reasonCode = decision === 'rejected' ? 'preference' : null;
+  await query(
+    `insert into gm_decision_events (listing_id, decision, reason_code, note, created_at)
+     values ($1, $2, $3, '텔레그램 봇 1클릭 판단', now())`,
+    [listing.id, decision, reasonCode],
+  );
+  if (decision === 'fieldwork') {
+    return `🚶 임장등록 완료 — ${norm}`;
+  }
+  return `❌ 제외 처리 완료 — ${norm}`;
+}
+
 /** /case 응답용 인라인 버튼 — ★토글 콜백 + 대시보드 딥링크(DASHBOARD_URL 설정 시). */
 function caseKeyboard(caseNo: string): unknown {
   const rows: unknown[] = [[{ text: '★ 관심 토글', callback_data: `fav|${caseNo}` }]];
@@ -167,8 +188,16 @@ async function main(): Promise<void> {
         if (cq) {
           if (String(cq.from.id) !== OWNER) { await answerCallback(cq.id, '소유자 전용'); continue; }
           try {
-            const [action, arg] = (cq.data ?? '').split('|');
-            await answerCallback(cq.id, action === 'fav' && arg ? await toggleFav(arg) : '알 수 없는 버튼');
+            const [action, caseNo, itemNo] = (cq.data ?? '').split('|');
+            if (action === 'fav' && caseNo) {
+              await answerCallback(cq.id, await toggleFav(caseNo));
+            } else if (action === 'inspect' && caseNo) {
+              await answerCallback(cq.id, await recordDecisionFromBot(caseNo, itemNo ?? '1', 'fieldwork'));
+            } else if (action === 'reject' && caseNo) {
+              await answerCallback(cq.id, await recordDecisionFromBot(caseNo, itemNo ?? '1', 'rejected'));
+            } else {
+              await answerCallback(cq.id, '알 수 없는 버튼');
+            }
           } catch (e) {
             await answerCallback(cq.id, `오류: ${e instanceof Error ? e.message : e}`);
           }

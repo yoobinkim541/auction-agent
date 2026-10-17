@@ -55,6 +55,7 @@ export class TelegramApiError extends Error {
 export function createTelegramClient(token: string, fetchImpl: FetchImpl = defaultFetch): {
   getUpdates(offset: number): Promise<TelegramUpdate[]>;
   sendMessage(chatId: string | number, text: string, replyMarkup?: unknown): Promise<TelegramMessage>;
+  sendPhoto(chatId: string | number, photo: string, caption?: string, replyMarkup?: unknown): Promise<TelegramMessage>;
   answerCallbackQuery(callbackQueryId: string, text: string): Promise<boolean>;
 } {
   const api = `https://api.telegram.org/bot${token}`;
@@ -79,6 +80,12 @@ export function createTelegramClient(token: string, fetchImpl: FetchImpl = defau
       chat_id: chatId,
       text: text.slice(0, 3900),
       disable_web_page_preview: true,
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+    }),
+    sendPhoto: (chatId, photo, caption, replyMarkup) => request<TelegramMessage>('sendPhoto', {
+      chat_id: chatId,
+      photo,
+      ...(caption ? { caption: caption.slice(0, 1024) } : {}),
       ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     }),
     // 콜백은 반드시 answer해야 클라이언트 로딩 스피너가 멈춘다. 토스트는 200자 제한.

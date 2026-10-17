@@ -2,9 +2,8 @@ import { useEffect, useMemo, useRef, useState, useDeferredValue, useCallback, me
 import { FLAG_LABEL, TYPE_LABEL, RISK, RECO } from './labels.ts';
 import { SkeletonList, Notice, ThSort, DDay, FieldProgress } from './ui.tsx';
 import {
-  fetchDetail, triggerJob, fetchJobStatus, setFavorite, fetchMlReview,
-  apiBase, eok, pct, fetchPrecisionRecommendations, detailIdentityKey,
-  detailResponseMatches, listingDetailTarget, mergeDetailSelection, parseDetailHash,
+  setFavorite, fetchMlReview,
+  apiBase, eok, pct,
   type ListingItem, type MlReview, type MlSurpriseRow, type DecisionEvent, type ListingDetailTarget,
 } from './api.ts';
 import { scoreClient, scoreBreakdown, type ScoreConfig, type ClientScore } from './scoring.ts';
@@ -22,11 +21,14 @@ import { TodayActions } from './TodayActions.tsx';
 import { PrecisionInbox } from './PrecisionInbox.tsx';
 import { useIncrementalList } from './useIncremental.ts';
 import { exportCSV } from './export-csv.ts';
-import { loadConfig, saveConfig, loadUIState, saveUIState } from './persistence.ts';
+import { loadConfig, saveConfig } from './persistence.ts';
 import { useMediaQuery } from './useMediaQuery.ts';
 import { buildTriageCards } from './triage.ts';
 import { useBackendStatus } from './backend-status.ts';
-import { applyIfCurrent, createRequestGate } from './precision.ts';
+import { useJobRunner } from './useJobRunner.ts';
+import { usePrecisionInbox } from './usePrecisionInbox.ts';
+import { useDetailSelection } from './useDetailSelection.ts';
+import { useListingFilters } from './useListingFilters.ts';
 
 const TODAY = localDateISO(); // KST 기준 로컬 날짜(UTC slice는 00:00~09:00 KST 구간에서 어제 날짜)
 
@@ -44,11 +46,6 @@ const TODAY = localDateISO(); // KST 기준 로컬 날짜(UTC slice는 00:00~09:
 // SortKey는 filters.ts에서 import
 // CFG_KEY/UI_KEY·config/UI 영속화(load/save)는 persistence.ts로 이동
 
-const SORT_DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = {
-  score: 'desc', safety: 'desc', trueSafety: 'desc', sale: 'asc',
-  price: 'asc', appraisal: 'desc', assumed: 'asc', gap: 'asc', fieldwork: 'desc',
-  competition: 'desc', // 경쟁점수 높을수록(=저경쟁) 앞
-};
 
 /** 임장 진행 가중치: 진행중(체크 일부) > 메모만 > 미시작 > 완료(끝난 건 뒤로). 진행도순 정렬·배지 공용. */
 // fieldworkRank는 filters.ts로 이동
@@ -70,27 +67,42 @@ export default function App() {
   const { rows, setRows, loading, err, lastCrawl, load } = useListings();
   const { actions: todayActions, loading: todayActionsLoading, error: todayActionsError, reload: reloadTodayActions } = useTodayActions(20);
   const backendStatus = useBackendStatus();
-  const [precisionItems, setPrecisionItems] = useState<ListingItem[]>([]);
-  const [precisionLoading, setPrecisionLoading] = useState(true);
-  const [precisionError, setPrecisionError] = useState<string | null>(null);
-  const [onlyPassed, setOnlyPassed] = useState<boolean>(() => loadUIState().onlyPassed ?? false);
-  const [onlyFavorite, setOnlyFavorite] = useState(false);
-  const [onlyMultiRound, setOnlyMultiRound] = useState<boolean>(() => loadUIState().onlyMultiRound ?? false);
-  const [onlyZeroPi, setOnlyZeroPi] = useState(false);
-  const [onlyConsider, setOnlyConsider] = useState(false);
-  const [onlyPassedAvoid, setOnlyPassedAvoid] = useState(false);
-  const [onlyUrgent, setOnlyUrgent] = useState(false);
-  const [onlyToday, setOnlyToday] = useState(false);
-  const [filterDate, setFilterDate] = useState<string | null>(null);
-  const [maxGapEok, setMaxGapEok] = useState(0);
-  const [hideExpired, setHideExpired] = useState<boolean>(() => loadUIState().hideExpired ?? true);
-  const [hideIncomplete, setHideIncomplete] = useState<boolean>(() => loadUIState().hideIncomplete ?? false);
-  const [type, setType] = useState<string>(() => loadUIState().type ?? 'all');
-  const [q, setQ] = useState('');
-  const [sort, setSort] = useState<SortKey>(() => loadUIState().sort ?? 'score');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => loadUIState().sortDir ?? 'desc');
-  const [groupByCase, setGroupByCase] = useState<boolean>(() => loadUIState().groupByCase ?? false);
-  const [selected, setSelected] = useState<ListingItem | null>(null);
+  const precisionInbox = usePrecisionInbox();
+  const { items: precisionItems, loading: precisionLoading, error: precisionError, reload: loadPrecision, updateDecision } = precisionInbox;
+  const detailSelection = useDetailSelection();
+  const { selected, setSelected, isDetailLoading, handleSelect, openCaseFromReview, syncFavorite, syncDecision } = detailSelection;
+  const filters = useListingFilters();
+  const {
+    onlyPassed, setOnlyPassed,
+    onlyFavorite, setOnlyFavorite,
+    onlyDecided, setOnlyDecided,
+    onlyMultiRound, setOnlyMultiRound,
+    onlyZeroPi, setOnlyZeroPi,
+    onlyConsider, setOnlyConsider,
+    onlyPassedAvoid, setOnlyPassedAvoid,
+    onlyUrgent, setOnlyUrgent,
+    onlyToday, setOnlyToday,
+    filterDate, setFilterDate,
+    maxGapEok, setMaxGapEok,
+    hideExpired, setHideExpired,
+    hideIncomplete, setHideIncomplete,
+    type, setType,
+    q, setQ,
+    sort, setSort,
+    sortDir, setSortDir,
+    groupByCase, setGroupByCase,
+    handleSort,
+  } = filters;
+
+  const jobRunner = useJobRunner({
+    onComplete: () => {
+      load();
+      reloadTodayActions();
+      void loadPrecision();
+    },
+  });
+  const { jobStatus, runJob, dismissJob } = jobRunner;
+
   const [showCompare, setShowCompare] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
@@ -98,149 +110,20 @@ export default function App() {
   const [cfg, setCfg] = useState<ScoreConfig>(loadConfig);
   const [showCfg, setShowCfg] = useState(false);
   const [showLegend, setShowLegend] = useState(false);
-  const detailCacheRef = useRef(new Map<string, ListingItem>());
-  const [detailLoading, setDetailLoading] = useState<string | null>(null);
-  const [jobStatus, setJobStatus] = useState<{ msg: string; ok: boolean } | null>(null);
-  const jobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const precisionRequestGateRef = useRef(createRequestGate());
-  const detailRequestGateRef = useRef(createRequestGate());
 
-  const loadPrecision = useCallback(() => {
-    const requestGate = precisionRequestGateRef.current;
-    const requestGeneration = requestGate.begin();
-    setPrecisionLoading(true);
-    setPrecisionError(null);
-    return fetchPrecisionRecommendations(5)
-      .then((items) => { applyIfCurrent(requestGate, requestGeneration, () => setPrecisionItems(items)); })
-      .catch(() => { applyIfCurrent(requestGate, requestGeneration, () => setPrecisionError('정밀 추천 API 오류')); })
-      .finally(() => { applyIfCurrent(requestGate, requestGeneration, () => setPrecisionLoading(false)); });
-  }, []);
-
-  // 데이터 로드(rows·lastCrawl·load)는 useListings()로 이동(위 destructure)
-  // 딥링크: listing id 또는 사건/물건번호로 정확한 매물 상세를 연다. 기존 단일사건 #case 링크도 유지한다.
-  useEffect(() => {
-    const target = parseDetailHash(window.location.hash);
-    if (!target) return;
-    const requestGate = detailRequestGateRef.current;
-    const requestGeneration = requestGate.begin();
-    fetchDetail(target).then((full) => {
-      if (!detailResponseMatches(target, full)) return;
-      detailCacheRef.current.set(detailIdentityKey(listingDetailTarget(full)), full);
-      applyIfCurrent(requestGate, requestGeneration, () => setSelected(full));
-    }).catch(() => {});
-  }, []);
   useEffect(() => { saveConfig(cfg); }, [cfg]);
-  useEffect(() => { saveUIState({ sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete, groupByCase }); }, [sort, sortDir, type, hideExpired, onlyPassed, onlyMultiRound, hideIncomplete, groupByCase]);
-  useEffect(() => {
-    void loadPrecision();
-    return () => { precisionRequestGateRef.current.invalidate(); };
-  }, [loadPrecision]);
 
-  // useCallback — 안정 참조여야 React.memo 행이 스킵된다(load도 useListings에서 안정화).
   const toggleFav = useCallback((item: ListingItem) => {
     const nv = !item.is_favorite;
     setRows((rs) => rs.map((r) => (r.id === item.id ? { ...r, is_favorite: nv } : r)));
-    // 함수형 업데이트 — 상세 로드로 교체된 최신 selected(전체 데이터)를 slim 으로 덮어쓰지 않도록
-    setSelected((cur) => (cur && cur.id === item.id ? { ...cur, is_favorite: nv } : cur));
-    // 상세 캐시도 동기화 — 재오픈 시 별 상태가 토글 이전 값으로 되돌아가는 문제 방지
-    const cacheKey = detailIdentityKey(listingDetailTarget(item));
-    const cached = detailCacheRef.current.get(cacheKey);
-    if (cached) detailCacheRef.current.set(cacheKey, { ...cached, is_favorite: nv });
+    syncFavorite(item, nv);
     setFavorite(item.id, nv).catch(() => load());
-  }, [setRows, load]);
-
-  const showJob = (msg: string, ok: boolean, ttl = ok ? 4000 : 7000) => {
-    if (jobTimerRef.current) clearTimeout(jobTimerRef.current);
-    setJobStatus({ msg, ok });
-    if (ttl > 0) jobTimerRef.current = setTimeout(() => setJobStatus(null), ttl);
-  };
-  const stopPoll = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
-  const runJob = (job: 'crawl' | 'analyze' | 'eval' | 'ingest-legal', label: string) => {
-    stopPoll();
-    showJob(`${label} 시작 중…`, true, 0);
-    triggerJob(job)
-      .then(() => {
-        showJob(`${label} 실행 중…`, true, 0);
-        const start = Date.now();
-        pollRef.current = setInterval(async () => {
-          const elapsed = Math.round((Date.now() - start) / 1000);
-          const mins = Math.floor(elapsed / 60), secs = elapsed % 60;
-          const elapsedStr = mins > 0 ? `${mins}분 ${secs}초` : `${secs}초`;
-          try {
-            const st = await fetchJobStatus();
-            const s = st[job];
-            if (s?.state === 'ok') {
-              stopPoll();
-              showJob(`✓ ${label} 완료 (${elapsedStr})`, true);
-              load();
-              reloadTodayActions();
-              void loadPrecision();
-            } else if (s?.state === 'error') {
-              stopPoll();
-              showJob(`✕ ${label} 실패`, false);
-            } else {
-              showJob(`${label} 실행 중… ${elapsedStr}`, true, 0);
-            }
-          } catch { /* ignore poll errors */ }
-        }, 8000);
-      })
-      .catch((e: unknown) => showJob(`오류: ${e instanceof Error ? e.message : String(e)}`, false));
-  };
-
-  const handleSort = (key: SortKey) => {
-    if (sort === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-    else { setSort(key); setSortDir(SORT_DEFAULT_DIR[key]); }
-  };
-
-  const handleSelect = useCallback((item: ListingItem) => {
-    const target = listingDetailTarget(item);
-    const cacheKey = detailIdentityKey(target);
-    const requestGate = detailRequestGateRef.current;
-    const requestGeneration = requestGate.begin();
-    const cached = detailCacheRef.current.get(cacheKey);
-    if (cached) {
-      setSelected(mergeDetailSelection(cached, item));
-      return;
-    }
-    setSelected(item);
-    setDetailLoading(cacheKey);
-    fetchDetail(target)
-      .then((full) => {
-        if (!detailResponseMatches(target, full)) return;
-        const merged = mergeDetailSelection(full, item);
-        detailCacheRef.current.set(cacheKey, merged);
-        applyIfCurrent(requestGate, requestGeneration, () => {
-          setSelected((cur) => (cur?.id === item.id ? merged : cur));
-        });
-      })
-      .catch(() => {})
-      .finally(() => setDetailLoading((cur) => (cur === cacheKey ? null : cur)));
-  }, []);
+  }, [setRows, syncFavorite, load]);
 
   const updateCurrentDecision = useCallback((event: DecisionEvent) => {
-    setPrecisionItems((items) => items.map((item) => item.id === event.listing_id ? { ...item, current_decision: event } : item));
-    setSelected((item) => item?.id === event.listing_id ? { ...item, current_decision: event } : item);
-  }, []);
-
-  const openCaseFromReview = useCallback((target: ListingDetailTarget) => {
-    const cacheKey = detailIdentityKey(target);
-    const requestGate = detailRequestGateRef.current;
-    const requestGeneration = requestGate.begin();
-    const cached = detailCacheRef.current.get(cacheKey);
-    if (cached) { setSelected(cached); return; }
-    setDetailLoading(cacheKey);
-    fetchDetail(target)
-      .then((full) => {
-        if (!detailResponseMatches(target, full)) return;
-        detailCacheRef.current.set(cacheKey, full);
-        detailCacheRef.current.set(detailIdentityKey(listingDetailTarget(full)), full);
-        applyIfCurrent(requestGate, requestGeneration, () => setSelected(full));
-      })
-      .catch(() => {})
-      .finally(() => setDetailLoading((cur) => (cur === cacheKey ? null : cur)));
-  }, []);
-
+    updateDecision(event);
+    syncDecision(event);
+  }, [updateDecision, syncDecision]);
   // 단일 패스 스코어링 — rows·cfg 변경 시에만 1회. (과거: view/stats/allScored 3중 패스가 매 상호작용 재계산)
   // 항목 ref+cfg ref 키 캐시 — ★토글 등으로 일부 행만 바뀌면 변경된 항목만 재스코어, 나머지 sc 참조 안정
   // → React.memo 행이 실제로 스킵된다(불변 업데이트 패턴 활용).
@@ -262,7 +145,7 @@ export default function App() {
 
   const viewFull = useMemo(() => {
     const filtered = applyListingFilters(scored, {
-      cfg, hideExpired, hideIncomplete, onlyPassed, onlyFavorite, onlyZeroPi, onlyConsider,
+      cfg, hideExpired, hideIncomplete, onlyPassed, onlyFavorite, onlyDecided, onlyZeroPi, onlyConsider,
       onlyPassedAvoid, onlyToday, filterDate, onlyUrgent, maxGapEok, onlyMultiRound, type, q: dq, today: TODAY,
     });
     return sortRows(filtered, sort, sortDir);
@@ -288,7 +171,8 @@ export default function App() {
   // 활성 레이아웃만 렌더(표 또는 카드) — 둘 다 DOM에 만들던 것을 하나로(노드 절반↓).
   const isMobile = useMediaQuery('(max-width: 760px)');
   const favCount = rows.filter((r) => r.is_favorite).length;
-  const activeTab = showReview ? 'review' : showCfg ? 'config' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
+  const decidedCount = rows.filter((r) => r.current_decision != null).length;
+  const activeTab = showReview ? 'review' : showCfg ? 'config' : onlyDecided ? 'journal' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : 'all';
   // 배지 카운트 — 결과를 좁히는 '숨은' 필터(오늘기일·달력일·갭·발품회피 등)까지 포함해야
   // 목록이 비었을 때 원인을 알 수 있다(과거: 절반 누락 → 0건인데 배지 0).
   // 설정(ConfigPanel)의 지역·가격 조건도 목록을 항상 자르므로 포함 — "전체 3200인데 목록 800" 미스터리 방지.
@@ -305,13 +189,15 @@ export default function App() {
   // 모든 필터 초기화(검색어·종류 포함) — 팝오버/빈상태 버튼이 동일하게 사용
   const resetFilters = () => {
     setHideExpired(false); setHideIncomplete(false); setOnlyPassed(false); setOnlyFavorite(false);
+    setOnlyDecided(false);
     setOnlyMultiRound(false); setOnlyZeroPi(false); setOnlyConsider(false); setOnlyUrgent(false);
     setOnlyPassedAvoid(false); setOnlyToday(false); setFilterDate(null); setMaxGapEok(0);
     setType('all'); setQ('');
   };
-  const navAll = () => { setShowReview(false); setShowCfg(false); setOnlyFavorite(false); setOnlyPassed(false); window.scrollTo(0, 0); };
-  const navRecommend = () => { setShowReview(false); setShowCfg(false); setOnlyFavorite(false); setOnlyPassed(true); window.scrollTo(0, 0); };
-  const navFavorite = () => { setShowReview(false); setShowCfg(false); setOnlyFavorite(true); window.scrollTo(0, 0); };
+  const navAll = () => { setShowReview(false); setShowCfg(false); setOnlyFavorite(false); setOnlyDecided(false); setOnlyPassed(false); window.scrollTo(0, 0); };
+  const navRecommend = () => { setShowReview(false); setShowCfg(false); setOnlyFavorite(false); setOnlyDecided(false); setOnlyPassed(true); window.scrollTo(0, 0); };
+  const navFavorite = () => { setShowReview(false); setShowCfg(false); setOnlyDecided(false); setOnlyFavorite(true); window.scrollTo(0, 0); };
+  const navJournal = () => { setShowReview(false); setShowCfg(false); setOnlyFavorite(false); setOnlyPassed(false); setOnlyDecided(true); window.scrollTo(0, 0); };
   const navFieldwork = () => { setShowReview(false); setShowCfg(false); setSort('fieldwork'); setSortDir('desc'); window.scrollTo(0, 0); };
 
   const stats = useMemo(() => {
@@ -379,6 +265,7 @@ export default function App() {
           <button className={activeTab === 'all' ? 'on' : ''} onClick={navAll}>📋 전체 매물</button>
           <button className={activeTab === 'recommend' ? 'on' : ''} onClick={navRecommend}>🎯 추천 매물</button>
           <button className={activeTab === 'fav' ? 'on' : ''} onClick={navFavorite}>★ 관심 매물 <em>{favCount}</em></button>
+          <button className={activeTab === 'journal' ? 'on' : ''} onClick={navJournal}>📝 결정 저널 <em>{decidedCount}</em></button>
           <button onClick={navFieldwork}>🚶 현장 임장</button>
           <button className={activeTab === 'review' ? 'on' : ''} onClick={() => { setShowReview((s) => !s); setShowCfg(false); window.scrollTo(0, 0); }}>🧠 복기 / ML</button>
         </nav>
@@ -749,7 +636,7 @@ export default function App() {
 
       {selected && <Suspense fallback={null}><Detail
         row={selected} onClose={() => setSelected(null)} onFav={() => toggleFav(selected)}
-        loading={detailLoading === detailIdentityKey(listingDetailTarget(selected))}
+        loading={isDetailLoading(selected)}
         onPrev={selNavPrev} onNext={selNavNext} position={selNavPos}
         onDecisionSaved={updateCurrentDecision}
       /></Suspense>}
@@ -766,7 +653,7 @@ export default function App() {
       )}
 
       {jobStatus && (
-        <div className={`job-toast${jobStatus.ok ? '' : ' job-toast-err'}`} onClick={() => setJobStatus(null)}>
+        <div className={`job-toast${jobStatus.ok ? '' : ' job-toast-err'}`} onClick={dismissJob}>
           {jobStatus.msg}
         </div>
       )}
@@ -778,8 +665,11 @@ export default function App() {
         <button className={activeTab === 'all' ? 'on' : ''} onClick={() => { setShowReview(false); setShowCfg(false); setOnlyFavorite(false); setOnlyPassed(false); window.scrollTo(0, 0); }}>
           <span className="tb-ico">📋</span>전체
         </button>
-        <button className={activeTab === 'fav' ? 'on' : ''} onClick={() => { setShowReview(false); setShowCfg(false); setOnlyFavorite(true); window.scrollTo(0, 0); }}>
+        <button className={activeTab === 'fav' ? 'on' : ''} onClick={() => { setShowReview(false); setShowCfg(false); setOnlyDecided(false); setOnlyFavorite(true); window.scrollTo(0, 0); }}>
           <span className="tb-ico">★</span>관심{favCount > 0 && <i className="tb-badge">{favCount}</i>}
+        </button>
+        <button className={activeTab === 'journal' ? 'on' : ''} onClick={navJournal}>
+          <span className="tb-ico">📝</span>저널{decidedCount > 0 && <i className="tb-badge">{decidedCount}</i>}
         </button>
         <button className={activeTab === 'review' ? 'on' : ''} onClick={() => { setShowReview((s) => !s); setShowCfg(false); window.scrollTo(0, 0); }}>
           <span className="tb-ico">🧠</span>복기

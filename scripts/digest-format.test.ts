@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatDigest, formatResultsRecap, formatUpcoming, type DigestRow, type DigestResult } from './digest-format.ts';
+import { formatDigest, formatResultsRecap, formatUpcoming, buildDigestCardKeyboard, type DigestRow, type DigestResult } from './digest-format.ts';
 
 const row = (over: Partial<DigestRow> = {}): DigestRow => ({
   case_no: '2024타경1', item_no: '1', property_type: 'apartment', address: '서울특별시 강남구 역삼동 1-2',
@@ -91,5 +91,24 @@ describe('formatResultsRecap', () => {
   });
   it('빈 결과 → 빈 문자열(섹션 생략)', () => {
     expect(formatResultsRecap([], '최근')).toBe('');
+  });
+});
+
+describe('buildDigestCardKeyboard', () => {
+  it('사건과 물건번호를 포함한 관심/임장/제외 인라인 키보드를 구성한다', () => {
+    const keyboard = buildDigestCardKeyboard('2024타경1234', '1', false);
+    expect(keyboard.inline_keyboard).toHaveLength(1);
+    const buttons = keyboard.inline_keyboard[0]!;
+    expect(buttons[0]!.text).toBe('☆ 관심등록');
+    expect(buttons[0]!.callback_data).toBe('fav|2024타경1234|1');
+    expect(buttons[1]!.text).toBe('🚶 임장등록');
+    expect(buttons[1]!.callback_data).toBe('inspect|2024타경1234|1');
+    expect(buttons[2]!.text).toBe('❌ 제외');
+    expect(buttons[2]!.callback_data).toBe('reject|2024타경1234|1');
+  });
+
+  it('이미 관심 등록된 매물은 관심해제 라벨을 표시한다', () => {
+    const keyboard = buildDigestCardKeyboard('2024타경5678', '2', true);
+    expect(keyboard.inline_keyboard[0]![0]!.text).toBe('★ 관심해제');
   });
 });

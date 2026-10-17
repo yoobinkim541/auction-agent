@@ -52,4 +52,29 @@ describe('telegram client — 인라인 버튼', () => {
     expect(bodies[1]).not.toHaveProperty('reply_markup');
     expect(bodies[2]).toEqual({ callback_query_id: 'cb-1', text: 'x'.repeat(190) });
   });
+
+  it('sendPhoto는 photo URL과 캡션, reply_markup을 포함하여 전송한다', async () => {
+    const bodies: Record<string, unknown>[] = [];
+    let requestUrl = '';
+    const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
+      requestUrl = String(input);
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ ok: true, result: { message_id: 10 } }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    const client = createTelegramClient('secret-token', fetchImpl);
+    const keyboard = { inline_keyboard: [[{ text: '★ 관심', callback_data: 'fav|1' }]] };
+
+    const res = await client.sendPhoto('123', 'https://example.com/photo.jpg', '매물 사진', keyboard);
+
+    expect(res).toEqual({ message_id: 10 });
+    expect(requestUrl).toContain('/botsecret-token/sendPhoto');
+    expect(bodies[0]).toMatchObject({
+      chat_id: '123',
+      photo: 'https://example.com/photo.jpg',
+      caption: '매물 사진',
+      reply_markup: keyboard,
+    });
+  });
 });

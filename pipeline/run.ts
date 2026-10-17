@@ -7,6 +7,7 @@
  *   → analyzeLocation(실거래가/POI) → maxSafeBid 산정 → scoreListing → 저장.
  */
 import 'dotenv/config';
+import { pathToFileURL } from 'node:url';
 import {
   fetchListingsForAnalysis, fetchListingDocs, type ListingRow, query,
   fetchDeonakTenants, fetchListingsByIds,
@@ -483,7 +484,9 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((e) => {
+    console.error(e);
+    process.exitCode = 1;
+  });
+}

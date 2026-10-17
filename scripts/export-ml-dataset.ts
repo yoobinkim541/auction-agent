@@ -5,6 +5,7 @@
 import 'dotenv/config';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { query, pool } from '../shared/db.ts';
 
 const outPath = process.argv.find((arg) => arg.startsWith('--out='))?.slice('--out='.length) ?? 'artifacts/ml/outcome_eval.csv';
@@ -63,7 +64,9 @@ async function main(): Promise<void> {
   await pool().end();
 }
 
-main().catch((err) => {
-  console.error('ml export 실패:', err instanceof Error ? err.message : err);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error('ml export 실패:', err instanceof Error ? err.message : err);
+    process.exitCode = 1;
+  });
+}

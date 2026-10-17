@@ -269,6 +269,58 @@ describe('extractCourtPhotoUrls', () => {
     const raw = `Qk2${'A/img+file'.repeat(20)}`;
     expect(extractCourtPhotoUrls({ photoList: [{ photo: raw }] })).toEqual([]);
   });
+
+  it('null, undefined, 원시값 등 비정상 입력에 대해 빈 배열을 안전하게 반환한다', () => {
+    expect(extractCourtPhotoUrls(null)).toEqual([]);
+    expect(extractCourtPhotoUrls(undefined)).toEqual([]);
+    expect(extractCourtPhotoUrls('invalid')).toEqual([]);
+    expect(extractCourtPhotoUrls(12345)).toEqual([]);
+    expect(extractCourtPhotoUrls({})).toEqual([]);
+  });
+
+  it('프로토콜 상대 경로(//) 이미지를 https URL로 정규화한다', () => {
+    const detail = {
+      photo: '//www.courtauction.go.kr/images/photo.jpg',
+    };
+    expect(extractCourtPhotoUrls(detail)).toEqual([
+      'https://www.courtauction.go.kr/images/photo.jpg',
+    ]);
+  });
+
+  it('순환 참조(circular reference)가 있는 객체에서도 무한루프 없이 안전하게 추출한다', () => {
+    const cyclic: Record<string, unknown> = {
+      photo: '/down/photo1.jpg',
+    };
+    cyclic.self = cyclic;
+    expect(extractCourtPhotoUrls(cyclic)).toEqual([
+      'https://www.courtauction.go.kr/down/photo1.jpg',
+    ]);
+  });
+
+  it('사진이 15장을 초과하면 최대 15장까지만 반환한다', () => {
+    const list = Array.from({ length: 25 }, (_, i) => ({
+      url: `/down/photo_${i + 1}.jpg`,
+    }));
+    const urls = extractCourtPhotoUrls({ photoList: list });
+    expect(urls).toHaveLength(15);
+    expect(urls[0]).toBe('https://www.courtauction.go.kr/down/photo_1.jpg');
+    expect(urls[14]).toBe('https://www.courtauction.go.kr/down/photo_15.jpg');
+  });
+
+  it('배너, 버튼, 아이콘, svg 등 매물이 아닌 이미지는 제외한다', () => {
+    const detail = {
+      list: [
+        { file: '/images/btn_search.png' },
+        { file: '/images/icon_alert.gif' },
+        { file: '/images/banner_top.jpg' },
+        { file: '/images/diagram.svg' },
+        { file: '/down/real_photo.jpg' },
+      ],
+    };
+    expect(extractCourtPhotoUrls(detail)).toEqual([
+      'https://www.courtauction.go.kr/down/real_photo.jpg',
+    ]);
+  });
 });
 
 describe('isKnownForIncremental (증분 상세 skip 판정)', () => {

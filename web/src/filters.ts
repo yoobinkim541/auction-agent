@@ -39,6 +39,7 @@ export interface FilterState {
   onlyUrgent: boolean;
   maxGapEok: number; // 0 = 무제한
   onlyMultiRound: boolean;
+  onlyDecided?: boolean; // 내 결정 저널(current_decision 보유 물건만)
   type: string; // 'all' = 전체
   q: string;
   today: string; // YYYY-MM-DD
@@ -67,6 +68,7 @@ export function applyListingFilters(rows: ScoredRow[], f: FilterState): ScoredRo
   if (f.hideIncomplete) v = v.filter((x) => !x.item.location?.report?.headline?.startsWith('[데이터 불완전]'));
   if (f.onlyPassed) v = v.filter((x) => x.sc.passed);
   if (f.onlyFavorite) v = v.filter((x) => x.item.is_favorite);
+  if (f.onlyDecided) v = v.filter((x) => x.item.current_decision != null);
   if (f.onlyZeroPi) v = v.filter((x) => x.item.location?.income?.zeroPiCandidate === true);
   if (f.onlyConsider) v = v.filter((x) => x.item.location?.report?.recommendation === 'consider');
   if (f.onlyPassedAvoid) v = v.filter((x) => x.sc.passed && x.item.location?.report?.recommendation === 'avoid');

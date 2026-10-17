@@ -1,5 +1,6 @@
 /** D-1 입찰 준비 패키지 포맷(순수 — DB/IO 없음, 테스트 가능). bid-prep.ts가 조회 후 호출. */
 import { eok } from '../shared/format.ts';
+import { numberToKoreanHangeulAmount } from '../shared/bid-sheet.ts';
 
 export interface BidPrepRow {
   case_no: string;
@@ -30,7 +31,8 @@ export function formatBidPrep(rows: BidPrepRow[], tomorrow: string, dashboardBas
   const out: string[] = [`🎯 내일 입찰 D-1 · ${tomorrow} (${rows.length}건)`];
   rows.forEach((r, i) => {
     out.push(`${i + 1}. ${r.case_no} · ${TYPE[r.property_type] ?? r.property_type} · ${r.address.slice(0, 22)}${r.total_score != null ? ` ⭐${r.total_score}` : ''}${r.is_favorite ? ' ★' : ''}`);
-    out.push(`   ${r.court} · 최저가 ${eok(r.min_bid_price)} · 보증금 ${manwon(depositWon(r.min_bid_price))} (10%)`);
+    const dep = depositWon(r.min_bid_price);
+    out.push(`   ${r.court} · 최저가 ${eok(r.min_bid_price)} · 보증금 ${manwon(dep)} (10%) · ${numberToKoreanHangeulAmount(dep ?? 0)}`);
     if (r.bid_guide) out.push(`   🎯 ${r.bid_guide}`);
     if (dashboardBase) out.push(`   ${dashboardBase.replace(/\/+$/, '')}/#case=${encodeURIComponent(r.case_no)}&item=${encodeURIComponent(r.item_no || '1')}`);
   });

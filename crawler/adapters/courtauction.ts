@@ -473,6 +473,17 @@ async function fetchDetail(csNo: string, cortOfcCd: string, dspslGdsSeq: string,
   }
 }
 
+export async function fetchCourtDetail(
+  csNo: string,
+  cortOfcCd: string,
+  dspslGdsSeq = '1',
+  cookies?: CookieJar,
+): Promise<unknown | null> {
+  const jar = cookies ?? new CookieJar();
+  if (!cookies) await initSession(jar);
+  return fetchDetail(csNo, cortOfcCd, dspslGdsSeq, buildSrchInfo(cortOfcCd), jar);
+}
+
 // ── 결과 수집(Phase 1): 상세의 gdsDspslDxdyLst(매각기일 내역)에서 회차별 결과·낙찰가 추출 ──
 export interface SaleResultRound {
   date: string;            // 기일 ISO (YYYY-MM-DD)

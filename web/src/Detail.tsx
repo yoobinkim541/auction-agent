@@ -10,7 +10,7 @@ import { DecisionActions } from './DecisionActions.tsx';
 import { shouldShowLegacyBid } from './precision.ts';
 import { shouldIgnoreDrawerShortcut } from './detail-keyboard.ts';
 import { drawerFocusTrapDecision } from './drawer-focus.ts';
-
+import { buildNavigationLinks } from './navigation.ts';
 const CONF: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' };
 const DRAWER_FOCUSABLE_SELECTOR = 'a[href], button, input, select, textarea, [contenteditable], [tabindex]:not([tabindex="-1"])';
 
@@ -125,6 +125,16 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
           <div className="fieldmode">
             <h2><button type="button" className="star" onClick={onFav} aria-label="관심 매물 토글">{row.is_favorite ? '★' : '☆'}</button> {row.case_no}</h2>
             <p className="addr">{row.address} · {TYPE_LABEL[row.property_type]}</p>
+            {(() => {
+              const nav = buildNavigationLinks(row.address, row.lat, row.lng);
+              return (
+                <div className="nav-links" style={{ display: 'flex', gap: '8px', margin: '8px 0', flexWrap: 'wrap' }}>
+                  <a href={nav.tmap} className="nav-btn" style={{ padding: '6px 10px', background: '#e0f2fe', color: '#0369a1', borderRadius: '6px', fontSize: '13px', textDecoration: 'none' }}>🚗 티맵 길안내</a>
+                  <a href={nav.kakao} target="_blank" rel="noopener noreferrer" className="nav-btn" style={{ padding: '6px 10px', background: '#fef3c7', color: '#92400e', borderRadius: '6px', fontSize: '13px', textDecoration: 'none' }}>🗺 카카오맵</a>
+                  <a href={nav.naver} target="_blank" rel="noopener noreferrer" className="nav-btn" style={{ padding: '6px 10px', background: '#dcfce7', color: '#166534', borderRadius: '6px', fontSize: '13px', textDecoration: 'none' }}>📍 네이버지도</a>
+                </div>
+              );
+            })()}
             <div className="srclinks">
               <p className="srclink"><a href={courtCheckUrl} target="_blank" rel="noopener noreferrer">🔗 법원경매 더블체크{itemHint} ↗</a></p>
               <p className="srclink"><a href={deonakchalCheckUrl} target="_blank" rel="noopener noreferrer">🔎 더낙찰 더블체크{itemHint} ↗</a></p>
@@ -157,13 +167,17 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
             </div>
           )
         )}
-        {loc?.photos && loc.photos.length > 0 && (
+        {loc?.photos && loc.photos.length > 0 ? (
           <div className="gallery">
             {loc.photos.map((src, i) => (
               <a key={i} href={src} target="_blank" rel="noopener noreferrer" className="gphoto">
                 <img src={src} loading="lazy" alt={`매물 사진 ${i + 1}`} />
               </a>
             ))}
+          </div>
+        ) : (
+          <div className="no-photos-hint" style={{ padding: '10px 14px', background: 'var(--panel2, #f8fafc)', borderRadius: '8px', margin: '10px 0', fontSize: '13px', color: 'var(--text-muted, #64748b)' }}>
+            📷 등록된 사진이 없습니다. <a href={courtCheckUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent, #2563eb)' }}>법원경매 원본 페이지↗</a>에서 사진을 확인하세요.
           </div>
         )}
 

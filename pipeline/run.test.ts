@@ -1,6 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { extractTenantsFromNotes } from './run.ts';
-
 describe('extractTenantsFromNotes', () => {
   it('"인수권리" 등 매각효력 이외의 제목에서도 대항력 임차인을 추출한다', () => {
     const notes = [
@@ -63,5 +63,12 @@ describe('extractTenantsFromNotes — 보증금 파싱 실패 표시', () => {
     expect(tenants).toHaveLength(1);
     expect(tenants[0]!.deposit).toBe(0);
     expect(tenants[0]!.depositParseFailed).toBe(false);
+  });
+});
+
+describe('pipeline/run entrypoint guard', () => {
+  it('모듈 import 시 main()이 자동 실행되지 않도록 import.meta.url 진입점 가드를 갖춘다', () => {
+    const source = readFileSync(new URL('./run.ts', import.meta.url), 'utf8');
+    expect(source).toContain('if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)');
   });
 });

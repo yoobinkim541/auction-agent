@@ -105,3 +105,30 @@ export function formatResultsRecap(results: DigestResult[], dateLabel: string): 
   }
   return out.join('\n');
 }
+
+export interface TelegramInlineButton {
+  text: string;
+  callback_data?: string;
+  url?: string;
+}
+
+export interface TelegramInlineKeyboard {
+  inline_keyboard: TelegramInlineButton[][];
+}
+
+export function buildDigestCardKeyboard(
+  caseNo: string,
+  itemNo = '1',
+  isFavorite = false,
+): TelegramInlineKeyboard {
+  const target = `${caseNo}|${itemNo}`;
+  return {
+    inline_keyboard: [
+      [
+        { text: isFavorite ? '★ 관심해제' : '☆ 관심등록', callback_data: `fav|${target}` },
+        { text: '🚶 임장등록', callback_data: `inspect|${target}` },
+        { text: '❌ 제외', callback_data: `reject|${target}` },
+      ],
+    ],
+  };
+}

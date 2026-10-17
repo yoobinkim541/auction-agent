@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from '
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { query, pool } from '../shared/db.ts';
 
 type Cell = string | number | boolean | null | undefined | Date;
@@ -17,7 +17,7 @@ const modelVersion = process.argv.find((arg) => arg.startsWith('--model-version=
   ?? 'ensemble-v2';
 const dryRun = process.argv.includes('--dry-run');
 
-const csvCell = (value: Cell): string => {
+export const csvCell = (value: Cell): string => {
   if (value == null) return '';
   const text = value instanceof Date ? value.toISOString().slice(0, 10) : String(value);
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
@@ -34,7 +34,7 @@ function writeCsv(path: string, rows: DbRow[]): void {
   writeFileSync(path, csv);
 }
 
-function parseCsv(text: string): string[][] {
+export function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = '';
@@ -71,7 +71,7 @@ function parseCsv(text: string): string[][] {
   return rows;
 }
 
-function readPredictionCsv(path: string): Record<string, string>[] {
+export function readPredictionCsv(path: string): Record<string, string>[] {
   const rows = parseCsv(readFileSync(path, 'utf8'));
   if (rows.length < 2) return [];
   const headers = rows[0]!;
@@ -80,7 +80,7 @@ function readPredictionCsv(path: string): Record<string, string>[] {
   ));
 }
 
-function pythonPath(): string {
+export function pythonPath(): string {
   const localPython = resolve('.venv-ml/bin/python');
   return existsSync(localPython) ? localPython : 'python3';
 }
@@ -224,9 +224,11 @@ async function main(): Promise<void> {
   }
 }
 
-main()
-  .catch((error) => {
-    console.error('ml shadow 실패:', error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  })
-  .finally(() => pool().end().catch(() => undefined));
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main()
+    .catch((error) => {
+      console.error('ml shadow 실패:', error instanceof Error ? error.message : error);
+      process.exitCode = 1;
+    })
+    .finally(() => pool().end().catch(() => undefined));
+}
