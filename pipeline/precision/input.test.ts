@@ -62,6 +62,7 @@ describe('precision input mapping', () => {
       comparablePrices: [310_000_000, 315_000_000], expectedBidPrice: 200_000_000,
       maxSafeBid: 220_000_000, assumedAmount: 0, riskGrade: 'clean', dangerFlagCount: 1,
       occupantLabel: '소유자·채무자 점유', trueSafetyMargin: 0.25, fixedCosts: 7_500_000,
+      reportRecommendation: null,
     });
   });
 
@@ -69,6 +70,15 @@ describe('precision input mapping', () => {
     const opinion = { hasClue: true, requiredChecks: ['등기부 직접 열람 필요'] };
     const precisionInput = buildPrecisionInput({ listing, rights, location, trustStatus: 'hold', registryOpinion: opinion });
     expect(precisionInput.registryOpinion).toEqual(opinion);
+  });
+
+  it('종합 보고서의 권고(recommendation)를 정밀 입력에 전달한다', () => {
+    const withReport = {
+      ...location,
+      report: { recommendation: 'avoid' },
+    } as unknown as LocationAnalysis;
+    expect(buildPrecisionInput({ listing, rights, location: withReport, trustStatus: 'trusted' }).reportRecommendation)
+      .toBe('avoid');
   });
 
   it('flags only explicit embedded item numbers that differ from the listing item', () => {

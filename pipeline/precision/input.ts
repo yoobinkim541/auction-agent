@@ -75,6 +75,7 @@ export function buildPrecisionInput(args: {
     occupantLabel: args.location.eviction?.occupantLabel ?? '점유관계 미상',
     trueSafetyMargin: cost?.trueSafetyMargin ?? null,
     fixedCosts: cost ? cost.acqTax + cost.moveOutCost + cost.bondCost + cost.etcCost : 0,
+    reportRecommendation: args.location.report?.recommendation ?? null,
   };
 }
 

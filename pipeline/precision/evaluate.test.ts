@@ -131,6 +131,22 @@ describe('evaluatePrecision', () => {
     expect(evaluatePrecision(precisionInput({ comparablePrices: [200_000_000] })).status).toBe('recommended');
   });
 
+  it('종합 보고서가 신중·회피(avoid)이면 다른 조건이 완벽해도 rejected로 추천하지 않는다', () => {
+    const evaluation = evaluatePrecision(precisionInput({ reportRecommendation: 'avoid' }));
+    expect(evaluation.status).toBe('rejected');
+    expect(evaluation.reasonCodes).toContain('REPORT_RECOMMENDATION_AVOID');
+    expect(evaluation.risks.some((risk) => risk.includes('종합 보고서'))).toBe(true);
+  });
+
+  it.each(['consider', 'caution', null, undefined] as const)(
+    '종합 보고서 권고가 %s이면 추천 판정에 영향을 주지 않는다',
+    (reportRecommendation) => {
+      const evaluation = evaluatePrecision(precisionInput({ reportRecommendation }));
+      expect(evaluation.status).toBe('recommended');
+      expect(evaluation.reasonCodes).not.toContain('REPORT_RECOMMENDATION_AVOID');
+    },
+  );
+
   it('reports deterministic output metadata and confidence', () => {
     const result = evaluatePrecision(precisionInput());
     expect(result).toMatchObject({

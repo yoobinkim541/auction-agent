@@ -27,7 +27,7 @@ async function createTemporaryRelations(client: Client): Promise<void> {
     create temp table gm_location_analysis (
       id bigint, listing_id bigint, market_price bigint, expected_bid_price bigint,
       comps jsonb, site_comps jsonb, market_confidence text, acquisition_cost jsonb,
-      eviction jsonb, analyzed_at timestamptz
+      eviction jsonb, analyzed_at timestamptz, report jsonb
     ) on commit drop;
     create temp table gm_listing_docs (
       listing_id bigint, parsed_json jsonb, created_at timestamptz
@@ -80,7 +80,8 @@ const ids = (rows: Array<{ id: string | number }>): number[] => rows.map(({ id }
 
 const precisionMigration = readFileSync(new URL('../db/migrate_precision_recommendations.sql', import.meta.url), 'utf8');
 const precisionMigrationSetup = precisionMigration.split('create or replace view gm_precision_shortlist as')[0]!;
-const precisionShortlistQuery = precisionMigration.match(/create or replace view gm_precision_shortlist as\s+([\s\S]+);\s*$/)?.[1];
+const reportGateMigration = readFileSync(new URL('../db/migrate_precision_shortlist_report_gate.sql', import.meta.url), 'utf8');
+const precisionShortlistQuery = reportGateMigration.match(/create or replace view gm_precision_shortlist as\s+([\s\S]+?);\s*commit;\s*$/)?.[1];
 
 describeDatabase('precision production SQL against temporary PostgreSQL fixtures', () => {
   it('returns exact audit metrics for every safety invariant and report distribution', async () => {
@@ -209,14 +210,20 @@ describeDatabase('precision production SQL against temporary PostgreSQL fixtures
            min_bid_price, fail_count, source, sale_date, crawled_at)
         select id, 'shortlist-' || id, '1', 'court', 'address', 'apartment', 200,
                100, 0, 'courtauction', current_date + 1, now()
-          from generate_series(1, 4) id;
+          from generate_series(1, 7) id;
         insert into gm_data_trust
-        select id, 'trusted', '[]', now() from generate_series(1, 4) id;
+        select id, 'trusted', '[]', now() from generate_series(1, 7) id;
         insert into gm_rights_analysis
           (id, listing_id, classified, tenants, warnings, assumed_amount, max_safe_bid,
            red_flags, risk_grade, analyzed_at)
         select id, id, '[]', '[]', '[]', 0, 120, '[]', 'clean', now()
-          from generate_series(1, 4) id;
+          from generate_series(1, 7) id;
+        insert into gm_location_analysis (id, listing_id, analyzed_at, report)
+        select id, id, now(),
+               case id when 5 then '{"recommendation":"avoid"}'::jsonb
+                       when 6 then '{"recommendation":"consider"}'::jsonb
+                       when 7 then null end
+          from generate_series(1, 7) id;
         insert into gm_precision_evaluations
           (listing_id, status, confidence, conservative_value, recommended_bid, hard_cap_bid,
            reason_codes, evaluated_at)
@@ -224,13 +231,16 @@ describeDatabase('precision production SQL against temporary PostgreSQL fixtures
           (1, 'recommended', 'high', 150, 110, 120, '[]', now()),
           (2, 'recommended', 'high', 150, null, 120, '[]', now()),
           (3, 'recommended', 'high', 150, 90, 120, '[]', now()),
-          (4, 'recommended', 'high', 150, 130, 120, '[]', now());
+          (4, 'recommended', 'high', 150, 130, 120, '[]', now()),
+          (5, 'recommended', 'high', 150, 110, 120, '[]', now()),
+          (6, 'recommended', 'high', 150, 110, 120, '[]', now()),
+          (7, 'recommended', 'high', 150, 110, 120, '[]', now());
         drop table gm_precision_shortlist;
         create temp view gm_precision_shortlist as ${precisionShortlistQuery};
       `);
 
       expect((await client.query<{ listing_id: string | number }>('select listing_id from gm_precision_shortlist order by listing_id')).rows)
-        .toEqual([{ listing_id: '1' }]);
+        .toEqual([{ listing_id: '1' }, { listing_id: '6' }, { listing_id: '7' }]);
     });
   });
 

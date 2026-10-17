@@ -41,6 +41,7 @@ interface PrecisionBackfillRow {
   acquisition_cost: unknown;
   site_comps: unknown;
   eviction: unknown;
+  report_recommendation: string | null;
 }
 
 export const PRECISION_BACKFILL_SQL = `
@@ -49,7 +50,8 @@ export const PRECISION_BACKFILL_SQL = `
          t.status as trust_status,
          r.classified, r.tenants, r.assumed_amount, r.max_safe_bid, r.red_flags, r.risk_grade, r.warnings,
          loc.market_price, loc.market_confidence, loc.comps, loc.expected_bid_price,
-         loc.acquisition_cost, loc.site_comps, loc.eviction
+         loc.acquisition_cost, loc.site_comps, loc.eviction,
+         loc.report->>'recommendation' as report_recommendation
     from gm_listings l
     left join gm_data_trust t on t.listing_id = l.id
     left join gm_rights_analysis r on r.listing_id = l.id
@@ -85,6 +87,11 @@ const trustStatus = (value: string | null): PrecisionTrustStatus => (
 
 const riskGrade = (value: string | null): RightsAnalysisResult['riskGrade'] => (
   value === 'clean' || value === 'caution' || value === 'risky' ? value : 'review_required'
+);
+
+/** 보고서 권고만 필요하므로 PrecisionInput이 읽는 최소 형태로 복원한다. 알 수 없는 값은 보고서 없음(undefined). */
+const reportOf = (value: string | null): { recommendation: string } | undefined => (
+  value === 'consider' || value === 'caution' || value === 'avoid' ? { recommendation: value } : undefined
 );
 
 export function readPrecisionBackfillOptions(
@@ -136,6 +143,7 @@ export function mapPrecisionBackfillInput(row: PrecisionBackfillRow) {
     acquisitionCost: row.acquisition_cost ?? undefined,
     siteComps: array(row.site_comps),
     eviction: row.eviction ?? undefined,
+    report: reportOf(row.report_recommendation),
   } as unknown as LocationAnalysis;
 
   return buildPrecisionInput({ listing, rights, location, trustStatus: trustStatus(row.trust_status) });

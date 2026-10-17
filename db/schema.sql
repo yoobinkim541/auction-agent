@@ -345,6 +345,7 @@ with eligible as (
     and r.analyzed_at >= l.crawled_at
     and loc.analyzed_at >= l.crawled_at
     and r.assumed_amount = 0
+    and coalesce(loc.report->>'recommendation', '') <> 'avoid'
     and p.hard_cap_bid >= l.min_bid_price
     and p.recommended_bid is not null
     and p.recommended_bid >= l.min_bid_price

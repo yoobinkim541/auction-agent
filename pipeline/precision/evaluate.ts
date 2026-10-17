@@ -26,6 +26,11 @@ export interface PrecisionInput {
    * (registryGapCoverable 참고). 다른 사유까지 겹친 hold에는 null로 전달돼 영향 없음.
    */
   registryOpinion?: { hasClue: boolean; requiredChecks: readonly string[] } | null;
+  /**
+   * 종합 보고서(decideRecommendation) 권고. 'avoid'(인수금액·위험 체크항목·검토필요·음수 진짜마진)는
+   * 정밀 추천과 모순되므로 recommended 불가(rejected). null/undefined는 보고서 없음 — 판정 영향 없음.
+   */
+  reportRecommendation?: 'consider' | 'caution' | 'avoid' | null;
 }
 
 export interface PrecisionEvaluation {
@@ -189,8 +194,15 @@ export const evaluatePrecision = (input: PrecisionInput): PrecisionEvaluation =>
     risks.push('안전마진이 목표 마진보다 낮습니다.');
   }
 
+  const reportAvoid = input.reportRecommendation === 'avoid';
+  if (reportAvoid) {
+    reasonCodes.push('REPORT_RECOMMENDATION_AVOID');
+    risks.push('종합 보고서가 신중·회피로 판정했습니다.');
+  }
+
   const hardReject = input.assumedAmount > 0
     || input.dangerFlagCount > 0
+    || reportAvoid
     || input.riskGrade === 'risky'
     || (Number.isFinite(input.trueSafetyMargin) && input.trueSafetyMargin !== null && input.trueSafetyMargin < targetMarginPct)
     || (hardCapBid !== null && isPositive(input.minBidPrice) && input.minBidPrice > hardCapBid);
