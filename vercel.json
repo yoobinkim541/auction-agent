@@ -3,7 +3,7 @@
   "buildCommand": "cd web && npm install && npm run build",
   "outputDirectory": "web/dist",
   "rewrites": [
-    { "source": "/api/:path*", "destination": "http://217.142.149.79:8080/api/:path*" },
+    { "source": "/api/:path*", "destination": "https://gm-api.ybkim.pe.kr/api/:path*" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
