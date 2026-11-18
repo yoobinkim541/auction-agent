@@ -97,9 +97,16 @@ describe('evaluatePrecision', () => {
     ['expectedBidPrice', { expectedBidPrice: null }],
     ['maxSafeBid', { maxSafeBid: null }],
     ['comparable price', { comparablePrices: [0, -1] }],
-    ['one sparse comparable', { comparablePrices: [200_000_000], marketConfidence: 'medium' }],
+    ['one low-confidence comparable', { comparablePrices: [200_000_000], marketConfidence: 'low' }],
   ] as const)('holds for missing or non-positive %s evidence', (_, overrides) => {
     expect(evaluatePrecision(precisionInput(overrides)).status).toBe('hold');
+  });
+
+  it('holds when the market price itself is low-confidence, even with plenty of comparables', () => {
+    const evaluation = evaluatePrecision(precisionInput({ marketConfidence: 'low' }));
+    expect(evaluation.status).toBe('hold');
+    expect(evaluation.reasonCodes).toContain('LOW_MARKET_CONFIDENCE');
+    expect(evaluatePrecision(precisionInput({ marketConfidence: 'medium' })).status).toBe('recommended');
   });
 
   it.each([
@@ -127,8 +134,11 @@ describe('evaluatePrecision', () => {
     expect(evaluation.status).not.toBe('recommended');
   });
 
-  it('allows one comparable only with high market confidence', () => {
-    expect(evaluatePrecision(precisionInput({ comparablePrices: [200_000_000] })).status).toBe('recommended');
+  it('keeps a single comparable conditional — usable evidence, never an outright recommendation', () => {
+    const evaluation = evaluatePrecision(precisionInput({ comparablePrices: [200_000_000], marketConfidence: 'medium' }));
+    expect(evaluation.status).toBe('conditional');
+    expect(evaluation.reasonCodes).toContain('SINGLE_COMPARABLE');
+    expect(evaluatePrecision(precisionInput({ comparablePrices: [200_000_000, 200_000_000], marketConfidence: 'medium' })).status).toBe('recommended');
   });
 
   it('종합 보고서가 신중·회피(avoid)이면 다른 조건이 완벽해도 rejected로 추천하지 않는다', () => {
@@ -151,7 +161,7 @@ describe('evaluatePrecision', () => {
     const result = evaluatePrecision(precisionInput());
     expect(result).toMatchObject({
       confidence: 'high',
-      evaluatorVersion: 'precision-v1',
+      evaluatorVersion: 'precision-v3',
       strengths: expect.any(Array),
       risks: expect.any(Array),
       requiredChecks: expect.any(Array),

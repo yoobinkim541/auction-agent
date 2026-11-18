@@ -31,48 +31,104 @@ async function answerCallback(id: string, text: string): Promise<void> {
   await telegram.answerCallbackQuery(id, text).catch((e) => console.error('answerCallback 실패:', e));
 }
 
-/** ★ 관심 토글 — 사건 단위(여러 물건이면 전체를 같은 상태로). */
-async function toggleFav(caseNo: string): Promise<string> {
-  const norm = caseNo.replace(/\s/g, '');
-  const rows = await query<{ is_favorite: boolean; address: string }>(
-    `update gm_listings
-        set is_favorite = not coalesce((select bool_or(is_favorite) from gm_listings where case_no = $1), false)
-      where case_no = $1
-      returning is_favorite, address`,
-    [norm],
+interface CaseHit {
+  id: number;
+  court: string;
+  item_no: string;
+  address: string;
+  is_favorite: boolean;
+  property_type: string;
+  appraisal_value: number | null;
+  min_bid_price: number | null;
+  total_score: number | null;
+  sm: number | null;
+}
+
+function normCase(caseNo: string): string {
+  return caseNo.replace(/\s/g, '');
+}
+
+async function listingsForCase(caseNo: string): Promise<CaseHit[]> {
+  return query<CaseHit>(
+    `select l.id, l.court, coalesce(nullif(l.item_no,''),'1') as item_no, l.address, l.is_favorite,
+            l.property_type, l.appraisal_value::float8, l.min_bid_price::float8, s.total_score::int,
+            (loc.acquisition_cost->>'trueSafetyMargin')::float8 as sm
+       from gm_listings l
+       left join gm_scores s on s.listing_id = l.id
+       left join gm_location_analysis loc on loc.listing_id = l.id
+      where l.case_no = $1
+      order by l.court, item_no, l.crawled_at desc, l.id desc`,
+    [normCase(caseNo)],
   );
-  if (!rows.length) return `수집된 매물에 없는 사건: ${norm}`;
-  return rows[0]!.is_favorite
-    ? `★ 관심 등록 — ${norm} · ${rows[0]!.address.slice(0, 22)} (변동 알림 대상)`
-    : `☆ 관심 해제 — ${norm}`;
+}
+
+function courtsOf(rows: { court: string }[]): string[] {
+  return [...new Set(rows.map((row) => row.court))];
+}
+
+function ambiguousReply(norm: string, courts: string[], callbackPrefix: string): Reply {
+  return {
+    text: `${norm} 이 ${courts.length}개 법원에 있습니다. 법원을 고르세요.\n${courts.map((court) => `· ${court}`).join('\n')}`,
+    keyboard: { inline_keyboard: courts.map((court) => [{ text: court, callback_data: `${callbackPrefix}|${court}` }]) },
+  };
+}
+
+/** ★ 관심 토글 — 한 법원의 사건 단위(여러 물건이면 그 법원 안에서만 같은 상태). */
+async function toggleFav(caseNo: string, court?: string): Promise<Reply> {
+  const norm = normCase(caseNo);
+  const rows = await listingsForCase(norm);
+  if (!rows.length) return { text: `수집된 매물에 없는 사건: ${norm}` };
+  const courts = courtsOf(rows);
+  const chosen = court ?? (courts.length === 1 ? courts[0] : undefined);
+  if (!chosen) return ambiguousReply(norm, courts, `use|fav|${norm}`);
+  const scoped = rows.filter((row) => row.court === chosen);
+  if (!scoped.length) return { text: `수집된 매물에 없는 사건: ${norm} (${chosen})` };
+  const next = !scoped.some((row) => row.is_favorite);
+  const updated = await query<{ is_favorite: boolean; address: string }>(
+    `update gm_listings set is_favorite = $3
+      where case_no = $1 and court = $2
+      returning is_favorite, address`,
+    [norm, chosen, next],
+  );
+  if (!updated.length) return { text: `수집된 매물에 없는 사건: ${norm} (${chosen})` };
+  return updated[0]!.is_favorite
+    ? { text: `★ 관심 등록 — ${norm} · ${chosen} · ${updated[0]!.address.slice(0, 22)} (변동 알림 대상)` }
+    : { text: `☆ 관심 해제 — ${norm} · ${chosen}` };
 }
 
 /** 텔레그램 인라인 버튼 1클릭 판단 저널 기록 (임장등록 / 제외). */
-async function recordDecisionFromBot(caseNo: string, itemNo: string, decision: 'fieldwork' | 'rejected'): Promise<string> {
-  const norm = caseNo.replace(/\s/g, '');
+async function recordDecisionFromBot(caseNo: string, itemNo: string, decision: 'fieldwork' | 'rejected', court?: string): Promise<Reply> {
+  const norm = normCase(caseNo);
   const item = itemNo || '1';
-  const listing = (await query<{ id: number; address: string }>(
-    `select id, address from gm_listings where case_no = $1 and coalesce(nullif(item_no,''),'1') = $2 limit 1`,
-    [norm, item],
-  ))[0];
-  if (!listing) return `매물 미확인: ${norm}`;
+  const rows = (await listingsForCase(norm)).filter((row) => row.item_no === item);
+  const courts = courtsOf(rows);
+  const chosen = court ?? (courts.length === 1 ? courts[0] : undefined);
+  if (!chosen) {
+    if (!rows.length) return { text: `매물 미확인: ${norm}` };
+    const action = decision === 'fieldwork' ? 'inspect' : 'reject';
+    return ambiguousReply(norm, courts, `use|${action}|${norm}|${item}`);
+  }
+  const listing = rows.find((row) => row.court === chosen);
+  if (!listing) return { text: `매물 미확인: ${norm} (${chosen})` };
   const reasonCode = decision === 'rejected' ? 'preference' : null;
   await query(
     `insert into gm_decision_events (listing_id, decision, reason_code, note, created_at)
      values ($1, $2, $3, '텔레그램 봇 1클릭 판단', now())`,
     [listing.id, decision, reasonCode],
   );
-  if (decision === 'fieldwork') {
-    return `🚶 임장등록 완료 — ${norm}`;
-  }
-  return `❌ 제외 처리 완료 — ${norm}`;
+  return { text: decision === 'fieldwork' ? `🚶 임장등록 완료 — ${norm} · ${chosen}` : `❌ 제외 처리 완료 — ${norm} · ${chosen}` };
 }
 
 /** /case 응답용 인라인 버튼 — ★토글 콜백 + 대시보드 딥링크(DASHBOARD_URL 설정 시). */
-function caseKeyboard(caseNo: string): unknown {
-  const rows: unknown[] = [[{ text: '★ 관심 토글', callback_data: `fav|${caseNo}` }]];
+function caseKeyboard(caseNo: string, itemNo: string, court: string): unknown {
+  const rows: unknown[] = [[{ text: '★ 관심 토글', callback_data: `fav|${caseNo}|${itemNo}|${court}` }]];
   const base = process.env.DASHBOARD_URL;
-  if (base) rows.push([{ text: '📊 대시보드에서 보기', url: `${base.replace(/\/+$/, '')}/#case=${encodeURIComponent(caseNo)}` }]);
+  if (base) {
+    rows.push([{
+      text: '📊 대시보드에서 보기',
+      url: `${base.replace(/\/+$/, '')}/#case=${encodeURIComponent(caseNo)}&item=${encodeURIComponent(itemNo || '1')}&court=${encodeURIComponent(court)}`,
+    }]);
+  }
   return { inline_keyboard: rows };
 }
 
@@ -87,34 +143,6 @@ function runScript(npmScript: string): Promise<string> {
   });
 }
 
-async function cmdCase(caseNo: string): Promise<string> {
-  const norm = caseNo.replace(/\s/g, '');
-  const mine = await query<{ court: string; item_no: string; property_type: string; address: string; appraisal_value: number | null; min_bid_price: number | null; total_score: number | null; sm: number | null }>(
-    `select l.court, coalesce(l.item_no,'1') item_no, l.property_type, l.address,
-            l.appraisal_value::float8, l.min_bid_price::float8, s.total_score::int,
-            (loc.acquisition_cost->>'trueSafetyMargin')::float8 sm
-       from gm_listings l left join gm_scores s on s.listing_id=l.id
-       left join gm_location_analysis loc on loc.listing_id=l.id
-      where l.case_no=$1 limit 1`, [norm]);
-  const row = mine[0];
-  const court = row?.court ?? '서울중앙지방법원';
-  const cortOfcCd = courtCodeByName(court);
-  if (!cortOfcCd) return `조회 불가: '${court}'는 지원 법원 코드가 없습니다. (수도권만)`;
-
-  const map = await collectCaseResults([{ caseNo: norm, cortOfcCd, itemNo: row?.item_no ?? '1' }]);
-  const rounds: SaleResultRound[] = map.get(`${norm}|${row?.item_no ?? '1'}`) ?? [];
-
-  const lines = [`🏛 ${norm} · ${court}`];
-  if (row) lines.push(`${row.property_type} · ${row.address.slice(0, 30)}\n감정 ${eok(row.appraisal_value)} / 최저 ${eok(row.min_bid_price)} · 우리점수 ⭐${row.total_score ?? '-'}${row.sm != null ? ` · 진짜마진 ${Math.round(row.sm * 100)}%` : ''}`);
-  if (!rounds.length) { lines.push('기일결과: (조회 결과 없음 — 종결/미공개)'); return lines.join('\n'); }
-  lines.push('기일내역:');
-  for (const rd of rounds) {
-    const r = rd.resultCd ? (RSLT[rd.resultCd] ?? rd.resultCd) : '예정';
-    lines.push(`  ${rd.date} ${rd.kindCd === '02' ? '(결정)' : ''} ${r}${rd.sold ? ` · 낙찰 ${eok(rd.soldAmount)}` : ''}`);
-  }
-  return lines.join('\n');
-}
-
 async function cmdStatus(): Promise<string> {
   const h = await query<{ last: string | null; age: number | null }>(`select max(started_at)::date::text last, (current_date - max(started_at)::date) age from gm_crawl_runs where n_found>0`);
   const c = await query<{ total: number; passed: number; results: number }>(`select (select count(*) from gm_listings)::int total, (select count(*) from gm_scores where passed_filter)::int passed, (select count(*) from gm_auction_results)::int results`);
@@ -127,13 +155,56 @@ async function cmdStatus(): Promise<string> {
 
 interface Reply { text: string; keyboard?: unknown }
 
+function parseBotCallback(data: string): { action: string; caseNo?: string; itemNo?: string; court?: string; kind?: string } {
+  const parts = data.split('|');
+  const action = parts[0] ?? '';
+  if (action === 'use') {
+    const kind = parts[1];
+    if (kind === 'inspect' || kind === 'reject') {
+      return { action, kind, caseNo: parts[2], itemNo: parts[3] || '1', court: parts.slice(4).join('|') || undefined };
+    }
+    return { action, kind, caseNo: parts[2], court: parts.slice(3).join('|') || undefined };
+  }
+  const caseNo = parts[1];
+  const third = parts[2];
+  const rest = parts.slice(3).join('|');
+  if (!third) return { action, caseNo };
+  if (/^\d+$/.test(third)) return { action, caseNo, itemNo: third, court: rest || undefined };
+  return { action, caseNo, court: [third, rest].filter(Boolean).join('|') };
+}
+
+async function cmdCase(caseNo: string, court?: string): Promise<Reply> {
+  const norm = normCase(caseNo);
+  const mine = await listingsForCase(norm);
+  const courts = courtsOf(mine);
+  if (mine.length && courts.length > 1 && !court) return ambiguousReply(norm, courts, `use|case|${norm}`);
+  const row = court ? mine.find((item) => item.court === court) : mine[0];
+  const courtName = row?.court ?? court ?? '서울중앙지방법원';
+  const cortOfcCd = courtCodeByName(courtName);
+  if (!cortOfcCd) return { text: `조회 불가: '${courtName}'는 지원 법원 코드가 없습니다. (수도권만)` };
+  const itemNo = row?.item_no ?? '1';
+
+  const map = await collectCaseResults([{ caseNo: norm, cortOfcCd, itemNo }]);
+  const rounds: SaleResultRound[] = map.get(`${cortOfcCd}|${norm}|${itemNo}`) ?? [];
+
+  const lines = [`🏛 ${norm} · ${courtName}${itemNo !== '1' ? ` · 물건 ${itemNo}` : ''}`];
+  if (row) lines.push(`${row.property_type} · ${row.address.slice(0, 30)}\n감정 ${eok(row.appraisal_value)} / 최저 ${eok(row.min_bid_price)} · 우리점수 ⭐${row.total_score ?? '-'}${row.sm != null ? ` · 진짜마진 ${Math.round(row.sm * 100)}%` : ''}`);
+  if (!rounds.length) lines.push('기일결과: (조회 결과 없음 — 종결/미공개)');
+  else {
+    lines.push('기일내역:');
+    for (const rd of rounds) {
+      const r = rd.resultCd ? (RSLT[rd.resultCd] ?? rd.resultCd) : '예정';
+      lines.push(`  ${rd.date} ${rd.kindCd === '02' ? '(결정)' : ''} ${r}${rd.sold ? ` · 낙찰 ${eok(rd.soldAmount)}` : ''}`);
+    }
+  }
+  return { text: lines.join('\n'), keyboard: caseKeyboard(norm, itemNo, courtName) };
+}
+
 async function handle(text: string): Promise<Reply> {
   const { name, arg } = parseTelegramCommand(text);
   switch (name) {
-    case '/case': return arg
-      ? { text: await cmdCase(arg), keyboard: caseKeyboard(arg.replace(/\s/g, '')) }
-      : { text: '사용법: /case 2023타경111644' };
-    case '/fav': case '/star': return { text: arg ? await toggleFav(arg) : '사용법: /fav 2023타경111644 (★ 토글)' };
+    case '/case': return arg ? cmdCase(arg) : { text: '사용법: /case 2023타경111644' };
+    case '/fav': case '/star': return arg ? toggleFav(arg) : { text: '사용법: /fav 2023타경111644 (★ 토글)' };
     case '/digest': return { text: await runScript('digest') };
     case '/route': case '/임장': return { text: await runScript('route') };
     case '/status': return { text: await cmdStatus() };
@@ -188,16 +259,19 @@ async function main(): Promise<void> {
         if (cq) {
           if (String(cq.from.id) !== OWNER) { await answerCallback(cq.id, '소유자 전용'); continue; }
           try {
-            const [action, caseNo, itemNo] = (cq.data ?? '').split('|');
-            if (action === 'fav' && caseNo) {
-              await answerCallback(cq.id, await toggleFav(caseNo));
-            } else if (action === 'inspect' && caseNo) {
-              await answerCallback(cq.id, await recordDecisionFromBot(caseNo, itemNo ?? '1', 'fieldwork'));
-            } else if (action === 'reject' && caseNo) {
-              await answerCallback(cq.id, await recordDecisionFromBot(caseNo, itemNo ?? '1', 'rejected'));
-            } else {
-              await answerCallback(cq.id, '알 수 없는 버튼');
+            const parsed = parseBotCallback(cq.data ?? '');
+            // 'use|<동작>|…' 은 법원 고르기 버튼의 답이다. 동작은 원래 버튼과 같다.
+            const kind = parsed.action === 'use' ? parsed.kind : parsed.action;
+            let reply: Reply | null = null;
+            if (parsed.caseNo) {
+              if (kind === 'case' && parsed.action === 'use') reply = await cmdCase(parsed.caseNo, parsed.court);
+              else if (kind === 'fav') reply = await toggleFav(parsed.caseNo, parsed.court);
+              else if (kind === 'inspect') reply = await recordDecisionFromBot(parsed.caseNo, parsed.itemNo ?? '1', 'fieldwork', parsed.court);
+              else if (kind === 'reject') reply = await recordDecisionFromBot(parsed.caseNo, parsed.itemNo ?? '1', 'rejected', parsed.court);
             }
+            if (!reply) { await answerCallback(cq.id, '알 수 없는 버튼'); continue; }
+            await answerCallback(cq.id, reply.text);
+            if (reply.keyboard && cq.message) await send(cq.message.chat.id, reply.text, reply.keyboard);
           } catch (e) {
             await answerCallback(cq.id, `오류: ${e instanceof Error ? e.message : e}`);
           }

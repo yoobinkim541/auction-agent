@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const LEARN_STEPS = ['retry:outcomes', 'registry-opinion:backfill', 'eval:postmortem', 'ml:eval', 'ml:shadow'];
+const LEARN_STEPS = ['retry:outcomes', 'registry-opinion:backfill', 'eval:postmortem', 'ml:avm', 'ml:eval', 'ml:shadow'];
 
 describe('daily learning batch split', () => {
   it('runs the learning steps outside the time-boxed daily parse', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped, parseCourtDetail, parseCourtExtra, isKnownForIncremental, shouldFetchDetailNow, detailDecision, shouldFetchPhotoDetail, extractCourtPhotoUrls } from './courtauction.ts';
+import { filterCourts, parseCourtDate, parseMoney, mapUsgCd, rowToScraped, parseCourtDetail, parseCourtExtra, isKnownForIncremental, shouldFetchDetailNow, detailDecision, shouldFetchPhotoDetail, photoScanAction, extractCourtPhotoUrls } from './courtauction.ts';
 
 describe('parseCourtExtra', () => {
   it('빈/미설정 → 빈 배열', () => {
@@ -122,6 +122,14 @@ describe('mapUsgCd', () => {
   it('오피스텔', () => {
     expect(mapUsgCd(undefined, '오피스텔')).toBe('officetel');
   });
+  it("묶음 이름 '상가,오피스텔,근린시설'은 주거용 건물이 아니면 상가", () => {
+    const label = '상가,오피스텔,근린시설';
+    expect(mapUsgCd(label, undefined, '20100')).toBe('officetel');
+    expect(mapUsgCd(label, undefined, '21100')).toBe('commercial'); // 근린생활시설 호실
+    expect(mapUsgCd(label, undefined, '10100')).toBe('commercial'); // 토지·건물 일괄매각
+    expect(mapUsgCd(label, undefined)).toBe('officetel');          // 코드가 없으면 이름대로
+    expect(mapUsgCd('오피스텔', undefined, '21100')).toBe('officetel'); // 법원이 오피스텔로 못박은 것은 그대로
+  });
   it('다세대/연립 → villa', () => {
     expect(mapUsgCd(undefined, '다세대주택')).toBe('villa');
     expect(mapUsgCd(undefined, '연립주택')).toBe('villa');
@@ -170,6 +178,20 @@ describe('rowToScraped', () => {
     expect(s.listing.source).toBe('courtauction');
     expect(s.listing.inquiryCount).toBe(19);   // 경쟁 신호(조회수)
     expect(s.listing.interestCount).toBe(2);   // 경쟁 신호(관심수)
+  });
+
+  it('목록의 건물 표시에서 면적을 채운다 — 소수점 없는 표기 포함', () => {
+    expect(rowToScraped({ ...sampleRow, pjbBuldList: '철근콘크리트구조 49.53 ㎡' }, 'B000210')!.listing.areaM2).toBe(49.53);
+    expect(rowToScraped({ ...sampleRow, pjbBuldList: '철근콘크리트구조 오피스텔\n27㎡' }, 'B000210')!.listing.areaM2).toBe(27);
+    expect(rowToScraped({ ...sampleRow, pjbBuldList: undefined }, 'B000210')!.listing.areaM2).toBeUndefined();
+  });
+
+  it('유찰 물건 최저가는 이번 기일 공고가(notifyMinmaePrice1) — minmaePrice는 직전 회차 값', () => {
+    // 라이브 행 2024타경99671(2회 유찰): 결과의 최저가 851,050,000 = notifyMinmaePrice1
+    const row = { ...sampleRow, gamevalAmt: '1736837000', minmaePrice: '1215786000', notifyMinmaePrice1: '851050000', yuchalCnt: '2' };
+    const s = rowToScraped(row, 'B000210')!;
+    expect(s.listing.minBidPrice).toBe(851_050_000);
+    expect(s.listing.minBidRatio).toBe(49);
   });
 
   it('종결(mulJinYn=N)·금액0·주소없음 → 제외(null)', () => {
@@ -254,6 +276,13 @@ describe('extractCourtPhotoUrls', () => {
     expect(extractCourtPhotoUrls({ photoList: [{ photo: rawJpegBase64 }] })).toEqual([
       `data:image/jpeg;base64,${rawJpegBase64}`,
     ]);
+  });
+
+  it('picFile base64에 icon 글자가 있어도 data URL로 받고 경로 조각은 버린다', () => {
+    const picFile = `/9j/${'A'.repeat(40)}icon${'B'.repeat(40)}`;
+    expect(extractCourtPhotoUrls({
+      csPicLst: [{ picFileUrl: '/nas_e_image_pgj/kj/2023/1105/', picTitlNm: 'B000210202301300048691.jpg', picFile }],
+    })).toEqual([`data:image/jpeg;base64,${picFile}`]);
   });
 
   it.each([
@@ -370,6 +399,22 @@ describe('shouldFetchPhotoDetail (사진 보강 예산)', () => {
   });
 });
 
+describe('photoScanAction (사진 보강 검색 상한)', () => {
+  const filter = { photosOnly: true, photoKeys: new Set(['2024타경1|1']), maxPhotoDetails: 2 };
+
+  it('이미 사진이 있으면 상한을 소모하지 않고 건너뛴다', () => {
+    expect(photoScanAction(filter, '2024타경1|1', 0)).toBe('skip');
+  });
+
+  it('예산이 남았고 사진이 없으면 상세를 받는다', () => {
+    expect(photoScanAction(filter, '2024타경9|1', 1)).toBe('fetch');
+  });
+
+  it('예산이 소진되면 다음 법원 검색을 멈춘다', () => {
+    expect(photoScanAction(filter, '2024타경9|1', 2)).toBe('stop');
+  });
+});
+
 describe('detailDecision (증분 상세 수집 판정)', () => {
   const caps = { maxNew: 200, maxRefresh: 250, refreshDays: 14 };
   const cnt = { nNew: 0, nRefresh: 0 };
@@ -391,6 +436,17 @@ describe('detailDecision (증분 상세 수집 판정)', () => {
   });
   it('기존 + 임박이지만 재수집 예산 소진 → skip', () => {
     expect(detailDecision(true, '2026-07-20', today, thr, { nNew: 0, nRefresh: 250 }, caps)).toBe('skip');
+  });
+  it('우선 대상(공개 전에 받아 명세서가 빈 물건)은 일반 예산이 소진돼도 재수집', () => {
+    expect(detailDecision(true, '2026-07-20', today, thr, { nNew: 0, nRefresh: 250 }, caps, true)).toBe('refresh');
+  });
+  it('우선 대상에 떼어 둔 몫만큼 일반 임박 재수집 예산이 줄어든다(총량 유지)', () => {
+    const reserved = { ...caps, reservedRefresh: 200 };
+    expect(detailDecision(true, '2026-07-20', today, thr, { nNew: 0, nRefresh: 49 }, reserved)).toBe('refresh');
+    expect(detailDecision(true, '2026-07-20', today, thr, { nNew: 0, nRefresh: 50 }, reserved)).toBe('skip');
+  });
+  it('refreshDays=0 → 우선 대상이어도 재수집 안 함', () => {
+    expect(detailDecision(true, '2026-07-13', today, thr, cnt, { ...caps, refreshDays: 0 }, true)).toBe('skip');
   });
   it('refreshDays=0 → 기존은 임박이어도 재수집 안 함(순수 skip)', () => {
     expect(detailDecision(true, '2026-07-13', today, thr, cnt, { ...caps, refreshDays: 0 })).toBe('skip');

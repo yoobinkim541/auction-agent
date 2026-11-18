@@ -89,7 +89,7 @@ export function scoreClient(item: ListingItem, cfg: ScoreConfig): ClientScore {
 
   const reasons: string[] = [];
   let passed = true;
-  if (item.location?.report?.headline?.startsWith('[데이터 불완전]')) { passed = false; reasons.push('등기 미수집'); }
+  if (item.location?.report?.headline?.startsWith('[데이터 불완전]')) { passed = false; reasons.push('권리자료 없음'); }
   if (cfg.allowedTypes.length > 0 && !cfg.allowedTypes.includes(item.property_type)) { passed = false; reasons.push('물건종류 제외'); }
   if (cfg.regionKeywords.length && !cfg.regionKeywords.some((k) => item.address.includes(k))) { passed = false; reasons.push('관심지역 외'); }
   const minBid = item.min_bid_price ?? 0;

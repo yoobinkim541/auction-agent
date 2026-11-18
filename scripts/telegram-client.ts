@@ -39,7 +39,7 @@ export type TelegramUpdate = {
   callback_query?: TelegramCallbackQuery;
 };
 
-export type TelegramCallbackQuery = { id: string; from: { id: number }; data?: string };
+export type TelegramCallbackQuery = { id: string; from: { id: number }; data?: string; message?: TelegramChatMessage };
 
 export type TelegramChatMessage = { chat: { id: number }; text?: string };
 

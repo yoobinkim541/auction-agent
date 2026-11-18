@@ -54,7 +54,7 @@ export function MapView({ items, onSelect, showAll, onToggleShowAll }: {
         fillOpacity: expired ? 0.32 : passed ? 0.95 : 0.6,
       });
       m.bindPopup(
-        `<div class="map-pop"><b>${r.address}</b><br/><span class="map-pop-sub">${TYPE_LABEL[r.property_type] ?? r.property_type} · ${r.case_no}${passed ? ' · ✅통과' : ''}${expired ? ' · 기일경과' : ''}</span><br/>` +
+        `<div class="map-pop"><b>${r.address}</b><br/><span class="map-pop-sub">${TYPE_LABEL[r.property_type] ?? r.property_type} · ${r.case_no}${passed ? ' · 통과' : ''}${expired ? ' · 기일경과' : ''}</span><br/>` +
         `최저가 ${eok(r.min_bid_price)} · 마진 ${tm != null ? (tm * 100).toFixed(1) + '%' : '-'}${r.sale_date ? ` · 매각 ${r.sale_date}` : ''}<br/>` +
         `<button class="map-open" type="button">상세 보기 ›</button></div>`,
       );
@@ -74,15 +74,15 @@ export function MapView({ items, onSelect, showAll, onToggleShowAll }: {
       <div ref={elRef} className="map-canvas" />
       <button className={`map-toggle${showAll ? ' on' : ''}`} onClick={onToggleShowAll}
         title={showAll ? '현재 목록(필터)만 보기로 전환' : '수집한 전체 매물 보기로 전환'}>
-        {showAll ? '🗺 전체 매물' : '🔎 현재 목록'}
+        {showAll ? '전체 매물 표시 중' : '현재 목록만 표시 중'}
       </button>
       <div className="map-legend">
-        <span><i style={{ background: '#1ec758' }} />마진 30%↑</span>
+        <span><i style={{ background: '#1ec758' }} />마진 30% 이상</span>
         <span><i style={{ background: '#a3d977' }} />10–30%</span>
         <span><i style={{ background: '#f5a623' }} />0–10%</span>
         <span><i style={{ background: '#f04545' }} />음수</span>
         <span><i style={{ background: '#7a8699' }} />시세없음</span>
-        <span className="map-legend-note">큰 마커=통과 · 옅음=기일경과</span>
+        <span className="map-legend-note">큰 마커는 통과, 옅은 마커는 기일 경과</span>
       </div>
       <p className="map-count muted">{pts.length}건 표시 (통과 {passedCnt}) · 좌표 없는 {items.length - pts.length}건 제외</p>
     </div>

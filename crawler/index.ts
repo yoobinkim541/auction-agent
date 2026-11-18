@@ -70,9 +70,11 @@ async function saveScrapedListing(s: ScrapedListing): Promise<void> {
 
 async function runAdapter(adapter: Adapter, filter: CrawlFilter) {
   let streamed = false;
+  let blocked = false;
   let nFound = 0;
   let nNew = 0;
   const scraped = await adapter.crawl(filter, {
+    onBlocked: () => { blocked = true; },
     onListing: async (s) => {
       streamed = true;
       await saveScrapedListing(s);
@@ -88,7 +90,7 @@ async function runAdapter(adapter: Adapter, filter: CrawlFilter) {
       nNew++;
     }
   }
-  return { nFound, nNew };
+  return { nFound, nNew, blocked };
 }
 
 async function main() {
@@ -126,7 +128,7 @@ async function main() {
       // (권리분석 행 기준은 오답: analyze가 문서 없는 이월 물건에도 review_required 행을 만들어
       //  영영 상세를 못 받는 오염 발생 — 2026-07-11 1,243건 실측.)
       const known = await query<{ k: string }>(
-        `select case_no || '|' || coalesce(item_no,'1') as k from gm_listings l
+        `select court || '|' || case_no || '|' || item_no as k from gm_listings l
           where exists (select 1 from gm_listing_docs d where d.listing_id = l.id)`,
       );
       filter.incremental = true;
@@ -140,14 +142,34 @@ async function main() {
       const maxRefreshArg = args.find((a) => a.startsWith('--max-refresh='));
       filter.refreshImminentDays = refreshDaysArg ? parseInt(refreshDaysArg.split('=')[1]!, 10) : 14;
       filter.maxRefreshDetails = maxRefreshArg ? parseInt(maxRefreshArg.split('=')[1]!, 10) : 250;
-      console.log(`[courtauction] 증분 모드: 기존 문서보유 ${filter.knownKeys.size}건 → 상세 skip(임박 ${filter.refreshImminentDays}일 내는 재수집), 신규 파싱 예산 ${filter.maxNewDetails}건/회`);
+      // 명세서는 매각 임박해서야 공개된다 — 그 전에 받아 최선순위설정이 빈 물건은 공개 창에 들어온 뒤 다시 받아야 권리분석이 된다.
+      // 재수집 예산은 그대로 두고(차단 예방) 그 예산을 이 물건들에 먼저 쓴다. 안전마진 큰 순 = 통과 후보가 될 가능성이 큰 순.
+      // 공개 창 안에서 이미 다시 받은 물건(created_at 기준)은 또 받아도 같으므로 제외.
+      if (filter.refreshImminentDays > 0 && filter.maxRefreshDetails > 0) {
+        const pending = await query<{ k: string }>(
+          `select l.court || '|' || l.case_no || '|' || l.item_no as k
+             from gm_listings l
+             join gm_listing_docs d on d.listing_id = l.id and d.doc_type = 'registry_summary'
+             left join gm_location_analysis a on a.listing_id = l.id
+            cross join (select (now() at time zone 'Asia/Seoul')::date as today) kst
+            where l.source = 'courtauction'
+              and l.sale_date between kst.today and kst.today + $1::int
+              and jsonb_array_length(coalesce(d.parsed_json->'registry', '[]'::jsonb)) = 0
+              and l.sale_date - (d.created_at at time zone 'Asia/Seoul')::date > $1::int
+            order by a.safety_margin desc nulls last, l.sale_date, l.id
+            limit $2`,
+          [filter.refreshImminentDays, filter.maxRefreshDetails],
+        );
+        filter.refreshKeys = new Set(pending.map((r) => r.k));
+      }
+      console.log(`[courtauction] 증분 모드: 기존 문서보유 ${filter.knownKeys.size}건 → 상세 skip(임박 ${filter.refreshImminentDays}일 내는 재수집 — 명세서 공개 전 수집분 ${filter.refreshKeys?.size ?? 0}건 우선), 신규 파싱 예산 ${filter.maxNewDetails}건/회`);
     }
     if (photosOnly) {
       const photos = await query<{ k: string }>(
-        `select case_no || '|' || coalesce(nullif(item_no,''),'1') as k
-           from gm_listing_photos
-          where status='active'
-          group by case_no, coalesce(nullif(item_no,''),'1')`,
+        `select distinct l.court || '|' || l.case_no || '|' || l.item_no as k
+           from gm_listing_photos p
+           join gm_listings l on l.id = p.listing_id
+          where p.status='active'`,
       );
       filter.photosOnly = true;
       filter.photoKeys = new Set(photos.map((row) => row.k));
@@ -156,8 +178,12 @@ async function main() {
     }
     const runId = await startCrawlRun('courtauction', filter.regions.join(','));
     try {
-      const { nFound, nNew } = await runAdapter(new CourtAuctionAdapter(), filter);
-      await finishCrawlRun(runId, { nFound, nNew, status: 'ok' });
+      const { nFound, nNew, blocked } = await runAdapter(new CourtAuctionAdapter(), filter);
+      // 도중 차단은 남은 법원을 못 돈 것 — ok 로 남기면 대시보드·알림이 정상으로 본다. 저장분은 유효하니 건수는 남긴다.
+      await finishCrawlRun(runId, blocked
+        ? { nFound, nNew, status: 'blocked', error: `IP 차단으로 중단 — ${nFound}건까지 저장` }
+        : { nFound, nNew, status: 'ok' });
+      if (blocked) process.exitCode = 1; // daily-parse.sh 의 당일 크롤 실패 알림으로 이어진다
       if (nFound === 0) console.warn('[courtauction] ⚠️ 0건 — VM IP 차단 의심. 집 IP 프록시 필요: docs/crawl-proxy.md');
       else console.log(`[courtauction] 수집 완료: ${nFound}건 (저장 ${nNew})`);
     } catch (e) {

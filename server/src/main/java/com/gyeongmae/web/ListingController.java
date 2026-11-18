@@ -11,6 +11,7 @@ import java.util.Set;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -56,13 +57,19 @@ public class ListingController {
     return json == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(json);
   }
 
-  /** 매물 상세 (사건번호 + 선택 물건번호). itemNo 없는 기존 링크는 단일물건 사건만 조회한다. */
+  /** 매물 상세 (사건번호 + 선택 물건번호 + 선택 법원). item/court 없는 기존 링크는 그 범위가 하나일 때만 조회한다. */
   @GetMapping(value = "/listings/{caseNo}", produces = MediaType.APPLICATION_JSON_VALUE)
-  public ResponseEntity<String> detail(
+  public ResponseEntity<?> detail(
       @PathVariable String caseNo,
-      @RequestParam(required = false) String itemNo) {
-    String json = service.detailJson(caseNo, itemNo);
-    return json == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(json);
+      @RequestParam(required = false) String itemNo,
+      @RequestParam(required = false) String court) {
+    try {
+      String json = service.detailJson(caseNo, itemNo, court);
+      return json == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(json);
+    } catch (ListingService.AmbiguousCourtException e) {
+      return ResponseEntity.status(HttpStatus.CONFLICT)
+          .body(Map.of("error", "ambiguous_court", "courts", e.courts()));
+    }
   }
 
   @GetMapping(value = "/listings/{id}/decisions", produces = MediaType.APPLICATION_JSON_VALUE)

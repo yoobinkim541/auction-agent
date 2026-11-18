@@ -23,6 +23,7 @@ interface PrecisionBackfillRow {
   property_type: Listing['propertyType'];
   appraisal_value: string | number | null;
   min_bid_price: string | number | null;
+  area_m2: string | number | null;
   fail_count: number | null;
   source: Listing['source'];
   crawled_at: string | Date;
@@ -46,7 +47,7 @@ interface PrecisionBackfillRow {
 
 export const PRECISION_BACKFILL_SQL = `
   select l.id, l.case_no, l.item_no, l.court, l.address, l.property_type,
-         l.appraisal_value, l.min_bid_price, l.fail_count, l.source, l.crawled_at,
+         l.appraisal_value, l.min_bid_price, l.area_m2, l.fail_count, l.source, l.crawled_at,
          t.status as trust_status,
          r.classified, r.tenants, r.assumed_amount, r.max_safe_bid, r.red_flags, r.risk_grade, r.warnings,
          loc.market_price, loc.market_confidence, loc.comps, loc.expected_bid_price,
@@ -120,6 +121,7 @@ export function mapPrecisionBackfillInput(row: PrecisionBackfillRow) {
     propertyType: row.property_type,
     appraisalValue: numberOrZero(row.appraisal_value),
     minBidPrice: numberOrZero(row.min_bid_price),
+    areaM2: numberOrNull(row.area_m2) ?? undefined,
     failCount: row.fail_count ?? 0,
     source: row.source,
     crawledAt: row.crawled_at instanceof Date ? row.crawled_at.toISOString() : row.crawled_at,

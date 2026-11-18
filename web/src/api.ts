@@ -6,9 +6,11 @@ const BASE = (import.meta.env.VITE_API_BASE as string | undefined) || '';
 export const apiBase = BASE || '(상대경로 /api → Vercel 프록시)';
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  readonly body: unknown;
+  constructor(public status: number, message: string, body?: unknown) {
     super(message);
     this.name = 'ApiError';
+    this.body = body;
   }
 }
 
@@ -20,13 +22,15 @@ async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
     const res = await fetch(`${BASE}${path}`, { ...init, headers, signal: init.signal ?? controller.signal });
     if (!res.ok) {
       let detail = '';
+      let parsed: unknown;
       try {
-        const body = (await res.json()) as { error?: string; message?: string };
+        parsed = await res.json();
+        const body = parsed as { error?: string; message?: string };
         detail = body.error || body.message || '';
       } catch {
         detail = await res.text().catch(() => '');
       }
-      throw new ApiError(res.status, `API ${res.status}${detail ? `: ${detail}` : ''}`);
+      throw new ApiError(res.status, `API ${res.status}${detail ? `: ${detail}` : ''}`, parsed);
     }
     return (await res.json()) as T;
   } catch (e) {
@@ -84,7 +88,7 @@ export interface LandUseFlagObj {
 }
 export interface SiteCompObj { name: string; areaM2: number; pyeong?: number; dealYm: string; dealManwon: number; floor?: number }
 export interface SaleRoundObj { round: number; date: string; minPrice: number; ratioPct?: number }
-export interface BuildingObj { mainUse?: string; households?: number; approvalDate?: string; floorsAbove?: number; floorsBelow?: number; far?: number; bcr?: number }
+export interface BuildingObj { mainUse?: string; households?: number; units?: number; approvalDate?: string; floorsAbove?: number; floorsBelow?: number; far?: number; bcr?: number }
 export interface PreBidItemObj {
   id: string; label: string;
   category: '등기인수' | '임차인배당' | '물건하자' | '공법규제' | '절차비용';
@@ -224,6 +228,7 @@ export interface ListingDetailTarget {
   id?: number;
   caseNo?: string;
   itemNo?: string | null;
+  court?: string | null;
 }
 
 
@@ -365,11 +370,11 @@ export async function saveDecision(id: number, input: DecisionInput): Promise<De
 export function detailIdentityKey(target: ListingDetailTarget): string {
   if (target.id != null && Number.isInteger(target.id) && target.id > 0) return `listing:${target.id}`;
   const itemNo = target.itemNo?.trim() || '1';
-  return `case:${target.caseNo ?? ''}/item:${itemNo}`;
+  return `case:${target.caseNo ?? ''}/item:${itemNo}/court:${target.court ?? ''}`;
 }
 
-export function listingDetailTarget(item: Pick<ListingItem, 'id' | 'case_no' | 'item_no'>): ListingDetailTarget {
-  return { id: item.id, caseNo: item.case_no, itemNo: item.item_no };
+export function listingDetailTarget(item: Pick<ListingItem, 'id' | 'case_no' | 'item_no' | 'court'>): ListingDetailTarget {
+  return { id: item.id, caseNo: item.case_no, itemNo: item.item_no, ...(item.court ? { court: item.court } : {}) };
 }
 
 export function parseDetailHash(hash: string): ListingDetailTarget | null {
@@ -378,14 +383,25 @@ export function parseDetailHash(hash: string): ListingDetailTarget | null {
   const id = rawId != null && /^[1-9][0-9]*$/.test(rawId) ? Number(rawId) : undefined;
   const caseNo = params.get('case')?.trim() || undefined;
   const itemNo = params.get('item')?.trim() || undefined;
-  if (id !== undefined) return { id, ...(caseNo ? { caseNo } : {}), ...(itemNo ? { itemNo } : {}) };
-  if (caseNo) return { caseNo, ...(itemNo ? { itemNo } : {}) };
+  const court = params.get('court')?.trim() || undefined;
+  const courtPart = court ? { court } : {};
+  if (id !== undefined) return { id, ...(caseNo ? { caseNo } : {}), ...(itemNo ? { itemNo } : {}), ...courtPart };
+  if (caseNo) return { caseNo, ...(itemNo ? { itemNo } : {}), ...courtPart };
   return null;
+}
+
+export function ambiguousCourts(error: unknown): string[] | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const body = error.body as { error?: string; courts?: unknown } | null;
+  if (!body || body.error !== 'ambiguous_court' || !Array.isArray(body.courts)) return null;
+  const courts = body.courts.filter((court): court is string => typeof court === 'string' && court.trim().length > 0);
+  return courts.length > 1 ? courts : null;
 }
 
 export function detailResponseMatches(target: ListingDetailTarget, response: ListingItem): boolean {
   if (target.id != null) return response.id === target.id;
   if (response.case_no !== target.caseNo) return false;
+  if (target.court && response.court !== target.court) return false;
   return !target.itemNo || (response.item_no?.trim() || '1') === (target.itemNo.trim() || '1');
 }
 
@@ -404,8 +420,11 @@ export async function fetchDetail(target: string | ListingDetailTarget): Promise
   }
   if (target.id != null) return apiJson<ListingItem>(`/api/listings/by-id/${target.id}`);
   if (!target.caseNo) throw new Error('상세 조회 식별자가 없습니다');
-  const itemQuery = target.itemNo ? `?itemNo=${encodeURIComponent(target.itemNo)}` : '';
-  return apiJson<ListingItem>(`/api/listings/${encodeURIComponent(target.caseNo)}${itemQuery}`);
+  const params = new URLSearchParams();
+  if (target.itemNo) params.set('itemNo', target.itemNo);
+  if (target.court) params.set('court', target.court);
+  const query = params.toString();
+  return apiJson<ListingItem>(`/api/listings/${encodeURIComponent(target.caseNo)}${query ? `?${query}` : ''}`);
 }
 
 export async function triggerJob(job: 'crawl' | 'analyze' | 'eval' | 'ingest-legal'): Promise<void> {

@@ -159,7 +159,7 @@ public class ListingService {
                     'delta_vs_expected_bid', case when loc.expected_bid_price is null or l.appraisal_value is null then null else round(l.appraisal_value * cal.median_sale_ratio)::bigint - loc.expected_bid_price end
                   ) end as ml_calibration,
              (select count(*) from gm_fieldwork_notes fn where fn.listing_id = l.id and fn.checked) as field_done,
-             coalesce(jsonb_array_length(loc.report->'fieldwork'->'fieldChecklist'), 0) as field_total,
+             coalesce(jsonb_array_length(rp.fieldwork->'fieldChecklist'), 0) as field_total,
              (select count(*) from gm_fieldwork_notes fn where fn.listing_id = l.id and fn.note <> '') as field_notes,
              case when r.id is null then null
                   else jsonb_build_object(
@@ -181,10 +181,10 @@ public class ListingService {
                     'sale_rounds', loc.sale_rounds,
                     'report', case when loc.report is not null
                                    then jsonb_build_object(
-                                     'headline', loc.report->>'headline',
-                                     'recommendation', loc.report->>'recommendation',
-                                     'dangerCount', (loc.report->>'dangerCount')::int,
-                                     'warnCount',   (loc.report->>'warnCount')::int
+                                     'headline', rp.headline,
+                                     'recommendation', rp.recommendation,
+                                     'dangerCount', rp."dangerCount",
+                                     'warnCount',   rp."warnCount"
                                    )
                                    else null end,
                     'income', case when loc.income is null then null
@@ -201,6 +201,9 @@ public class ListingService {
       left join gm_rights_analysis   r   on r.listing_id   = l.id
       left join gm_location_analysis loc on loc.listing_id = l.id
       left join gm_scores            s   on s.listing_id   = l.id
+      -- report(TOAST, 평균 4.7KB)는 행당 한 번만 풀어 필요한 키만 꺼낸다 — 키마다 loc.report->>… 를 쓰면 매번 다시 detoast.
+      left join lateral jsonb_to_record(loc.report)
+        as rp(headline text, recommendation text, "dangerCount" int, "warnCount" int, fieldwork jsonb) on true
 
       left join lateral (
         select case
@@ -265,6 +268,13 @@ public class ListingService {
   public String precisionRecommendationsJson(int requestedLimit) {
     int limit = Math.max(3, Math.min(7, requestedLimit));
     String sql = """
+        with picked as materialized (
+          select * from gm_precision_shortlist
+           where status = 'recommended'
+             and recommended_bid is not null
+             and recommended_bid >= min_bid_price
+             and recommended_bid <= hard_cap_bid
+        )
         select coalesce(json_agg(t order by t.conservative_margin desc nulls last, t.sale_date asc nulls last, t.id asc), '[]'::json)::text
           from (
             select slim.*,
@@ -293,12 +303,10 @@ public class ListingService {
                    shortlist.conservative_margin
               from (
         """ + SELECT_SLIM + """
+              -- 후보 id를 경량 쿼리 안쪽에서 먼저 거른다. 바깥 조인에만 두면 후보 1건마다 전체 매물 경량 쿼리를 다시 돈다.
+              where l.id = any(array(select listing_id from picked))
               ) slim
-              join gm_precision_shortlist shortlist on shortlist.listing_id = slim.id
-             and shortlist.status = 'recommended'
-             and shortlist.recommended_bid is not null
-             and shortlist.recommended_bid >= shortlist.min_bid_price
-             and shortlist.recommended_bid <= shortlist.hard_cap_bid
+              join picked shortlist on shortlist.listing_id = slim.id
               left join gm_current_decisions decision on decision.listing_id = slim.id
              order by shortlist.conservative_margin desc nulls last, slim.sale_date asc nulls last, slim.id asc
              limit :limit
@@ -418,25 +426,57 @@ public class ListingService {
     return rows.isEmpty() ? null : rows.get(0);
   }
 
-  /** 사건/물건번호 상세. 물건번호 없는 레거시 요청은 단일물건 사건에만 허용한다. */
-  public String detailJson(String caseNo, String itemNo) {
+  /** 같은 사건번호가 둘 이상의 법원에 있을 때. 컨트롤러가 409로 옮긴다. */
+  public static final class AmbiguousCourtException extends RuntimeException {
+    private final List<String> courts;
+
+    public AmbiguousCourtException(List<String> courts) {
+      super("ambiguous_court");
+      this.courts = List.copyOf(courts);
+    }
+
+    public List<String> courts() {
+      return courts;
+    }
+  }
+
+  /** 사건/물건번호 상세. court가 없으면 법원이 하나일 때만 조회하고, 둘 이상이면 고르지 않는다. */
+  public String detailJson(String caseNo, String itemNo, String court) {
+    String item = itemNo == null || itemNo.isBlank() ? null : itemNo.trim();
+    String courtName = court == null || court.isBlank() ? null : court.trim();
+    if (courtName == null) {
+      List<String> courts = jdbc.queryForList("""
+          select distinct l.court
+            from gm_listings l
+           where l.case_no = :caseNo
+             and (cast(:itemNo as text) is null
+               or coalesce(nullif(l.item_no, ''), '1') = cast(:itemNo as text))
+           order by l.court
+          """, new MapSqlParameterSource().addValue("caseNo", caseNo).addValue("itemNo", item), String.class);
+      if (courts.size() > 1) throw new AmbiguousCourtException(courts);
+    }
     String sql = "select row_to_json(t)::text from (\n" + SELECT_BODY
         + " where l.case_no = :caseNo\n"
+        + "   and (cast(:court as text) is null or l.court = cast(:court as text))\n"
         + "   and ((cast(:itemNo as text) is not null and coalesce(nullif(l.item_no, ''), '1') = cast(:itemNo as text))\n"
         + "     or (cast(:itemNo as text) is null and 1 = (\n"
         + "       select count(distinct coalesce(nullif(sibling.item_no, ''), '1'))\n"
-        + "         from gm_listings sibling where sibling.case_no = :caseNo)))\n"
+        + "         from gm_listings sibling\n"
+        + "        where sibling.case_no = :caseNo\n"
+        + "          and (cast(:court as text) is null or sibling.court = cast(:court as text)))))\n"
         + " order by l.crawled_at desc nulls last, l.id desc limit 1) t";
     var params = new MapSqlParameterSource()
         .addValue("caseNo", caseNo)
-        .addValue("itemNo", itemNo == null || itemNo.isBlank() ? null : itemNo.trim());
+        .addValue("itemNo", item)
+        .addValue("court", courtName);
     List<String> rows = jdbc.queryForList(sql, params, String.class);
     return rows.isEmpty() ? null : rows.get(0);
   }
 
   public String detailJson(String caseNo) {
-    return detailJson(caseNo, null);
+    return detailJson(caseNo, null, null);
   }
+
 
   /** 관심(즐겨찾기) 토글 */
   public int setFavorite(long id, boolean favorite) {
@@ -495,6 +535,7 @@ public class ListingService {
           select t.status, count(*)::int as rows
             from gm_outcome_trust t
             join raw r on r.case_no = t.case_no
+             and r.court = t.court
              and coalesce(nullif(r.item_no, ''), '1') = t.item_no
              and r.sale_date = t.sale_date
            group by t.status
@@ -600,7 +641,7 @@ public class ListingService {
                     when 'avoid_but_sold' then 2
                     else 3
                   end,
-                  surprise_score desc nulls last
+                  surprise_score desc nulls last, court, case_no, item_no
         """;
     List<Map<String, Object>> surprises = jdbc.getJdbcTemplate().queryForList(surpriseSql);
 
@@ -609,7 +650,7 @@ public class ListingService {
                days_overdue, retry_priority, total_score, passed_filter, recommendation,
                expected_bid, min_bid_price, inq_cnt, interest_cnt
           from gm_result_retry_queue
-         order by retry_priority desc, sale_date desc, case_no, item_no
+         order by retry_priority desc, sale_date desc, case_no, item_no, court
          limit 30
         """;
     List<Map<String, Object>> retryQueue = jdbc.getJdbcTemplate().queryForList(retrySql);
@@ -664,19 +705,15 @@ public class ListingService {
     String rightsRiskSql = """
         select coalesce(r.risk_grade, 'unknown') as risk_grade,
                count(*)::int as rows,
-               count(*) filter (where e.matched)::int as matched,
-               count(*) filter (where e.sold)::int as sold,
-               avg(case when e.sold then 1.0 else 0.0 end) filter (where e.matched) as sold_rate,
-               avg(e.realized_bid_margin) filter (where e.sold and e.realized_bid_margin is not null) as median_proxy_margin,
+               count(*) filter (where r.matched)::int as matched,
+               count(*) filter (where r.sold)::int as sold,
+               avg(case when r.sold then 1.0 else 0.0 end) filter (where r.matched) as sold_rate,
+               avg(r.realized_bid_margin) filter (where r.sold and r.realized_bid_margin is not null) as median_proxy_margin,
                avg(r.assumed_amount) filter (where r.assumed_amount is not null) as avg_assumed_amount,
                count(*) filter (where r.has_opposition_tenant)::int as opposition_rows,
-               avg(case when e.would_have_won_under_max_safe_bid then 1.0 else 0.0 end)
-                 filter (where e.would_have_won_under_max_safe_bid is not null) as safe_bid_hit_rate
+               avg(case when r.would_have_won_under_max_safe_bid then 1.0 else 0.0 end)
+                 filter (where r.would_have_won_under_max_safe_bid is not null) as safe_bid_hit_rate
           from gm_rights_risk_eval r
-          join gm_trusted_outcome_eval e
-            on e.case_no = r.case_no
-           and coalesce(nullif(e.item_no, ''), '1') = r.item_no
-           and e.sale_date = r.sale_date
          group by coalesce(r.risk_grade, 'unknown')
          order by rows desc
         """;

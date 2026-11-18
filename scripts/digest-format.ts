@@ -1,6 +1,6 @@
 /** 일일 다이제스트 텍스트 포맷(순수 — DB/IO 없음, 테스트 가능). daily-digest.ts가 DB 조회 후 호출. */
 export interface DigestRow {
-  case_no: string; item_no: string; property_type: string; address: string;
+  case_no: string; item_no: string; court: string; property_type: string; address: string;
   appraisal_value: number | null; min_bid_price: number | null; sale_date: string | null;
   source_url: string | null; inq_cnt: number | null; interest_cnt: number | null; crawled_at: string | null;
   risk_grade: string | null; safety_margin: number | null; true_margin: number | null;
@@ -72,7 +72,7 @@ export function formatDigest(rows: DigestRow[], opts: DigestOpts): string {
     if (r.predicted_band) out.push(`   📈 ${r.predicted_band}`);
     if (r.memo) out.push(`   💬 ${firstSentence(r.memo)}`);
     const link = opts.dashboardBase
-      ? `${opts.dashboardBase.replace(/\/+$/, '')}/#case=${encodeURIComponent(r.case_no)}&item=${encodeURIComponent(r.item_no || '1')}`
+      ? `${opts.dashboardBase.replace(/\/+$/, '')}/#case=${encodeURIComponent(r.case_no)}&item=${encodeURIComponent(r.item_no || '1')}&court=${encodeURIComponent(r.court)}`
       : r.source_url;
     if (link) out.push(`   ${link}`);
     out.push('');
@@ -120,8 +120,9 @@ export function buildDigestCardKeyboard(
   caseNo: string,
   itemNo = '1',
   isFavorite = false,
+  court = '',
 ): TelegramInlineKeyboard {
-  const target = `${caseNo}|${itemNo}`;
+  const target = court ? `${caseNo}|${itemNo}|${court}` : `${caseNo}|${itemNo}`;
   return {
     inline_keyboard: [
       [

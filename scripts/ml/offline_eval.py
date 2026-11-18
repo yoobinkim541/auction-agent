@@ -7,6 +7,7 @@ It compares simple statistical baselines against sklearn/XGBoost models when ava
 from __future__ import annotations
 
 import argparse
+import json
 import math
 from pathlib import Path
 from typing import Iterable
@@ -113,13 +114,26 @@ def load_dataset(path: Path) -> pd.DataFrame:
     df["min_to_appraisal"] = safe_div(df["min_bid_price"], df["appraisal_value"])
     df["expected_to_min"] = safe_div(df["expected_bid"], df["min_bid_price"])
     df["market_to_appraisal"] = safe_div(df["market_price"], df["appraisal_value"])
-    return df.sort_values(["sale_date", "case_no", "item_no"])
+    return df.sort_values(listing_sort_columns(df))
+
+
+def listing_sort_columns(frame: pd.DataFrame) -> list[str]:
+    return [column for column in ("sale_date", "court", "case_no", "item_no") if column in frame.columns]
+
+
+def purge_overlapping_listings(train: pd.DataFrame, test: pd.DataFrame) -> pd.DataFrame:
+    columns = [column for column in ("court", "case_no", "item_no") if column in train.columns and column in test.columns]
+    if "case_no" not in columns or "item_no" not in columns or train.empty or test.empty:
+        return train
+    test_keys = set(zip(*(test[column].astype(str) for column in columns)))
+    train_keys = list(zip(*(train[column].astype(str) for column in columns)))
+    return train[[key not in test_keys for key in train_keys]].copy()
 
 
 def time_split(df: pd.DataFrame, test_ratio: float = 0.3) -> tuple[pd.DataFrame, pd.DataFrame]:
     if len(df) < 2:
         return df.copy(), df.iloc[0:0].copy()
-    ordered = df.sort_values(["sale_date", "case_no", "item_no"]).copy()
+    ordered = df.sort_values(listing_sort_columns(df)).copy()
     dates = ordered["sale_date"].dropna().drop_duplicates().sort_values().tolist()
     if len(dates) < 2:
         cut = max(1, min(len(ordered) - 1, int(math.floor(len(ordered) * (1 - test_ratio)))))
@@ -129,9 +143,7 @@ def time_split(df: pd.DataFrame, test_ratio: float = 0.3) -> tuple[pd.DataFrame,
     train = ordered[ordered["sale_date"] < cutoff].copy()
     test = ordered[ordered["sale_date"] >= cutoff].copy()
     if {"case_no", "item_no"}.issubset(ordered.columns):
-        test_keys = set(zip(test["case_no"].astype(str), test["item_no"].astype(str)))
-        train_keys = list(zip(train["case_no"].astype(str), train["item_no"].astype(str)))
-        train = train[[key not in test_keys for key in train_keys]].copy()
+        train = purge_overlapping_listings(train, test)
     if train.empty or test.empty:
         cut = max(1, min(len(ordered) - 1, int(math.floor(len(ordered) * (1 - test_ratio)))))
         return ordered.iloc[:cut].copy(), ordered.iloc[cut:].copy()
@@ -145,7 +157,7 @@ def rolling_time_splits(
     min_train_rows: int = 30,
 ) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
     """Return chronological, case/item-purged validation windows."""
-    ordered = df.sort_values(["sale_date", "case_no", "item_no"]).copy()
+    ordered = df.sort_values(listing_sort_columns(df)).copy()
     dates = ordered["sale_date"].dropna().drop_duplicates().sort_values().tolist()
     if len(dates) < 2:
         return []
@@ -163,9 +175,7 @@ def rolling_time_splits(
             test_mask &= ordered["sale_date"] < dates[end]
         test = ordered[test_mask].copy()
         if {"case_no", "item_no"}.issubset(ordered.columns):
-            test_keys = set(zip(test["case_no"].astype(str), test["item_no"].astype(str)))
-            train_keys = list(zip(train["case_no"].astype(str), train["item_no"].astype(str)))
-            train = train[[key not in test_keys for key in train_keys]].copy()
+            train = purge_overlapping_listings(train, test)
         if len(train) >= min_train_rows and not test.empty:
             splits.append((train, test))
     return splits
@@ -292,7 +302,8 @@ def eval_regression(df: pd.DataFrame, random_state: int) -> tuple[list[dict], pd
     if len(train) < 30 or len(test) < 10 or not SKLEARN_AVAILABLE:
         return [], None
     results = []
-    predictions = test[["case_no", "item_no", "sale_date", "address", "sale_ratio", "expected_bid", "sold_amount"]].copy()
+    identity = [column for column in ("court", "case_no", "item_no", "sale_date") if column in test.columns]
+    predictions = test[identity + ["address", "sale_ratio", "expected_bid", "sold_amount"]].copy()
     current = test[test["expected_bid"].notna() & test["appraisal_value"].notna() & (test["appraisal_value"] > 0)].copy()
     if len(current) >= 10:
         current_pred = np.clip(current["expected_bid"] / current["appraisal_value"], 0, 2.5)
@@ -499,6 +510,7 @@ def surprise_cases(df: pd.DataFrame, top_n: int = 30) -> pd.DataFrame:
         for _, row in part.iterrows():
             rows.append({
                 "surprise_kind": kind,
+                "court": row.get("court"),
                 "case_no": row.get("case_no"),
                 "item_no": row.get("item_no"),
                 "sale_date": row.get("sale_date"),
@@ -546,6 +558,150 @@ def table(rows: Iterable[dict], headers: list[str], formatters: dict[str, callab
     return out
 
 
+AVM_KIND_LABEL = {"all": "전체", "apt": "아파트", "rh": "연립다세대", "offi": "오피스텔"}
+AVM_BASIS_LABEL = {
+    "building_area": "같은 건물·같은 면적",
+    "building": "같은 건물",
+    "dong_area": "같은 동·비슷한 면적",
+    "dong": "같은 동",
+    "sgg_area": "같은 시군구·비슷한 면적",
+    "sgg": "같은 시군구",
+    "no_area": "면적 없음",
+    "no_comps": "거래 없음",
+}
+INPUT_SOURCE_LABEL = {"d7": "D-7 스냅샷", "d1": "D-1 스냅샷", "latest": "최신 행"}
+RANKING_LABEL = {
+    "model": "모델",
+    "logistic": "로지스틱 회귀(같은 입력)",
+    "model_without_rights": "모델 − 권리 입력",
+    "model_plus_views": "모델 + 조회·관심 수",
+    "cheapness": "최저가/보수 시세가 낮은 순",
+    "current_score": "현재 점수(total_score)",
+}
+
+
+def ratio(value: float | None) -> str:
+    return "-" if value is None or pd.isna(value) else f"{value:.3f}"
+
+
+def avm_lines() -> list[str]:
+    """Holdout accuracy written by ``npm run ml:avm``."""
+    path = Path("artifacts/ml/avm_metrics.json")
+    lines = ["## Market Value Model (AVM)"]
+    if not path.exists():
+        return lines + ["_`npm run ml:avm` 결과(`artifacts/ml/avm_metrics.json`)가 없어 건너뛰었습니다._", ""]
+    metrics = json.loads(path.read_text(encoding="utf-8"))
+    kinds = ", ".join(f"{AVM_KIND_LABEL.get(kind, kind)} {count}" for kind, count in metrics.get("trades_by_kind", {}).items())
+    lines += [
+        f"- 매매 실거래 {metrics.get('trades', 0)}건({kinds})으로 학습한 report-only 시세. 운영 시세(`market_price`)는 바꾸지 않는다.",
+        f"- 평가일에서 {metrics.get('gap_days')}일(신고 지연) 이전, 그로부터 {metrics.get('window_days')}일 안에 체결된 거래만 본다.",
+    ]
+    if metrics.get("status") != "ok":
+        return lines + ["- 시간 분할 검증을 하기에 거래가 부족했습니다.", ""]
+    rows = []
+    for kind, model in metrics["model"].items():
+        rule = metrics["current_rule"].get(kind, {})
+        rows.append({
+            "구분": AVM_KIND_LABEL.get(kind, kind), "건수": model["rows"],
+            "모델 MdAPE": model["mdape"], "모델 ±10%": model["within_10"], "모델 편향": model["bias"],
+            "현행 규칙 MdAPE": rule.get("mdape"), "현행 규칙 ±10%": rule.get("within_10"),
+        })
+    basis_rows = [
+        {"근거": AVM_BASIS_LABEL.get(basis, basis), "건수": row["rows"], "MdAPE": row["mdape"], "±10%": row["within_10"]}
+        for basis, row in metrics.get("model_by_basis", {}).items()
+    ]
+    lines += [
+        f"- 검증: {metrics['test_from']}~{metrics['test_to']} 중개거래 {metrics['test_rows']}건(학습 {metrics['train_rows']}건은 그 이전 거래). "
+        "현행 규칙은 `pipeline/location/comps.ts`의 단계별 중앙값을 같은 정보로 다시 계산한 값.",
+        *table(rows, ["구분", "건수", "모델 MdAPE", "모델 ±10%", "모델 편향", "현행 규칙 MdAPE", "현행 규칙 ±10%"], {
+            name: ratio for name in ["모델 MdAPE", "모델 ±10%", "모델 편향", "현행 규칙 MdAPE", "현행 규칙 ±10%"]
+        }),
+        "",
+        "근거별 모델 오차(근거 = 가장 가까운 비교 거래 묶음):",
+        *table(basis_rows, ["근거", "건수", "MdAPE", "±10%"], {"MdAPE": ratio, "±10%": ratio}),
+        "",
+        f"- 80% 구간 적중률 {pct(metrics['band_coverage'])}, 구간 폭 중앙값 {pct(metrics['band_median_width'])}(시세 대비).",
+        f"- 경매 매물 {metrics.get('targets', 0)}건(기일) 중 {metrics.get('targets_valued', 0)}건 추정: "
+        + ", ".join(f"{AVM_BASIS_LABEL.get(basis, basis)} {count}" for basis, count in metrics.get("targets_by_basis", {}).items()),
+    ]
+    forward = metrics.get("forward_check", {})
+    forward_rows = [
+        {"대상": label, "구분": AVM_KIND_LABEL.get(kind, kind), "건수": row["rows"], "MdAPE": row["mdape"], "±10%": row["within_10"], "편향": row["bias"]}
+        for label, key in [("전체", "all"), ("학습 이후 평가분", "after_training")]
+        for kind, row in forward.get(key, {}).items()
+    ]
+    if forward_rows:
+        lines += [
+            "",
+            f"경매 매물 추정값 vs 평가일 이후 {forward.get('days')}일 안에 같은 건물·같은 면적으로 체결된 실거래 중앙값. "
+            "'전체'는 모델 가중치가 이후 거래로 학습됐을 수 있고, '학습 이후 평가분'은 그렇지 않다:",
+            *table(forward_rows, ["대상", "구분", "건수", "MdAPE", "±10%", "편향"], {"MdAPE": ratio, "±10%": ratio, "편향": ratio}),
+        ]
+    return lines + [""]
+
+
+def good_listing_lines(result: dict, tracking: dict) -> list[str]:
+    try:
+        from .good_listing import GOOD_MARGIN, LABEL_VERSION, MIN_TEST_ROWS
+    except ImportError:
+        from good_listing import GOOD_MARGIN, LABEL_VERSION, MIN_TEST_ROWS
+    lines = [
+        "## Good Listing Classification",
+        f"- 라벨(`{LABEL_VERSION}`): 낙찰됐고, 보수 시세(AVM 80% 구간 하한과 감정가 중 낮은 값) 기준으로 "
+        f"낙찰가·인수금액·취득세·명도비·채권비용을 뺀 순마진이 {GOOD_MARGIN:.0%} 이상.",
+        "- 입력: 감정가, 그 기일의 최저가, 면적, AVM 시세·구간·근거, 인수금액·대항력·권리등급, 법원·지역·종류.",
+        "- 제외: 현재 점수·추천·예상낙찰가·`true_margin`(과거 스냅샷이 매각 뒤 다시 쓰였다), `fail_count`(최신 행이 이후 유찰을 센다), 조회·관심 수(스냅샷 없는 행은 매각 뒤 값), 낙찰가와 그 파생값.",
+        "- 시간순 holdout만 기록한다. 운영 추천·입찰가·필터에는 반영하지 않는다.",
+        f"- 매칭 {result.get('matched_rows', 0)}건 중 라벨 가능 {result.get('labelled_rows', 0)}건(AVM 시세가 있고, 인수금액이 시세의 10배를 넘는 파싱 오류가 아닌 행).",
+    ]
+    if result.get("status") != "ok":
+        return lines + ["- 표본 또는 scikit-learn이 부족해 건너뛰었습니다.", ""]
+    ranking_rows = [
+        {"순위 기준": RANKING_LABEL.get(name, name), "AUC": row["auc"], "AP": row["average_precision"], "상위 10% 정밀도": row["precision_at_10"], "상위 5% 정밀도": row["precision_at_5"]}
+        for name, row in result["rankings"].items()
+    ]
+    lines += [
+        f"- 학습 {result['train_rows']}건 / 검증 {result['test_rows']}건({result['test_from']}~{result['test_to']}). "
+        f"검증 낙찰률 {pct(result['test_sold_rate'])}, 좋은 매물 비율 {pct(result['test_good_rate'])}(낙찰 건의 {pct(result['good_share_of_sold'])}).",
+        f"- 라벨과 낙찰 여부의 상관 {result['label_sold_correlation']:.3f}. 낙찰 건만 놓고 본 모델 AUC {result['sold_only_auc']:.3f} — 팔릴지가 아니라 남는지를 가르는 정도.",
+        *table(ranking_rows, ["순위 기준", "AUC", "AP", "상위 10% 정밀도", "상위 5% 정밀도"], {
+            "AUC": ratio, "AP": ratio, "상위 10% 정밀도": pct, "상위 5% 정밀도": pct,
+        }),
+        "",
+        f"- 최저가에 사도 순마진이 {GOOD_MARGIN:.0%}에 못 미치는 행은 좋은 매물이 될 수 없어, 위 AUC의 상당 부분은 그 행을 걸러낸 값이다. "
+        f"최저가 기준으로 가능성이 열린 {result['open_rows']}건(좋은 매물 {pct(result['open_good_rate'])})만 보면 "
+        f"모델 AUC {ratio(result['open_auc']['model'])}, 최저가/보수 시세 {ratio(result['open_auc']['cheapness'])}, 현재 점수 {ratio(result['open_auc']['current_score'])}.",
+        f"- 통과 필터 {result['passed_rows']}건의 정밀도 {pct(result['passed_precision'])}.",
+        "- 라벨과 `최저가/시세` 입력이 같은 AVM 값을 쓰므로 시세 오차가 신호처럼 보일 수 있다. 오차가 가장 작은 '같은 건물' 근거 행의 AUC를 보수적인 값으로 본다.",
+        *table(
+            [{"구분": row["property_type"], "건수": row["rows"], "좋은 매물 비율": row["good_rate"], "AUC": row["auc"]} for row in result["by_type"]]
+            + [{"구분": AVM_BASIS_LABEL.get(row["avm_basis"], row["avm_basis"]), "건수": row["rows"], "좋은 매물 비율": row["good_rate"], "AUC": row["auc"]} for row in result["by_basis"]],
+            ["구분", "건수", "좋은 매물 비율", "AUC"], {"좋은 매물 비율": pct, "AUC": ratio},
+        ),
+        "",
+        f"- 입력 시점별: 검증 {result['test_rows']}건 중 기일 전 스냅샷(D-7/D-1) 입력은 {result['point_in_time_rows']}건. "
+        f"나머지는 최신 매물·분석 행이라 매각 뒤 값이 섞일 수 있다. 스냅샷 입력 행이 쌓이면 그 AUC를 기준으로 삼는다({MIN_TEST_ROWS}건 미만 구분은 표에서 뺀다).",
+        *table(
+            [{"입력": INPUT_SOURCE_LABEL.get(row["input_source"], row["input_source"]), "건수": row["rows"], "좋은 매물 비율": row["good_rate"], "AUC": row["auc"]} for row in result["by_source"]],
+            ["입력", "건수", "좋은 매물 비율", "AUC"], {"좋은 매물 비율": pct, "AUC": ratio},
+        ),
+        "",
+        "### Shadow 추적",
+        "매각일 0시(KST) 전에 저장된 확률을 나중에 확정된 라벨과 맞춘다. 4주 이상 쌓인 뒤에 판단한다.",
+    ]
+    if not tracking.get("rows"):
+        return lines + ["- 아직 결과가 확정된 저장 확률이 없습니다.", ""]
+    lines.append(f"- {tracking['from']}~{tracking['to']}({tracking['days']}일) {tracking['rows']}건, 좋은 매물 비율 {pct(tracking['good_rate'])}.")
+    if "model" in tracking:
+        lines += table(
+            [{"순위 기준": RANKING_LABEL[name], "AUC": tracking[name]["auc"], "AP": tracking[name]["average_precision"], "상위 10% 정밀도": tracking[name]["precision_at_10"]} for name in ("model", "current_score")],
+            ["순위 기준", "AUC", "AP", "상위 10% 정밀도"], {"AUC": ratio, "AP": ratio, "상위 10% 정밀도": pct},
+        )
+    else:
+        lines.append("- 좋은 매물과 아닌 매물이 모두 쌓이기 전이라 순위 지표는 아직 없습니다.")
+    return lines + [""]
+
+
 def write_report(df: pd.DataFrame, output: Path, random_state: int) -> None:
     matched = df[df["matched"]]
     sold = matched[matched["sold"]]
@@ -553,6 +709,12 @@ def write_report(df: pd.DataFrame, output: Path, random_state: int) -> None:
     rolling = eval_rolling_ensemble(df, random_state) if SKLEARN_AVAILABLE else []
     sale_outcome = eval_sale_outcome(df, random_state)
     classification = eval_classifier(df, random_state)
+    try:
+        from .good_listing import eval_good_listing, eval_shadow_tracking
+    except ImportError:
+        from good_listing import eval_good_listing, eval_shadow_tracking
+    good_listing = eval_good_listing(df, random_state)
+    shadow_tracking = eval_shadow_tracking(df)
     baseline = group_baseline(df)
     coverage = feature_coverage(df)
     ref_perf = reference_price_performance(df)
@@ -570,6 +732,8 @@ def write_report(df: pd.DataFrame, output: Path, random_state: int) -> None:
         f"- Sold outcomes: {len(sold)}",
         f"- Sale-ratio labels: {int((sold['sale_ratio'].notna()).sum()) if len(sold) else 0}",
         f"- Positive realized margin rate: {pct(float((sold['realized_bid_margin'] > 0).mean())) if len(sold) else '-'}",
+        f"- Point-in-time inputs (D-7/D-1): {int(df['feature_source'].isin(['d7', 'd1']).sum()) if 'feature_source' in df.columns else 0} / {len(df)}"
+        " — 나머지는 최신 매물·분석 행에서 읽어 매각 뒤 값이 섞일 수 있음",
         "",
     ]
     if not SKLEARN_AVAILABLE:
@@ -601,12 +765,14 @@ def write_report(df: pd.DataFrame, output: Path, random_state: int) -> None:
             }),
             "",
             "## Positive Margin Classification",
+            "이 절의 입력에는 `true_margin`이 남아 있다. 현재 결과 파일에서 `true_margin`과 실현 마진의 상관은 0.978이라, 여기 AUC는 의사결정 지표로 쓰지 않는다.",
             *table(classification, ["model", "train_rows", "test_rows", "roc_auc", "balanced_accuracy", "accuracy"], {
                 "roc_auc": lambda x: f"{x:.4f}",
                 "balanced_accuracy": lambda x: f"{x:.4f}",
                 "accuracy": lambda x: f"{x:.4f}",
             }),
             "",
+            *good_listing_lines(good_listing, shadow_tracking),
         ]
         ensemble_row = next((row for row in regression if row.get("model") == "ensemble_blend"), None)
         if ensemble_row:
@@ -628,6 +794,7 @@ def write_report(df: pd.DataFrame, output: Path, random_state: int) -> None:
             }),
             "",
         ]
+    lines += avm_lines()
     lines += [
         "## Reference Price Performance",
         *table([ref_perf], ["rows", "reference_mae", "current_mae", "reference_win_rate"], {

@@ -180,7 +180,8 @@ with safety as (
          count(*) filter (where t.status = 'quarantined')::int as quarantined
     from gm_outcome_eval e
     left join gm_outcome_trust t
-      on t.case_no = e.case_no
+      on t.court = e.court
+     and t.case_no = e.case_no
      and t.item_no = coalesce(nullif(e.item_no, ''), '1')
      and t.sale_date = e.sale_date
 )

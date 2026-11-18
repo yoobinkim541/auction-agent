@@ -7,6 +7,7 @@
 import 'dotenv/config';
 import { query, pool } from '../shared/db.ts';
 import {
+  canonicalCourt,
   collectCaseResults,
   collectSaleResults,
   courtCodeByName,
@@ -57,20 +58,21 @@ function isBlockedError(err: unknown): boolean {
   return /ipcheck|blocked|captcha|차단/i.test(errorMessage(err));
 }
 
-async function recordRounds(caseNo: string, itemNo: string, court: string | null, rounds: SaleResultRound[], today: string): Promise<number> {
+async function recordRounds(caseNo: string, itemNo: string, court: string, rounds: SaleResultRound[], today: string): Promise<number> {
+  const storedCourt = canonicalCourt(court);
   let upserted = 0;
   for (const round of rounds) {
     await query(
       `insert into gm_auction_results (case_no,item_no,court,dxdy_date,kind_cd,result_cd,min_price,sold_amount,sold,captured_at)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
-       on conflict (case_no,item_no,dxdy_date) do update set
+       on conflict (court,case_no,item_no,dxdy_date) do update set
          kind_cd=excluded.kind_cd, result_cd=excluded.result_cd, min_price=excluded.min_price,
          sold_amount=excluded.sold_amount, sold=excluded.sold, captured_at=now()`,
-      [caseNo, itemNo, court, round.date, round.kindCd, round.resultCd, round.minPrice, round.soldAmount, round.sold],
+      [caseNo, itemNo, storedCourt, round.date, round.kindCd, round.resultCd, round.minPrice, round.soldAmount, round.sold],
     );
     upserted++;
     if (round.sold) {
-      const deleted = await deleteCachedPhotosForSoldListing(caseNo, itemNo, 'sold');
+      const deleted = await deleteCachedPhotosForSoldListing(storedCourt, caseNo, itemNo, 'sold');
       if (deleted) console.log(`[retry-outcomes] 사진 캐시 삭제 ${caseNo}/${itemNo}: ${deleted}개`);
     }
   }
@@ -78,8 +80,8 @@ async function recordRounds(caseNo: string, itemNo: string, court: string | null
   if (next) {
     await query(
       `update gm_listings set sale_date=$1::date, min_bid_price=coalesce($2, min_bid_price), fail_count=$3
-         where case_no=$4 and coalesce(nullif(item_no,''),'1')=$5 and sale_date is distinct from $1::date`,
-      [next.date, next.minPrice, failedRoundCount(rounds, today), caseNo, itemNo],
+         where court=$6 and case_no=$4 and coalesce(nullif(item_no,''),'1')=$5 and sale_date is distinct from $1::date`,
+      [next.date, next.minPrice, failedRoundCount(rounds, today), caseNo, itemNo, storedCourt],
     );
   }
   return upserted;
@@ -94,12 +96,13 @@ async function upsertRetryStatus(row: RetryQueueRow, patch: {
   blockedReason?: string | null;
   roundCount?: number;
 }): Promise<void> {
+  const court = canonicalCourt(row.court);
   await query(
     `insert into gm_result_retry_status
-       (case_no, item_no, sale_date, attempts, last_status, last_phase, last_error, last_http_status,
+       (court, case_no, item_no, sale_date, attempts, last_status, last_phase, last_error, last_http_status,
         captcha_detected, blocked_reason, last_round_count, last_attempted_at, succeeded_at)
-     values ($1,$2,$3::date,1,$4,$5,$6,$7,$8,$9,$10,now(),case when $4='success' then now() else null end)
-     on conflict (case_no, item_no, sale_date) do update set
+     values ($11,$1,$2,$3::date,1,$4,$5,$6,$7,$8,$9,$10,now(),case when $4='success' then now() else null end)
+     on conflict (court, case_no, item_no, sale_date) do update set
        attempts = gm_result_retry_status.attempts + 1,
        last_status = excluded.last_status,
        last_phase = excluded.last_phase,
@@ -121,6 +124,7 @@ async function upsertRetryStatus(row: RetryQueueRow, patch: {
       patch.captchaDetected ?? false,
       patch.blockedReason ?? null,
       patch.roundCount ?? 0,
+      court,
     ],
   );
 }
@@ -138,25 +142,30 @@ async function fetchTargets(limit: number, cooldownHours: number): Promise<Retry
             end as retry_priority
        from gm_outcome_eval e
        left join gm_result_retry_status rs
-         on rs.case_no = e.case_no
+         on rs.court = e.court
+        and rs.case_no = e.case_no
         and rs.item_no = coalesce(nullif(e.item_no,''),'1')
         and rs.sale_date = e.sale_date
       where e.sale_date < current_date
         and e.matched = false
         and coalesce(rs.last_status, 'pending') <> 'success'
         and (rs.last_attempted_at is null or rs.last_attempted_at < now() - make_interval(hours => $2::int))
-      order by retry_priority desc, e.sale_date desc, e.case_no, item_no
+      order by retry_priority desc, e.sale_date desc, e.court, e.case_no, item_no
       limit $1`,
     [limit, cooldownHours],
   );
 }
 
+function resultKey(courtCase: CourtCase): string {
+  return `${courtCase.cortOfcCd}|${courtCase.caseNo}|${courtCase.itemNo}`;
+}
+
 async function collectOne(row: RetryQueueRow, courtCase: CourtCase, today: string): Promise<{ phase: string; rounds: SaleResultRound[] }> {
   const active = await collectSaleResults([courtCase]);
-  const activeRounds = active.get(`${courtCase.caseNo}|${courtCase.itemNo}`) ?? [];
+  const activeRounds = active.get(resultKey(courtCase)) ?? [];
   if (activeRounds.length > 0) return { phase: 'active_detail', rounds: activeRounds };
   const closed = await collectCaseResults([courtCase]);
-  return { phase: 'closed_case', rounds: closed.get(`${courtCase.caseNo}|${courtCase.itemNo}`) ?? [] };
+  return { phase: 'closed_case', rounds: closed.get(resultKey(courtCase)) ?? [] };
 }
 
 async function main(): Promise<void> {
@@ -184,7 +193,7 @@ async function main(): Promise<void> {
       break;
     }
     counters.processed++;
-    const cortOfcCd = courtCodeByName(row.court);
+    const cortOfcCd = courtCodeByName(canonicalCourt(row.court));
     if (!cortOfcCd) {
       counters.skipped++;
       await upsertRetryStatus(row, { status: 'error', phase: 'preflight', error: `법원코드 미매핑: ${row.court}` });

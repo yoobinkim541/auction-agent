@@ -10,7 +10,7 @@ export function clampDigestTopN(value: string | undefined): number {
 }
 
 export const TOP_RECOMMENDATIONS_SQL = `
-  select l.case_no, l.item_no, l.property_type, l.address,
+  select l.case_no, l.item_no, l.court, l.property_type, l.address,
          l.appraisal_value::float8, l.min_bid_price::float8, l.sale_date::text,
          l.source_url, l.inq_cnt, l.interest_cnt, l.crawled_at::text,
          r.risk_grade, loc.safety_margin::float8,
@@ -35,13 +35,19 @@ export const HISTORICAL_RESULTS_SQL = `
          case when r.sold and l.appraisal_value > 0 then r.sold_amount::float8 / l.appraisal_value end as sale_ratio,
          coalesce(p.status = 'recommended', false) as was_recommended
     from gm_auction_results r
-    join gm_listings l on l.case_no = r.case_no and coalesce(l.item_no,'1') = r.item_no
+    join lateral (
+      select *
+        from gm_listings l
+       where l.court = r.court and l.case_no = r.case_no and coalesce(nullif(l.item_no,''),'1') = r.item_no
+       order by (l.source = 'courtauction') desc, l.crawled_at desc nulls last, l.id desc
+       limit 1
+    ) l on true
     left join gm_precision_evaluations p on p.listing_id = l.id
    where r.kind_cd = '01' and r.dxdy_date >= current_date - 3 and r.dxdy_date < current_date
    order by r.sold desc, sale_ratio desc nulls last`;
 
 export const UPCOMING_RECOMMENDATIONS_SQL = `
-  select l.case_no, l.item_no, l.property_type, l.address, l.appraisal_value::float8, l.min_bid_price::float8,
+  select l.case_no, l.item_no, l.court, l.property_type, l.address, l.appraisal_value::float8, l.min_bid_price::float8,
          l.sale_date::text, l.source_url, l.inq_cnt, l.interest_cnt, l.crawled_at::text,
          r.risk_grade, loc.safety_margin::float8, (loc.acquisition_cost->>'trueSafetyMargin')::float8 as true_margin,
          null::int as total_score, null as memo

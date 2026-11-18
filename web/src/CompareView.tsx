@@ -28,8 +28,8 @@ export function CompareView({ items, cfg, onClose, onSelect }: {
     { label: '점수', dir: 'max', rank: (r) => score(r), cell: (r) => <b>{score(r)}</b> },
     { label: '권리', cell: (r) => (RISK[r.rights?.risk_grade ?? '']?.label ?? '-') },
     { label: '매각기일', cell: (r) => <>{r.sale_date ?? '-'} <DDay dateStr={r.sale_date} /></> },
-    { label: '무피', cell: (r) => (r.location?.income?.zeroPiCandidate ? '★' : '-') },
-    { label: '현장확인', cell: (r) => `${r.field_done ?? 0}/${r.field_total ?? 0}${(r.field_notes ?? 0) > 0 ? ' 📝' : ''}` },
+    { label: '무피', cell: (r) => (r.location?.income?.zeroPiCandidate ? '후보' : '-') },
+    { label: '현장확인', cell: (r) => `${r.field_done ?? 0}/${r.field_total ?? 0}${(r.field_notes ?? 0) > 0 ? ' · 메모' : ''}` },
   ];
 
   const bestIdx = (row: Row): number => {
@@ -47,7 +47,7 @@ export function CompareView({ items, cfg, onClose, onSelect }: {
     <div className="cmp-bg" onClick={onClose}>
       <div className="cmp-modal" onClick={(e) => e.stopPropagation()}>
         <div className="cmp-head">
-          <h2>⚖ 관심 매물 비교 <span className="muted">({items.length}건)</span></h2>
+          <h2>관심 매물 비교 <span className="muted">({items.length}건)</span></h2>
           <button className="close" onClick={onClose}>✕</button>
         </div>
         <div className="cmp-scroll">

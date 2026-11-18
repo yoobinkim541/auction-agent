@@ -9,6 +9,17 @@ export const KIND_LABEL: Record<string, string> = {
   cheolgeo_gacheobun: '건물철거가처분', sintak: '신탁', soyugwon: '소유권', other: '기타',
 };
 
+/** 주변 편의시설 키(pipeline/location/index.ts amenities) → 한글 표시. OSM 경로는 이미 한글 키. */
+export const AMENITY_LABEL: Record<string, string> = {
+  mart: '마트', convenience: '편의점', hospital: '병원', pharmacy: '약국', cafe: '카페',
+};
+
+/** 복기 입력 커버리지의 스냅샷 컬럼명(ListingService.mlReview) → 한글 표시. */
+export const FEATURE_LABEL: Record<string, string> = {
+  appraisal_value: '감정가', min_bid_price: '최저가', market_price: '시세', expected_bid: '예상 낙찰가',
+  max_safe_bid: '안전 입찰 상한', true_margin: '진짜마진', total_score: '점수', inq_cnt: '조회 수', interest_cnt: '관심 등록 수',
+};
+
 export const FLAG_LABEL: Record<string, string> = {
   yuchigwon: '유치권', beopjeong_jisangwon: '법정지상권', bunmyo_gijigwon: '분묘기지권',
   daejigwon_mideungi: '대지권미등기', toji_byeoldo_deungi: '토지별도등기',

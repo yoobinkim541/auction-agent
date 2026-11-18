@@ -39,7 +39,7 @@ describe('precision backfill bounded selection', () => {
 describe('precision backfill report gate', () => {
   const baseRow = {
     id: 1, case_no: '2026타경1', item_no: '1', court: 'court', address: '경기도 광주시',
-    property_type: 'villa' as const, appraisal_value: 220_000_000, min_bid_price: 53_000_000,
+    property_type: 'villa' as const, appraisal_value: 220_000_000, min_bid_price: 53_000_000, area_m2: null,
     fail_count: 3, source: 'courtauction' as const, crawled_at: '2026-10-01T00:00:00Z',
     trust_status: 'trusted', classified: [], tenants: [], assumed_amount: 0, max_safe_bid: 90_000_000,
     red_flags: [], risk_grade: 'clean', warnings: [], market_price: 171_000_000,

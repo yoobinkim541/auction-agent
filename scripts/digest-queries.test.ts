@@ -26,6 +26,7 @@ describe('digest recommendation queries', () => {
   it('marks historical recommendations only from recommended precision evaluations', () => {
     expect(HISTORICAL_RESULTS_SQL).toContain('gm_precision_evaluations');
     expect(HISTORICAL_RESULTS_SQL).toContain("p.status = 'recommended'");
+    expect(HISTORICAL_RESULTS_SQL).toContain('l.court = r.court');
     expect(HISTORICAL_RESULTS_SQL).not.toContain('gm_scores');
   });
 });

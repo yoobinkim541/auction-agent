@@ -18,7 +18,7 @@ export function EvictionBlock({ ev }: { ev: EvictionObj }) {
         <div><span>예상 명도비</span><b>{eok(ev.costBase)} <span className="muted">({won(ev.costLow)}~{won(ev.costHigh)})</span></b></div>
         <div><span>예상 기간</span><b>{ev.monthsLow}~{ev.monthsHigh}개월</b></div>
       </div>
-      <p className="muted">🤝 협상: {ev.negotiationBrief}</p>
+      <p className="muted">협상: {ev.negotiationBrief}</p>
       {ev.laws.length > 0 && <p className="lrf-laws">근거: {ev.laws.map((l) => `${l.name}${l.article ? ' ' + l.article : ''}`).join(' · ')}</p>}
       {ev.notes.length > 0 && <ul className="warns">{ev.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
     </Section>
@@ -31,12 +31,12 @@ export function IncomeBlock({ income: inc }: { income: IncomeObj }) {
   return (
     <Section title={`임대수익 · 출구 (세후)${inc.estimated ? ' · 추정' : ''}`}>
       {inc.zeroPiCandidate && !inc.estimated && (
-        <p className="zero-pi-badge">★ 무피(無피) 가능성 — 전세보증금이 총취득비용을 충당. 자기 자본 투입 최소화 가능(현장·보증보험 확인 필요)</p>
+        <p className="zero-pi-badge">무피 가능성 — 전세보증금이 총취득비용을 충당. 자기 자본 투입 최소화 가능(현장·보증보험 확인 필요)</p>
       )}
       {inc.zeroPiCandidate && inc.estimated && (
-        <p className="zero-pi-badge">★ 무피(無피) 가능성 (추정) — 전세가율 가정 기준 갭이 0 이하. 실제 전세 시세 확인 시 무피 투자 구조 가능성 있음(현장·보증보험 필수 확인)</p>
+        <p className="zero-pi-badge">무피 가능성(추정) — 전세가율 가정 기준 갭이 0 이하. 실제 전세 시세 확인 시 무피 투자 구조 가능성 있음(현장·보증보험 필수 확인)</p>
       )}
-      {inc.estimated && <p className="warn-badge">⚠ 전월세 실거래 미확보 — 전세가율 가정 기반 <b>추정치</b>(저신뢰). 갭만 참고하고 실제 임대시세는 별도 확인하세요.</p>}
+      {inc.estimated && <p className="warn-badge">전월세 실거래 미확보 — 전세가율 가정 기반 <b>추정치</b>(저신뢰). 갭만 참고하고 실제 임대시세는 별도 확인하세요.</p>}
       <p className="muted">임대시세: {inc.rentBasis || '표본 부족'}</p>
       <div className="kv">
         {inc.jeonseDeposit != null && <div><span>전세 시세{inc.estimated ? '(추정)' : ''}</span><b>{eok(inc.jeonseDeposit)}</b></div>}
@@ -72,7 +72,6 @@ export function IncomeBlock({ income: inc }: { income: IncomeObj }) {
 const CAT_LABEL: Record<string, string> = {
   등기인수: '등기·인수', 임차인배당: '임차인·배당', 물건하자: '물건 하자', 공법규제: '공법 규제', 절차비용: '절차·비용',
 };
-const SEV_ICON: Record<string, string> = { danger: '🔴', warn: '🟡', info: 'ℹ️' };
 const LRISK: Record<string, { label: string; cls: string }> = {
   manageable: { label: '감당 가능', cls: 'reco-consider' },
   caution: { label: '주의', cls: 'reco-caution' },
@@ -125,11 +124,11 @@ export function FieldVisitChecklist({ listingId, items, big }: {
 
   return (
     <div className={big ? 'fw-list fw-big' : 'fw-list'}>
-      <h4>🚶 현장 가서 이것만 확인하세요
+      <h4>현장에서 확인할 것
         <span className={`fw-progress${doneCount === items.length ? ' fw-progress-done' : ''}`}>
           {doneCount}/{items.length} 확인
         </span>
-        {error && <span className="fw-err" title="저장 실패 — 다시 시도하세요">⚠ 저장 오류</span>}
+        {error && <span className="fw-err" title="저장 실패 — 다시 시도하세요">저장 오류</span>}
       </h4>
       {items.map((f) => {
         const c = cur(f.label);
@@ -138,7 +137,7 @@ export function FieldVisitChecklist({ listingId, items, big }: {
             <label className="fw-row">
               <input type="checkbox" checked={c.checked} onChange={() => toggle(f.label)} />
               <span className="fw-label"><b>{f.label}</b><div className="muted">{f.why}</div></span>
-              {savedKey === f.label && <span className="fw-saved">저장됨 ✓</span>}
+              {savedKey === f.label && <span className="fw-saved">저장됨</span>}
             </label>
             <textarea
               className="fw-note"
@@ -151,7 +150,7 @@ export function FieldVisitChecklist({ listingId, items, big }: {
           </div>
         );
       })}
-      <p className="muted" style={{ marginTop: 8 }}>※ 체크·메모는 자동 저장됩니다(메모는 입력 후 칸 밖을 클릭하면 저장). 매물별로 보관돼 재분석에도 유지됩니다.</p>
+      <p className="muted">체크·메모는 자동 저장됩니다(메모는 입력 후 칸 밖을 클릭하면 저장). 매물별로 보관돼 재분석에도 유지됩니다.</p>
     </div>
   );
 }
@@ -175,7 +174,7 @@ export function ReportBlock({ report, listingId }: { report: ReportObj; listingI
 
       {report.memo && (
         <section className="sect memo-sect">
-          <h3>🧠 AI 투자 의견서 {report.memoModel && <span className="memo-model">{report.memoModel}</span>}</h3>
+          <h3>AI 투자 의견서 {report.memoModel && <span className="memo-model">{report.memoModel}</span>}</h3>
           <p className="memo-body">{report.memo}</p>
           <p className="memo-disclaimer">참고용 의견 — 법률자문이 아니며, 핵심 수치·권리·현장은 입찰 전 직접 확인하세요.</p>
         </section>
@@ -196,17 +195,20 @@ export function ReportBlock({ report, listingId }: { report: ReportObj; listingI
       {report.legalRisk && (
         <section className="sect">
           <h3>법적 리스크 평가 <span className={`badge ${LRISK[report.legalRisk.grade]?.cls ?? ''}`}>{LRISK[report.legalRisk.grade]?.label ?? report.legalRisk.grade}</span>
-            <span className={`mng ${report.legalRisk.manageable ? 'mng-ok' : 'mng-no'}`}>{report.legalRisk.manageable ? '감당 가능' : '감당 어려움'}</span>
+            {/* 등급이 '감당 가능'이면 같은 말을 두 번 쓰지 않는다 */}
+            {(report.legalRisk.grade !== 'manageable' || !report.legalRisk.manageable) && (
+              <span className={`mng ${report.legalRisk.manageable ? 'mng-ok' : 'mng-no'}`}>{report.legalRisk.manageable ? '감당 가능' : '감당 어려움'}</span>
+            )}
           </h3>
           <p className="muted">{report.legalRisk.reasoning}</p>
           {report.legalRisk.factors.map((f, i) => (
             <div key={i} className="lrf">
-              <div className="lrf-head"><b>{f.label}</b> <span className={`tag tag-${f.itemRisk}`}>{f.itemRisk}</span></div>
+              <div className="lrf-head"><b>{f.label}</b> <span className={`tag tag-${f.itemRisk}`}>{LRISK[f.itemRisk]?.label ?? f.itemRisk}</span></div>
               {f.laws.length > 0 && <div className="lrf-laws">근거: {f.laws.map((l) => `${l.name}${l.article ? ' ' + l.article : ''}`).join(' · ')}</div>}
               {f.action && <div className="lrf-act">→ {f.action}</div>}
             </div>
           ))}
-          <p className="muted">※ 법령 매칭은 법제처 코퍼스 기반 참고용. 최종 판단은 등기부·명세서 원본과 전문가 확인.</p>
+          <p className="muted">법령 매칭은 법제처 코퍼스 기반 참고용. 최종 판단은 등기부·명세서 원본과 전문가 확인.</p>
         </section>
       )}
 
@@ -214,26 +216,26 @@ export function ReportBlock({ report, listingId }: { report: ReportObj; listingI
         {[...danger, ...warn, ...info].map((c) => (
           <div key={c.id} className={`chk chk-${c.severity}`}>
             <div className="chk-head">
-              <span className="chk-sev">{SEV_ICON[c.severity]}</span>
+              <span className="chk-sev" aria-hidden="true" />
               <b>{c.label}</b>
               <span className="chk-cat">{CAT_LABEL[c.category] ?? c.category}</span>
             </div>
             <div className="chk-detail">{c.detail}</div>
-            <div className="chk-verify">📋 출처 {c.source}{c.verify ? ` · 확인: ${c.verify}` : ''}</div>
+            <div className="chk-verify">출처 {c.source}{c.verify ? ` · 확인: ${c.verify}` : ''}</div>
           </div>
         ))}
         {!report.checklist.length && <p className="muted">특이 확인사항 없음.</p>}
-        <p className="muted" style={{ marginTop: 10 }}>※ 참고용 자동 분석. 입찰 전 원본 공부서류(등기부·매각물건명세서·현황조사서)를 반드시 직접 확인하세요.</p>
+        <p className="muted">참고용 자동 분석. 입찰 전 원본 공부서류(등기부·매각물건명세서·현황조사서)를 반드시 직접 확인하세요.</p>
       </Section>
 
       {report.glossary && report.glossary.length > 0 && (
         <details className="sect glossary">
-          <summary>📖 초보자 용어 풀이 ({report.glossary.length})</summary>
+          <summary>용어 풀이 ({report.glossary.length})</summary>
           {report.glossary.map((g) => (
             <div key={g.term} className="gl-item">
               <b>{g.term}</b> <span className="gl-cat">{g.category}</span>
               <div className="gl-easy">{g.easy}</div>
-              <div className="gl-why">💡 {g.why}</div>
+              <div className="gl-why">{g.why}</div>
             </div>
           ))}
         </details>

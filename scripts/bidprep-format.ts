@@ -34,7 +34,7 @@ export function formatBidPrep(rows: BidPrepRow[], tomorrow: string, dashboardBas
     const dep = depositWon(r.min_bid_price);
     out.push(`   ${r.court} · 최저가 ${eok(r.min_bid_price)} · 보증금 ${manwon(dep)} (10%) · ${numberToKoreanHangeulAmount(dep ?? 0)}`);
     if (r.bid_guide) out.push(`   🎯 ${r.bid_guide}`);
-    if (dashboardBase) out.push(`   ${dashboardBase.replace(/\/+$/, '')}/#case=${encodeURIComponent(r.case_no)}&item=${encodeURIComponent(r.item_no || '1')}`);
+    if (dashboardBase) out.push(`   ${dashboardBase.replace(/\/+$/, '')}/#case=${encodeURIComponent(r.case_no)}&item=${encodeURIComponent(r.item_no || '1')}&court=${encodeURIComponent(r.court)}`);
   });
   out.push('');
   out.push('준비물: 신분증 · 도장 · 보증금(수표 1매 권장) · 사건번호 메모');

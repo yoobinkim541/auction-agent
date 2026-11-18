@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process';
 import { query, pool } from '../shared/db.ts';
 
 interface SurpriseRow {
-  case_no: string; item_no: string; sale_date: string;
+  court: string; case_no: string; item_no: string; sale_date: string;
   property_type: string; address: string; region: string;
   appraisal_value: number; expected_bid: number | null; sold_amount: number | null;
   sale_ratio: number | null; residual_pct: number | null;
@@ -130,17 +130,22 @@ async function getSurprises(limit: number, typeFilter: string | null): Promise<S
   // overpriced: residual_pct 상위 (sold >> expected)
   if (!typeFilter || typeFilter === 'overpriced') {
     const r = await query<SurpriseRow>(`
-      SELECT e.case_no, e.item_no, e.sale_date::text, e.property_type, l.address,
+      SELECT e.court, e.case_no, e.item_no, e.sale_date::text, e.property_type, l.address,
              split_part(l.address, ' ', 1) || ' ' || split_part(l.address, ' ', 2) as region,
              e.appraisal_value::float8, e.expected_bid::float8, e.sold_amount::float8,
              e.sale_ratio, e.residual_pct, e.total_score, e.recommendation,
              e.inq_cnt, e.interest_cnt, e.market_price::float8, e.min_bid_price::float8,
              'overpriced' as surprise_type
         FROM gm_trusted_outcome_eval e
-        JOIN gm_listings l ON l.case_no = e.case_no AND coalesce(l.item_no,'1') = e.item_no
+        JOIN LATERAL (
+          SELECT address FROM gm_listings l
+           WHERE l.court = e.court AND l.case_no = e.case_no
+             AND coalesce(nullif(l.item_no,''),'1') = coalesce(nullif(e.item_no,''),'1')
+           ORDER BY l.crawled_at DESC NULLS LAST, l.id DESC LIMIT 1
+        ) l ON true
        WHERE e.sale_date < current_date AND e.residual_pct IS NOT NULL
          AND NOT EXISTS (SELECT 1 FROM gm_postmortems p
-                          WHERE p.case_no = e.case_no AND p.item_no = e.item_no
+                          WHERE p.court = e.court AND p.case_no = e.case_no AND p.item_no = e.item_no
                             AND p.sale_date = e.sale_date AND p.surprise_type = 'overpriced')
        ORDER BY e.residual_pct DESC LIMIT ${limit}`);
     rows.push(...r);
@@ -149,19 +154,24 @@ async function getSurprises(limit: number, typeFilter: string | null): Promise<S
   // avoid_but_sold: 미통과/회피인데 낙찰가율 높은 순
   if (!typeFilter || typeFilter === 'avoid_but_sold') {
     const r = await query<SurpriseRow>(`
-      SELECT e.case_no, e.item_no, e.sale_date::text, e.property_type, l.address,
+      SELECT e.court, e.case_no, e.item_no, e.sale_date::text, e.property_type, l.address,
              split_part(l.address, ' ', 1) || ' ' || split_part(l.address, ' ', 2) as region,
              e.appraisal_value::float8, e.expected_bid::float8, e.sold_amount::float8,
              e.sale_ratio, e.residual_pct, e.total_score, e.recommendation,
              e.inq_cnt, e.interest_cnt, e.market_price::float8, e.min_bid_price::float8,
              'avoid_but_sold' as surprise_type
         FROM gm_trusted_outcome_eval e
-        JOIN gm_listings l ON l.case_no = e.case_no AND coalesce(l.item_no,'1') = e.item_no
+        JOIN LATERAL (
+          SELECT address FROM gm_listings l
+           WHERE l.court = e.court AND l.case_no = e.case_no
+             AND coalesce(nullif(l.item_no,''),'1') = coalesce(nullif(e.item_no,''),'1')
+           ORDER BY l.crawled_at DESC NULLS LAST, l.id DESC LIMIT 1
+        ) l ON true
        WHERE e.sale_date < current_date AND e.sold = true
          AND (e.passed_filter = false OR e.recommendation = 'avoid')
          AND e.sale_ratio > 1.0
          AND NOT EXISTS (SELECT 1 FROM gm_postmortems p
-                          WHERE p.case_no = e.case_no AND p.item_no = e.item_no
+                          WHERE p.court = e.court AND p.case_no = e.case_no AND p.item_no = e.item_no
                             AND p.sale_date = e.sale_date AND p.surprise_type = 'avoid_but_sold')
        ORDER BY e.sale_ratio DESC LIMIT ${limit}`);
     rows.push(...r);
@@ -170,18 +180,23 @@ async function getSurprises(limit: number, typeFilter: string | null): Promise<S
   // passed_but_unsold: 추천했는데 유찰
   if (!typeFilter || typeFilter === 'passed_but_unsold') {
     const r = await query<SurpriseRow>(`
-      SELECT e.case_no, e.item_no, e.sale_date::text, e.property_type, l.address,
+      SELECT e.court, e.case_no, e.item_no, e.sale_date::text, e.property_type, l.address,
              split_part(l.address, ' ', 1) || ' ' || split_part(l.address, ' ', 2) as region,
              e.appraisal_value::float8, e.expected_bid::float8, e.sold_amount::float8,
              e.sale_ratio, e.residual_pct, e.total_score, e.recommendation,
              e.inq_cnt, e.interest_cnt, e.market_price::float8, e.min_bid_price::float8,
              'passed_but_unsold' as surprise_type
         FROM gm_outcome_eval e
-        JOIN gm_listings l ON l.case_no = e.case_no AND coalesce(l.item_no,'1') = e.item_no
+        JOIN LATERAL (
+          SELECT address FROM gm_listings l
+           WHERE l.court = e.court AND l.case_no = e.case_no
+             AND coalesce(nullif(l.item_no,''),'1') = coalesce(nullif(e.item_no,''),'1')
+           ORDER BY l.crawled_at DESC NULLS LAST, l.id DESC LIMIT 1
+        ) l ON true
        WHERE e.sale_date < current_date AND e.matched = true AND e.sold = false
          AND e.passed_filter = true
          AND NOT EXISTS (SELECT 1 FROM gm_postmortems p
-                          WHERE p.case_no = e.case_no AND p.item_no = e.item_no
+                          WHERE p.court = e.court AND p.case_no = e.case_no AND p.item_no = e.item_no
                             AND p.sale_date = e.sale_date AND p.surprise_type = 'passed_but_unsold')
        ORDER BY e.total_score DESC NULLS LAST LIMIT ${limit}`);
     rows.push(...r);
@@ -224,17 +239,17 @@ async function main(): Promise<void> {
       const result = await callClaudeCli(prompt);
       await query(`
         INSERT INTO gm_postmortems
-          (case_no, item_no, sale_date, surprise_type,
+          (court, case_no, item_no, sale_date, surprise_type,
            property_type, address, region,
            appraisal_value, expected_bid, sold_amount, sale_ratio, residual_pct,
            total_score, recommendation, inq_cnt, interest_cnt, tags, reason)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-        ON CONFLICT (case_no, item_no, sale_date, surprise_type) DO NOTHING`,
+        VALUES ($19,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+        ON CONFLICT (court, case_no, item_no, sale_date, surprise_type) DO NOTHING`,
         [row.case_no, row.item_no, row.sale_date, row.surprise_type,
          row.property_type, row.address, row.region,
          row.appraisal_value, row.expected_bid, row.sold_amount, row.sale_ratio, row.residual_pct,
          row.total_score, row.recommendation, row.inq_cnt, row.interest_cnt,
-         JSON.stringify(result.tags), result.reason],
+         JSON.stringify(result.tags), result.reason, row.court],
       );
       console.log(`✅ ${label} → [${result.tags.join(', ')}] ${result.reason.slice(0, 60)}...`);
       done++;

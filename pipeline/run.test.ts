@@ -23,6 +23,16 @@ describe('extractTenantsFromNotes', () => {
     expect(tenants[0]!.moveInDate).toBe('2021-01-01');
   });
 
+  it('날짜에 띄어쓰기·콜론이 섞여도 전입일·확정일을 읽는다', () => {
+    const spaced = extractTenantsFromNotes(['매수인에게 대항할 수 있는 을구 순위 4번 임차권등기 있음(임대차보증금 260,000,000원, 전입일 2020. 4. 24. , 확정일자 2020. 3. 24.).']);
+    expect(spaced[0]!.moveInDate).toBe('2020-04-24');
+    expect(spaced[0]!.fixedDate).toBe('2020-03-24');
+    const colon = extractTenantsFromNotes(['매수인에게 대항할 수 있는 임차인 있음(임대차보증금: 150,000,000원, 전입일자: 2022.12.01., 확정일자: 2022.11.30.)']);
+    expect(colon[0]!.deposit).toBe(150_000_000);
+    expect(colon[0]!.moveInDate).toBe('2022-12-01');
+    expect(colon[0]!.fixedDate).toBe('2022-11-30');
+  });
+
   it('"전입일자" 대신 "전입일"(자 없음) 표기도 전입일로 인식한다', () => {
     const notes = ['매수인에게 대항할 수 있는 임차인이 있음(임대차보증금 195,000,000원, 전입일 2020.8.3, 확정일자 2020.8.3)'];
     const tenants = extractTenantsFromNotes(notes);

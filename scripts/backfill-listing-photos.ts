@@ -116,7 +116,7 @@ export function buildMissingPhotosQuery(options: BackfillOptions): { sql: string
            (pe.status in ('recommended', 'conditional')) as is_recommended
       from gm_listings l
       left join gm_precision_evaluations pe on pe.listing_id = l.id
-      left join gm_scores sc on sc.case_no = l.case_no
+      left join gm_scores sc on sc.listing_id = l.id
      where l.sale_date >= current_date
        ${whereCourt}
        and not exists (

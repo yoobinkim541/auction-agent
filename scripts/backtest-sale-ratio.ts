@@ -1,43 +1,43 @@
 /**
- * Phase4a 시간분할 백테스트 — 회차밴드 추가한 실증 낙찰가율 테이블이 기존 대비 낙찰가율 예측을
- * 개선하는지 검증. 학습(과거 매각) → 검증(최근 매각) 분할.
+ * 시간분할 백테스트 — 예상낙찰가의 실증 폴백(최저가 대비 배율 테이블)이 직전 로직보다 낙찰가율을
+ * 잘 맞히는지 검증. 학습(과거 매각) → 검증(최근 매각) 분할.
  *
- * 비교 대상:
- *  - new_table: 종류×지역×회차밴드 계층 (이번 변경)
- *  - old_table: 종류×지역만 (기존 로직 재현)
- *  - stored_expected_bid: 스냅샷에 저장된 현행 운영 예상낙찰가(expected_bid/appraisal)
+ * 비교 대상(둘 다 운영과 같이 '이번 최저가' 하한을 적용):
+ *  - 배율+시세 구간: 아파트는 그 기일의 신뢰도 high 시세÷최저가 구간별 배율을 먼저 본다 (현행)
+ *  - 배율: 종류×지역×회차밴드의 '낙찰가÷최저가' 중앙값 × 이번 최저가 (시세 구간 없이)
+ *  - 밴드 낙찰가율: 종류×지역×회차밴드의 낙찰가율 중앙값 (직전 로직 재현)
+ *  - stored_expected_bid: 스냅샷에 저장된 그 시점 운영 예상낙찰가(expected_bid/appraisal)
  *
- * 지표: 실제 낙찰가율 대비 MAE·MAPE·편향(+면 과소예측). 낮을수록 좋음.
- * 사용: npm run backtest:sale-ratio [--split-pct 70]
+ * 지표: 실제 낙찰가율 대비 MAE·MAPE·편향(예측−실제, +면 과대예측). 낮을수록 좋음.
+ * 사용: npm run backtest:sale-ratio [--split-pct=70]
  */
 import 'dotenv/config';
-import { query, pool } from '../shared/db.ts';
-import { buildSaleRatioTable, regionFromAddress, roundBandFromMinBid, type SaleRatioSample } from '../pipeline/cost/sale-ratio-table.ts';
+import { pool } from '../shared/db.ts';
+import {
+  buildSaleRatioTable, loadSaleRatioRows, regionFromAddress, roundBandFromMinBid, toSample, MIN_N, TYPE_RATIO_PRIOR,
+  type SaleRatioRow as Row,
+} from '../pipeline/cost/sale-ratio-table.ts';
 import { median } from '../shared/stats.ts';
 
-interface Row {
-  sale_date: string; property_type: string; address: string;
-  sale_ratio: number; min_bid_price: number | null; appraisal_value: number;
-  expected_bid: number | null;
-}
-
-/** 기존 로직 재현: 종류×지역만(회차 무시), MIN_N=20, 종류통합 → 프라이어. */
-function oldLookup(samples: SaleRatioSample[]) {
-  const byTR = new Map<string, number[]>();
-  const byT = new Map<string, number[]>();
-  const add = (m: Map<string, number[]>, k: string, v: number) => { const a = m.get(k); if (a) a.push(v); else m.set(k, [v]); };
-  for (const s of samples) {
-    if (!(s.ratioPct > 0)) continue;
-    add(byTR, `${s.propertyType}|${s.region}`, s.ratioPct);
-    add(byT, s.propertyType, s.ratioPct);
+/** 직전 로직 재현: 낙찰가율 중앙값을 종류×지역×밴드 → 종류×밴드 → 종류×지역 → 종류 → 프라이어 순으로 조회. */
+function bandRatioLookup(train: Row[]) {
+  const cells = new Map<string, number[]>();
+  for (const x of train) {
+    const region = regionFromAddress(x.address);
+    const band = roundBandFromMinBid(x.min_bid_price, x.appraisal_value);
+    for (const key of [`${x.property_type}|${region}|${band}`, `${x.property_type}|${band}`, `${x.property_type}|${region}`, x.property_type]) {
+      const arr = cells.get(key);
+      if (arr) arr.push(x.sale_ratio * 100); else cells.set(key, [x.sale_ratio * 100]); // %: shared median 은 짝수 개수 평균을 정수로 반올림한다
+    }
   }
-  const PRIOR: Record<string, number> = { apartment: 88, officetel: 80, villa: 70, house: 75, land: 65 };
-  return (propertyType: string, address: string): number => {
-    const tr = byTR.get(`${propertyType}|${regionFromAddress(address)}`);
-    if (tr && tr.length >= 20) return median(tr)! / 100;
-    const t = byT.get(propertyType);
-    if (t && t.length >= 20) return median(t)! / 100;
-    return (PRIOR[propertyType] ?? 80) / 100;
+  return (x: Row): number => {
+    const region = regionFromAddress(x.address);
+    const band = roundBandFromMinBid(x.min_bid_price, x.appraisal_value);
+    for (const key of [`${x.property_type}|${region}|${band}`, `${x.property_type}|${band}`, `${x.property_type}|${region}`, x.property_type]) {
+      const arr = cells.get(key);
+      if (arr && arr.length >= MIN_N) return Math.round(median(arr)!) / 100;
+    }
+    return (TYPE_RATIO_PRIOR[x.property_type] ?? 80) / 100;
   };
 }
 
@@ -45,7 +45,7 @@ function metrics(preds: number[], actuals: number[]): { n: number; mae: number; 
   const errs = preds.map((p, i) => p - actuals[i]!);
   const abs = errs.map(Math.abs);
   const ape = errs.map((e, i) => Math.abs(e) / actuals[i]!);
-  const bias = errs.map((e, i) => e / actuals[i]!); // 음수=과대예측
+  const bias = errs.map((e, i) => e / actuals[i]!); // 양수=과대예측
   return {
     n: preds.length,
     mae: abs.reduce((a, b) => a + b, 0) / abs.length,
@@ -56,13 +56,7 @@ function metrics(preds: number[], actuals: number[]): { n: number; mae: number; 
 
 async function main(): Promise<void> {
   const splitPct = Number(process.argv.find((a) => a.startsWith('--split-pct='))?.split('=')[1] ?? 70);
-  const rows = await query<Row>(
-    `select sale_date::text, property_type, address, sale_ratio, min_bid_price, appraisal_value, expected_bid
-       from gm_trusted_outcome_eval
-      where sold and sale_ratio is not null and sale_ratio > 0
-        and appraisal_value > 0 and property_type is not null and sale_date < current_date
-      order by sale_date`,
-  );
+  const rows = await loadSaleRatioRows();
   if (rows.length < 100) { console.log(`표본 부족: ${rows.length}건`); await pool().end(); return; }
 
   const splitIdx = Math.floor(rows.length * splitPct / 100);
@@ -70,22 +64,31 @@ async function main(): Promise<void> {
   const train = rows.slice(0, splitIdx);
   const test = rows.slice(splitIdx);
 
-  const trainSamples: SaleRatioSample[] = train.map((x) => ({
-    propertyType: x.property_type, region: regionFromAddress(x.address),
-    band: roundBandFromMinBid(x.min_bid_price, x.appraisal_value), ratioPct: x.sale_ratio * 100,
-  }));
-  const newTable = buildSaleRatioTable(trainSamples);
-  const oldLk = oldLookup(trainSamples);
+  const newTable = buildSaleRatioTable(train.map(toSample));
+  const oldLk = bandRatioLookup(train);
 
+  // 운영(expectedBid)과 같이 이번 최저가를 하한으로 둔다.
+  const floorAtMin = (x: Row, ratio: number): number => Math.max(ratio, x.min_bid_price / x.appraisal_value);
   const actuals = test.map((x) => x.sale_ratio);
-  const newPreds = test.map((x) => newTable.lookup(x.property_type, x.address, roundBandFromMinBid(x.min_bid_price, x.appraisal_value)).ratioPct / 100);
-  const oldPreds = test.map((x) => oldLk(x.property_type, x.address));
+  const newPreds = test.map((x) => floorAtMin(x, newTable.lookup(x.property_type, x.address, x.min_bid_price, x.appraisal_value, x.market_price).ratioPct / 100));
+  const plainPreds = test.map((x) => floorAtMin(x, newTable.lookup(x.property_type, x.address, x.min_bid_price, x.appraisal_value).ratioPct / 100));
+  const oldPreds = test.map((x) => floorAtMin(x, oldLk(x)));
 
-  console.log(`=== Phase4a 낙찰가율 백테스트 ===`);
+  console.log(`=== 예상 낙찰가율 백테스트 ===`);
   console.log(`학습 ${train.length}건(~${splitDate} 이전) · 검증 ${test.length}건`);
   console.log(`\n[전체 검증셋]`);
-  console.log(`  기존(종류×지역)     :`, fmt(metrics(oldPreds, actuals)));
-  console.log(`  신규(+회차밴드)     :`, fmt(metrics(newPreds, actuals)));
+  console.log(`  밴드 낙찰가율(옛 로직)   :`, fmt(metrics(oldPreds, actuals)));
+  console.log(`  최저가 배율(시세 구간 없이):`, fmt(metrics(plainPreds, actuals)));
+  console.log(`  현행(배율+시세 구간)     :`, fmt(metrics(newPreds, actuals)));
+
+  const apartments = test.map((x, i) => ({ x, i })).filter(({ x }) => x.property_type === 'apartment');
+  if (apartments.length >= 30) {
+    const a = apartments.map(({ x }) => x.sale_ratio);
+    const anchored = apartments.filter(({ x }) => x.market_price).length;
+    console.log(`\n[아파트 ${apartments.length}건 — 그중 그 기일 시세 신뢰도 high ${anchored}건]`);
+    console.log(`  최저가 배율(시세 구간 없이):`, fmt(metrics(apartments.map(({ i }) => plainPreds[i]!), a)));
+    console.log(`  현행(배율+시세 구간)     :`, fmt(metrics(apartments.map(({ i }) => newPreds[i]!), a)));
+  }
 
   // 스냅샷 저장 expected_bid 있는 행만: 현행 운영 예측과 직접 비교
   const withEb = test.map((x, i) => ({ x, i })).filter(({ x }) => x.expected_bid && x.expected_bid > 0);
@@ -93,9 +96,9 @@ async function main(): Promise<void> {
     const a = withEb.map(({ x }) => x.sale_ratio);
     const ebPreds = withEb.map(({ x }) => x.expected_bid! / x.appraisal_value);
     const newSub = withEb.map(({ i }) => newPreds[i]!);
-    console.log(`\n[expected_bid 저장된 ${withEb.length}건 — 현행 운영 예측과 직접비교]`);
-    console.log(`  현행 expected_bid   :`, fmt(metrics(ebPreds, a)));
-    console.log(`  신규(+회차밴드)     :`, fmt(metrics(newSub, a)));
+    console.log(`\n[expected_bid 저장된 ${withEb.length}건 — 그 시점 운영 예측과 직접비교]`);
+    console.log(`  저장된 expected_bid :`, fmt(metrics(ebPreds, a)));
+    console.log(`  현행(배율+시세 구간) :`, fmt(metrics(newSub, a)));
   }
 
   await pool().end();

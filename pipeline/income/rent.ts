@@ -10,6 +10,7 @@ const RENT_ENDPOINT: Partial<Record<PropertyType, string>> = {
   apartment: 'RTMSDataSvcAptRent', // 아파트 전월세
   villa: 'RTMSDataSvcRHRent', // 연립다세대 전월세
   officetel: 'RTMSDataSvcOffiRent', // 오피스텔 전월세
+  house: 'RTMSDataSvcSHRent', // 단독다가구 전월세 — k-skill 프록시
 };
 
 export interface RentDeal {

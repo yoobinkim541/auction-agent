@@ -4,6 +4,7 @@
  */
 import type { Listing } from '../../shared/types.ts';
 import { normalizeCaseNo, mapPropertyType, parseAreaToM2, extractAmountFromText } from '../normalize.ts';
+import { canonicalCourt } from './courtauction.ts';
 
 export interface ParsedRow { listing: Listing; notes: string[]; productId?: string }
 
@@ -65,7 +66,7 @@ export function parseResultRowText(text: string, opts: { productId?: string; sou
     listing: {
       caseNo: baseCaseNo,
       itemNo,
-      court: court!,
+      court: canonicalCourt(court!),
       address: addrM ? addrM[1]!.trim() : '(소재지 미상)',
       propertyType: mapPropertyType(typeLabel),
       appraisalValue,

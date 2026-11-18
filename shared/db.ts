@@ -113,18 +113,18 @@ export async function fetchRegistryOpinion(listingId: number): Promise<RegistryO
 }
 
 export async function saveOutcomeTrust(
-  caseNo: string, itemNo: string, saleDate: string, input: OutcomeTrustInput, result: OutcomeTrustResult,
+  court: string, caseNo: string, itemNo: string, saleDate: string, input: OutcomeTrustInput, result: OutcomeTrustResult,
 ): Promise<void> {
   await query(
     `insert into gm_outcome_trust
-       (case_no,item_no,sale_date,status,sold,appraisal_value,sold_amount,sale_ratio,reason_codes,checks,evaluator_version,evaluated_at)
-     values ($1,$2,$3::date,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,now())
-     on conflict (case_no,item_no,sale_date) do update set
+       (court,case_no,item_no,sale_date,status,sold,appraisal_value,sold_amount,sale_ratio,reason_codes,checks,evaluator_version,evaluated_at)
+     values ($12,$1,$2,$3::date,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,now())
+     on conflict (court,case_no,item_no,sale_date) do update set
        status=excluded.status, sold=excluded.sold, appraisal_value=excluded.appraisal_value,
        sold_amount=excluded.sold_amount, sale_ratio=excluded.sale_ratio, reason_codes=excluded.reason_codes,
        checks=excluded.checks, evaluator_version=excluded.evaluator_version, evaluated_at=now()`,
     [caseNo, itemNo, saleDate, result.status, input.sold ?? true, input.appraisalValue, input.soldAmount,
-      result.ratio, j(result.reasonCodes), j(result.checks), result.evaluatorVersion],
+      result.ratio, j(result.reasonCodes), j(result.checks), result.evaluatorVersion, court],
   );
 }
 
@@ -136,8 +136,8 @@ export async function upsertListing(l: Listing): Promise<number> {
         area_m2,building_area_m2,is_collective_building,source,source_url,raw_json,crawled_at,
         inq_cnt,interest_cnt)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,$21,$22,$23)
-     on conflict (case_no,item_no,source) do update set
-       court=excluded.court, address=excluded.address, road_address=coalesce(excluded.road_address, gm_listings.road_address),
+     on conflict (court,case_no,item_no,source) do update set
+       address=excluded.address, road_address=coalesce(excluded.road_address, gm_listings.road_address),
        lat=coalesce(excluded.lat, gm_listings.lat), lng=coalesce(excluded.lng, gm_listings.lng), property_type=excluded.property_type,
        appraisal_value=excluded.appraisal_value, min_bid_price=excluded.min_bid_price,
        min_bid_ratio=excluded.min_bid_ratio, fail_count=excluded.fail_count,
@@ -174,11 +174,11 @@ export async function upsertListingDoc(listingId: number, doc: ListingDoc): Prom
 export async function recordCompetitionSnapshot(l: Listing): Promise<void> {
   if (l.inquiryCount == null && l.interestCount == null) return;
   await query(
-    `insert into gm_competition_history (case_no, item_no, captured_date, inq_cnt, interest_cnt)
-     values ($1, $2, current_date, $3, $4)
-     on conflict (case_no, item_no, captured_date) do update set
+    `insert into gm_competition_history (court, case_no, item_no, captured_date, inq_cnt, interest_cnt)
+     values ($5, $1, $2, current_date, $3, $4)
+     on conflict (court, case_no, item_no, captured_date) do update set
        inq_cnt = excluded.inq_cnt, interest_cnt = excluded.interest_cnt`,
-    [l.caseNo, l.itemNo || '1', l.inquiryCount ?? null, l.interestCount ?? null],
+    [l.caseNo, l.itemNo || '1', l.inquiryCount ?? null, l.interestCount ?? null, l.court],
   );
 }
 
@@ -311,7 +311,7 @@ export async function photoCachePathForPublicFile(listingId: number, filename: s
   return rows[0]?.cache_path ?? null;
 }
 
-export async function markListingPhotosDeletedByCase(caseNo: string, itemNo: string, reason: string): Promise<string[]> {
+export async function markListingPhotosDeletedByCase(court: string, caseNo: string, itemNo: string, reason: string): Promise<string[]> {
   const normalizedItemNo = itemNo || '1';
   const rows = await query<{ listing_id: number; cache_path: string }>(
     `update gm_listing_photos p
@@ -320,9 +320,10 @@ export async function markListingPhotosDeletedByCase(caseNo: string, itemNo: str
       where p.listing_id=l.id
         and p.status='active'
         and l.case_no=$1
-        and coalesce(nullif(l.item_no,''),'1')=$2
+        and l.item_no=$2
+        and l.court=$4
       returning p.listing_id, p.cache_path`,
-    [caseNo, normalizedItemNo, reason],
+    [caseNo, normalizedItemNo, reason, court],
   );
   const listingIds = [...new Set(rows.map((r) => r.listing_id))];
   for (const listingId of listingIds) {
@@ -395,7 +396,14 @@ export interface ListingRow {
   sale_date: string | null; demand_deadline: string | null; area_m2: string | null;
   is_collective_building: boolean | null; source: Listing['source']; source_url: string | null;
   crawled_at: string | Date;
+  lot_no: string | null; building_name: string | null; legal_dong: string | null;
 }
+
+/** 실거래와 건물·동을 맞추는 키 — 법원 원자료(raw_json)에만 있다. */
+/** 법원 원자료의 필지·건물 식별값. gm_listings 를 별칭 없이 읽는 질의에 끼워 쓴다. */
+export const PARCEL_COLUMNS = `nullif(trim(gm_listings.raw_json->>'daepyoLotno'), '') as lot_no,
+            nullif(trim(gm_listings.raw_json->>'buldNm'), '') as building_name,
+            nullif(concat_ws(' ', nullif(trim(gm_listings.raw_json->>'hjguDong'), ''), nullif(trim(gm_listings.raw_json->>'hjguRd'), '')), '') as legal_dong`;
 
 export async function fetchListingsForAnalysis(limit = 200, onlyNew = false): Promise<ListingRow[]> {
   const where = onlyNew
@@ -411,20 +419,26 @@ export async function fetchListingsForAnalysis(limit = 200, onlyNew = false): Pr
   const joins = onlyNew ? '' : `
      left join gm_rights_analysis r on r.listing_id = gm_listings.id
      left join gm_location_analysis loc on loc.listing_id = gm_listings.id`;
+  // 재분석은 활성 매물을 매각일이 가까운 순으로 채우므로, 한도가 활성 풀보다 작으면 매각일이 먼 매물이 매일 밀려난다.
+  // (2026-11: 한도 7,500 · 활성 11,090 → 11-26 이후 기일 3,223건이 첫 분석값에 묶여 있었다.) 활성 풀은 한도와 무관하게 전부 싣는다.
+  const limitSql = onlyNew
+    ? '$1'
+    : 'greatest($1::bigint, (select count(*) from gm_listings where sale_date is null or sale_date >= current_date))';
   return query<ListingRow>(
     `select gm_listings.id, case_no, coalesce(item_no,'1') as item_no, court, address, road_address, lat, lng, property_type, appraisal_value,
-            min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url, crawled_at
+            min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url, crawled_at,
+            ${PARCEL_COLUMNS}
      from gm_listings ${joins} ${where}
      order by (sale_date is null or sale_date >= current_date) desc,
               case when sale_date >= current_date then sale_date end asc nulls last,
-              ${orderBy} limit $1`,
+              ${orderBy} limit ${limitSql}`,
     [limit],
   );
 }
 
-export async function fetchListingDocs(listingId: number): Promise<{ doc_type: string; parsed_json: any }[]> {
-  return query<{ doc_type: string; parsed_json: any }>(
-    `select doc_type, parsed_json from gm_listing_docs where listing_id=$1`,
+export async function fetchListingDocs(listingId: number): Promise<{ doc_type: string; parsed_json: any; created_at: Date }[]> {
+  return query<{ doc_type: string; parsed_json: any; created_at: Date }>(
+    `select doc_type, parsed_json, created_at from gm_listing_docs where listing_id=$1`,
     [listingId],
   );
 }
@@ -434,7 +448,8 @@ export async function fetchListingsByIds(ids: number[]): Promise<ListingRow[]> {
   if (!ids.length) return [];
   return query<ListingRow>(
     `select id, case_no, coalesce(item_no,'1') as item_no, court, address, road_address, lat, lng, property_type, appraisal_value,
-            min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url, crawled_at
+            min_bid_price, fail_count, sale_date, demand_deadline, area_m2, is_collective_building, source, source_url, crawled_at,
+            ${PARCEL_COLUMNS}
      from gm_listings where id = any($1::bigint[])`,
     [ids],
   );

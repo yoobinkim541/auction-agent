@@ -100,6 +100,13 @@ describe('groupRowsByCase', () => {
     expect(g[0]!.rows).toHaveLength(2); // A 물건 2개
     expect(g[1]!.rows).toHaveLength(1);
   });
+  it('같은 사건번호라도 법원이 다르면 따로 묶는다', () => {
+    const a = row({ case_no: '2024타경1', court: '인천지방법원', address: '인천' });
+    const b = row({ case_no: '2024타경1', court: '수원지방법원', address: '수원' });
+    const g = groupRowsByCase([a, b]);
+    expect(g).toHaveLength(2);
+    expect(g.map((x) => x.court)).toEqual(['인천지방법원', '수원지방법원']);
+  });
 });
 
 describe('fieldworkRank', () => {

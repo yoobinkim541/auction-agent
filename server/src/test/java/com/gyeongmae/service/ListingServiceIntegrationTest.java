@@ -87,7 +87,7 @@ class ListingServiceIntegrationTest {
   void multiItemDetailRequiresItemIdentityAndReturnsThatItemsPrecision() throws Exception {
     assertNull(service.detailJson(CASE_NO));
 
-    JsonNode byItem = JSON.readTree(service.detailJson(CASE_NO, "2"));
+    JsonNode byItem = JSON.readTree(service.detailJson(CASE_NO, "2", null));
     assertEquals(ITEM_TWO_ID, byItem.path("id").asLong());
     assertEquals("2", byItem.path("item_no").asText());
     assertEquals("hold", byItem.path("precision").path("status").asText());

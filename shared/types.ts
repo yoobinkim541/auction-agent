@@ -32,6 +32,9 @@ export interface Listing {
   areaM2?: number; // 전용/대지 면적 (㎡)
   buildingAreaM2?: number;
   isCollectiveBuilding?: boolean; // 집합건물 여부(아파트/오피스텔 등) → 토지 등기부 별도 확인 필요
+  lotNo?: string; // 대표 지번(법원 원자료) — 실거래의 같은 건물을 고르는 키
+  buildingName?: string; // 건물명(법원 원자료)
+  legalDong?: string; // 법정동, 읍면이면 '개군면 하자포리' 꼴(법원 원자료) — 실거래 umdNm 과 같은 표기
   inquiryCount?: number; // 조회수(경쟁 신호 — 낮을수록 저경쟁). 법원경매 검색행 inqCnt
   interestCount?: number; // 관심물건 등록수(경쟁 신호). 법원경매 gwansMulRegCnt
   source: CrawlSource;
@@ -84,6 +87,7 @@ export interface SiteComparable {
 export interface BuildingInfo {
   mainUse?: string; // 주용도
   households?: number; // 세대수
+  units?: number; // 호수 — 오피스텔·상가처럼 세대수가 0인 집합건물
   approvalDate?: string; // 사용승인일 ISO
   floorsAbove?: number;
   floorsBelow?: number;
@@ -425,6 +429,8 @@ export interface RightsAnalysisResult {
 export interface Comparable {
   apartmentName?: string;
   dong?: string; // 법정동(예: 천호동)
+  jibun?: string; // 지번(실거래 원자료) — 같은 건물 판정
+  direct?: boolean; // 직거래
   areaM2: number;
   dealAmount: number; // 실거래가 (원)
   dealDate: string; // ISO

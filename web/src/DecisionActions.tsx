@@ -127,7 +127,7 @@ export function DecisionActions({ listingId, onSaved }: { listingId: number; onS
             {(() => {
               const n = Number(targetBid);
               return Number.isFinite(n) && n > 0 ? (
-                <span style={{ display: 'block', fontSize: '12px', color: 'var(--accent, #2563eb)', marginTop: '4px' }}>
+                <span className="decision-amount">
                   금 {numberToKoreanHangeulAmount(n)}
                 </span>
               ) : null;

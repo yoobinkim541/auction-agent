@@ -45,17 +45,21 @@ async function createTemporaryRelations(client: Client): Promise<void> {
     create temp table gm_precision_shortlist (listing_id bigint, case_no text) on commit drop;
     create temp table gm_outcome_eval (
       case_no text, item_no text, sale_date date, appraisal_value bigint,
-      sold_amount bigint, sold boolean, matched boolean
+      sold_amount bigint, sold boolean, matched boolean,
+      court text not null default 'court'
     ) on commit drop;
     create temp table gm_prediction_snapshots (
-      case_no text, item_no text, sale_date date, snapped_at timestamptz
+      case_no text, item_no text, sale_date date, snapped_at timestamptz,
+      court text not null default 'court'
     ) on commit drop;
     create temp table gm_auction_results (
-      case_no text, item_no text, dxdy_date date, captured_at timestamptz
+      case_no text, item_no text, dxdy_date date, captured_at timestamptz,
+      court text not null default 'court'
     ) on commit drop;
     create temp table gm_outcome_trust (
       case_no text, item_no text, sale_date date, status text,
-      reason_codes jsonb, evaluated_at timestamptz
+      reason_codes jsonb, evaluated_at timestamptz,
+      court text not null default 'court'
     ) on commit drop;
     create temp table gm_current_decisions (listing_id bigint, decision text) on commit drop;
   `);
@@ -121,12 +125,12 @@ describeDatabase('precision production SQL against temporary PostgreSQL fixtures
           (5, 'case-5'), (6, 'case-6'), (7, 'case-7'), (8, 'case-8');
         insert into gm_current_decisions values
           (1, 'reviewing'), (2, 'reviewing'), (3, 'rejected'), (4, 'favorite');
-        insert into gm_outcome_eval values
+        insert into gm_outcome_eval (case_no, item_no, sale_date, appraisal_value, sold_amount, sold) values
           ('outcome-1', '1', current_date - 1, 200, 150, true),
           ('outcome-2', '1', current_date - 1, 200, null, true),
           ('outcome-3', '1', current_date - 1, 200, 500, false),
           ('outcome-4', '1', current_date - 1, 200, 160, true);
-        insert into gm_outcome_trust values
+        insert into gm_outcome_trust (case_no, item_no, sale_date, status, reason_codes, evaluated_at) values
           ('outcome-1', '1', current_date - 1, 'trusted', '[]', now()),
           ('outcome-2', '1', current_date - 1, 'hold', '["OUTCOME_HOLD"]', now()),
           ('outcome-3', '1', current_date - 1, 'quarantined', '["OUTCOME_QUAR"]', now());
@@ -304,21 +308,21 @@ describeDatabase('precision production SQL against temporary PostgreSQL fixtures
   it('drains outcome rows by exact case, item, and date without duplication', async () => {
     await withTemporaryDatabase(async (client) => {
       await client.query(`
-        insert into gm_outcome_eval values
+        insert into gm_outcome_eval (case_no, item_no, sale_date, appraisal_value, sold_amount, sold, matched) values
           ('case-a', '1', current_date - 1, 200, 151, true, true),
           ('case-a', '2', current_date - 1, 300, 252, true, true),
           ('case-b', '1', current_date - 1, 400, 353, true, true);
-        insert into gm_prediction_snapshots values
+        insert into gm_prediction_snapshots (case_no, item_no, sale_date, snapped_at) values
           ('case-a', '1', current_date - 1, now() - interval '5 minutes'),
           ('case-a', '2', current_date - 1, now() - interval '10 minutes'),
           ('case-b', '1', current_date - 1, now() - interval '15 minutes');
-        insert into gm_auction_results values
+        insert into gm_auction_results (case_no, item_no, dxdy_date, captured_at) values
           ('case-a', '1', current_date - 1, now() - interval '4 minutes'),
           ('case-a', '1', current_date - 1, now() - interval '3 minutes'),
           ('case-a', '1', current_date - 2, now() - interval '1 minute'),
           ('case-a', '2', current_date - 1, now() - interval '9 minutes'),
           ('case-b', '1', current_date - 1, now() - interval '14 minutes');
-        insert into gm_outcome_trust values
+        insert into gm_outcome_trust (case_no, item_no, sale_date, status, reason_codes, evaluated_at) values
           ('case-a', '2', current_date - 1, 'trusted', '[]', now()),
           ('case-b', '1', current_date - 1, 'hold', '[]', now() - interval '1 hour');
       `);
@@ -333,8 +337,8 @@ describeDatabase('precision production SQL against temporary PostgreSQL fixtures
       expect(Number(bounded.rows[0]!.case_date_item_count)).toBe(2);
       const first = (await client.query<{ case_no: string; item_no: string; sale_date: Date }>(OUTCOME_TRUST_SQL, [1, 2, false])).rows[0]!;
       await client.query(
-        `insert into gm_outcome_trust values ($1, $2, $3, 'trusted', '[]', now())`,
-        [first.case_no, first.item_no, first.sale_date],
+        `insert into gm_outcome_trust (case_no, item_no, sale_date, status, reason_codes, evaluated_at)
+         values ($1, $2, $3, 'trusted', '[]', now())`,
       );
       const next = (await client.query<{ case_no: string; item_no: string }>(OUTCOME_TRUST_SQL, [1, 2, false])).rows[0]!;
       expect(`${next.case_no}/${next.item_no}`).toBe('case-b/1');

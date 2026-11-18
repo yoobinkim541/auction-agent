@@ -95,19 +95,20 @@ describe('buildReport', () => {
     isCollectiveBuilding: true,
   };
 
-  it('dataComplete가 false면 데이터 불완전 헤드라인과 권리분석 보류를 반환한다', () => {
+  it('자료 공백이 있으면 데이터 불완전 헤드라인과 공백별 보류 사유를 반환한다', () => {
     const report = buildReport({
       rights,
       loc,
       listing,
       notes: [],
       scanText: '',
-      dataComplete: false,
+      dataGap: 'statement_pending',
     });
 
     expect(report.recommendation).toBe('caution');
-    expect(report.headline).toContain('[데이터 불완전]');
-    expect(report.rightsSummary).toContain('등기 미수집');
+    expect(report.headline).toContain('[데이터 불완전] 명세서 공개 전 수집');
+    expect(report.rightsSummary).toContain('명세서 공개 전');
+    expect(report.checklist.map((item) => item.id)).toEqual(['data-incomplete', 'verify-source']);
     expect(report.sourceUrl).toBe(listing.sourceUrl);
     expect(report.fieldwork).toBeDefined();
   });

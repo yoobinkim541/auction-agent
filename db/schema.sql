@@ -8,8 +8,8 @@ create extension if not exists vector;
 create table if not exists gm_listings (
   id            bigint generated always as identity primary key,
   case_no       text not null,
-  item_no       text not null default '1', -- NULL이면 unique(case_no,item_no,source)가 중복 허용 → 기본 물건번호 '1' 사용
-  court         text not null,
+  item_no       text not null default '1', -- NULL이면 유니크 키가 중복을 허용한다 → 기본 물건번호 '1'
+  court         text not null,             -- 법원명(담당계 표기 아님). 사건번호는 법원마다 따로 매겨져 식별 키에 들어간다
   address       text not null,
   road_address  text,
   lat           double precision,
@@ -32,9 +32,10 @@ create table if not exists gm_listings (
   source_url    text,
   raw_json      jsonb,
   crawled_at    timestamptz not null default now(),
-  unique (case_no, item_no, source)
+  constraint gm_listings_court_case_item_source_key unique (court, case_no, item_no, source)
 );
 create index if not exists gm_listings_type_sale_idx on gm_listings (property_type, sale_date);
+create index if not exists gm_listings_case_item_idx on gm_listings (case_no, item_no);
 
 create table if not exists gm_listing_docs (
   id          bigint generated always as identity primary key,
@@ -47,6 +48,9 @@ create table if not exists gm_listing_docs (
   created_at  timestamptz not null default now()
 );
 create index if not exists gm_listing_docs_listing_idx on gm_listing_docs (listing_id);
+-- 목록 API의 더낙찰 확인 링크 조회용. 조건 없는 listing_idx 로는 행마다 문서 본문(parsed_json)을 풀어 걸러야 해 느리다.
+create index if not exists gm_listing_docs_deonak_url_idx on gm_listing_docs (listing_id, created_at desc)
+  where (parsed_json->>'source') = 'deonakchal' and (parsed_json->>'sourceUrl') is not null;
 
 create table if not exists gm_rights_analysis (
   id              bigint generated always as identity primary key,
@@ -204,6 +208,16 @@ create table if not exists gm_molit_cache (
   primary key (ep, lawd_cd, ym)
 );
 
+-- 공시가격·개별공시지가·건축물대장 조회 캐시. 후보가 없거나 동호가 안 좁혀진 실패도 적재해 매일 재호출하지 않는다.
+-- payload null = 조회했으나 확정 불가. 분석 코드가 테이블을 없으면 만든다.
+create table if not exists gm_public_record_cache (
+  kind       text not null,          -- geocode | building | apartment | house | gongsijiga | poi
+  cache_key  text not null,
+  payload    jsonb,
+  fetched_at timestamptz not null default now(),
+  primary key (kind, cache_key)
+);
+
 -- 현장 임장 체크리스트 — 사용자가 직접 체크/메모하는 데이터.
 -- 주의: report(gm_location_analysis.report)는 매일 재분석 시 덮어쓰이므로 사용자 입력은 여기 별도 보관.
 -- item_key = 발품 체크리스트 항목 라벨(매물별 고유·안정적). 재분석돼도 라벨이 같으면 메모 유지.
@@ -222,7 +236,7 @@ create table if not exists gm_auction_results (
   id          serial primary key,
   case_no     text not null,
   item_no     text not null default '1',
-  court       text,
+  court       text not null,
   dxdy_date   date not null,                       -- 기일
   kind_cd     text,                                -- auctnDxdyKndCd (01 매각기일 / 02 매각결정기일)
   result_cd   text,                                -- auctnDxdyRsltCd 원본(002=유찰 등)
@@ -230,9 +244,10 @@ create table if not exists gm_auction_results (
   sold_amount bigint,                              -- 매각가(낙찰가)
   sold        boolean not null default false,
   captured_at timestamptz not null default now(),
-  unique (case_no, item_no, dxdy_date)
+  constraint gm_auction_results_court_case_item_dxdy_key unique (court, case_no, item_no, dxdy_date)
 );
 create index if not exists idx_gm_auction_results_date on gm_auction_results (dxdy_date);
+create index if not exists gm_auction_results_case_item_idx on gm_auction_results (case_no, item_no);
 
 create table if not exists gm_data_trust (
   listing_id bigint primary key references gm_listings(id) on delete cascade,
@@ -325,7 +340,7 @@ with eligible as (
     p.evaluated_at,
     p.conservative_value - p.recommended_bid as conservative_margin,
     row_number() over (
-      partition by l.case_no
+      partition by l.court, l.case_no
       order by
         case p.confidence when 'high' then 3 when 'medium' then 2 else 1 end desc,
         p.conservative_value - p.recommended_bid desc nulls last,
@@ -365,7 +380,7 @@ order by
   listing_id asc;
 
 create table if not exists gm_outcome_trust (
-  case_no text not null, item_no text not null, sale_date date not null,
+  court text not null, case_no text not null, item_no text not null, sale_date date not null,
   status text not null check (status in ('trusted','hold','quarantined')),
   sold boolean not null default false,
   appraisal_value bigint,
@@ -373,7 +388,7 @@ create table if not exists gm_outcome_trust (
   sale_ratio numeric, reason_codes jsonb not null default '[]'::jsonb,
   checks jsonb not null default '{}'::jsonb, evaluator_version text not null,
   evaluated_at timestamptz not null default now(),
-  primary key (case_no,item_no,sale_date)
+  primary key (court,case_no,item_no,sale_date)
 );
 
 -- 관심물건(★) 변동 감시 상태(발품절감 ②) — watch-favorites가 직전 상태와 diff 후 갱신.
@@ -401,12 +416,13 @@ create index if not exists gm_doc_changes_pending_idx on gm_doc_changes (notifie
 -- 경쟁 열기 시계열 — 크롤 시 일별 관심수/조회수 스냅샷(현재값만 덮어쓰던 gm_listings 보완).
 -- ★매물 관심 급증 알림(watch-favorites)·저경쟁 추세 신호용.
 create table if not exists gm_competition_history (
+  court         text not null,
   case_no       text not null,
   item_no       text not null default '1',
   captured_date date not null default current_date,
   inq_cnt       int,
   interest_cnt  int,
-  primary key (case_no, item_no, captured_date)
+  primary key (court, case_no, item_no, captured_date)
 );
 
 -- 교차 보강(courtauction ↔ deonakchal): courtauction은 임차인 표를 못 파싱(명세서 PDF) → 명도판정 '점유관계 미상'.
@@ -425,6 +441,7 @@ create index if not exists gm_deonak_tenants_case_item_idx on gm_deonak_tenants 
 -- 예측 스냅샷(Phase 0) — analyze가 점수를 덮어쓰므로, 매각 직전 예측을 동결해 사후 결과와 비교.
 create table if not exists gm_prediction_snapshots (
   id             serial primary key,
+  court          text not null,
   case_no        text not null,
   item_no        text not null default '1',
   sale_date      date,                             -- 이 예측이 겨눈 매각기일
@@ -440,19 +457,89 @@ create table if not exists gm_prediction_snapshots (
   inq_cnt        int,
   interest_cnt   int,
   snapped_at     timestamptz not null default now(),
-  unique (case_no, item_no, sale_date)
+  constraint gm_prediction_snapshots_court_case_item_sale_key unique (court, case_no, item_no, sale_date)
+);
+
+-- 시점 고정 입력 스냅샷 — 매각 D-7·D-1(KST)에 한 번만 기록하고 덮어쓰지 않는다.
+-- 학습 데이터가 권리·입지·매물 값을 '최신 행'이 아니라 판단 시점 값으로 읽기 위한 원장.
+create table if not exists gm_feature_snapshots (
+  court          text not null,
+  case_no        text not null,
+  item_no        text not null default '1',
+  sale_date      date not null,                    -- 이 스냅샷이 겨눈 매각기일
+  horizon_days   int not null check (horizon_days in (1, 7)),
+  days_to_sale   int not null,                     -- 기록 시점의 실제 잔여 일수(KST). D-7 창에 늦게 들어오면 7보다 작다
+  listing_id     bigint,
+  property_type  text,
+  appraisal_value bigint,
+  min_bid_price  bigint,
+  fail_count     int,
+  area_m2        numeric,
+  building_area_m2 numeric,
+  is_collective_building boolean,
+  inq_cnt        int,
+  interest_cnt   int,
+  listing_crawled_at timestamptz,
+  risk_grade     text,
+  assumed_amount bigint,
+  max_safe_bid   bigint,
+  has_opposition_tenant boolean,
+  tenant_count   int,
+  red_flag_count int,
+  rights_analyzed_at timestamptz,
+  market_price   bigint,
+  market_confidence text,
+  comp_basis     text,
+  comp_count     int,
+  expected_bid   bigint,
+  safety_margin  numeric,
+  true_margin    double precision,
+  recommendation text,
+  location_analyzed_at timestamptz,
+  total_score    numeric,
+  passed_filter  boolean,
+  precision_status text,
+  precision_confidence text,
+  conservative_value bigint,
+  recommended_bid bigint,
+  hard_cap_bid   bigint,
+  reason_codes   jsonb,
+  trust_status   text,
+  snapped_at     timestamptz not null default now(),
+  primary key (court, case_no, item_no, sale_date, horizon_days)
+);
+
+-- 시세 모델(AVM) 추정값 — 국토부 매매 실거래로 학습한 report-only 시세. 운영 시세(gm_location_analysis.market_price)와 별개.
+-- as_of = 평가 기준일(매각 7일 전, 아직 멀었으면 실행일). 그날로부터 신고 지연 30일 이전 거래만 썼다.
+-- as_of 가 매각 7일 전에 닿은 행은 다시 쓰지 않는다(ml:avm --rebuild 제외).
+create table if not exists gm_avm_estimates (
+  court          text not null,
+  case_no        text not null,
+  item_no        text not null default '1',
+  sale_date      date not null,
+  as_of          date not null,
+  kind           text not null,                    -- apt | rh | offi
+  value          bigint,                           -- null = 추정 불가(basis 참고)
+  value_low      bigint,                           -- 80% 구간 하한
+  value_high     bigint,
+  basis          text not null,                    -- building_area | building | dong_area | dong | sgg_area | sgg | no_area | no_comps
+  building_comps int not null default 0,           -- 같은 건물 12개월 거래 수
+  dong_comps     int not null default 0,
+  model_version  text not null,
+  created_at     timestamptz not null default now(),
+  primary key (court, case_no, item_no, sale_date)
 );
 
 -- 라벨 데이터셋(Phase 2) — 예측 스냅샷 ⋈ 실제 결과 ⋈ 매물. 보정·서프라이즈 복기의 단일 소스.
 -- matched=결과 매칭됨, sold/sold_amount=낙찰, residual=실제−예상, sale_ratio=낙찰가/감정가.
 create or replace view gm_outcome_eval as
   with L as (
-    select distinct on (case_no, coalesce(item_no,'1')) case_no, coalesce(item_no,'1') item_no,
-           property_type, court, address, appraisal_value
-      from gm_listings order by case_no, coalesce(item_no,'1'), crawled_at desc nulls last
+    select distinct on (court, case_no, item_no) court, case_no, item_no,
+           property_type, address, appraisal_value
+      from gm_listings order by court, case_no, item_no, crawled_at desc nulls last, id desc
   )
   select s.case_no, s.item_no, s.sale_date,
-         l.property_type, l.court, l.address, coalesce(s.appraisal_value, l.appraisal_value) as appraisal_value,
+         l.property_type, s.court, l.address, coalesce(s.appraisal_value, l.appraisal_value) as appraisal_value,
          s.expected_bid, s.market_price, s.min_bid_price, s.total_score, s.passed_filter,
          s.recommendation, s.true_margin, s.max_safe_bid, s.inq_cnt, s.interest_cnt,
          r.sold, r.sold_amount, r.result_cd, r.min_price as result_min_price,
@@ -463,14 +550,15 @@ create or replace view gm_outcome_eval as
          case when r.sold and s.max_safe_bid is not null then r.sold_amount <= s.max_safe_bid end as would_have_won_under_max_safe_bid,
          case when r.sold and s.market_price > 0 then (s.market_price - r.sold_amount)::float8 / s.market_price end as realized_bid_margin
     from gm_prediction_snapshots s
-    join L l on l.case_no = s.case_no and l.item_no = s.item_no
-    left join gm_auction_results r on r.case_no = s.case_no and r.item_no = s.item_no and r.dxdy_date = s.sale_date;
+    join L l on l.court = s.court and l.case_no = s.case_no and l.item_no = s.item_no
+    left join gm_auction_results r on r.court = s.court and r.case_no = s.case_no and r.item_no = s.item_no and r.dxdy_date = s.sale_date;
 
 create or replace view gm_trusted_outcome_eval as
   select e.*
     from gm_outcome_eval e
     join gm_outcome_trust t
-     on t.case_no = e.case_no
+     on t.court = e.court
+     and t.case_no = e.case_no
      and t.item_no = coalesce(nullif(e.item_no, ''), '1')
      and t.sale_date = e.sale_date
    where t.status = 'trusted'
@@ -507,12 +595,8 @@ create or replace view gm_ml_price_calibration as
   having count(*) >= 5;
 
 create or replace view gm_rights_risk_eval as
-  with latest_listing as (
-    select distinct on (case_no, coalesce(nullif(item_no,''),'1'))
-           id as listing_id, case_no, coalesce(nullif(item_no,''),'1') as item_no
-      from gm_listings
-     order by case_no, coalesce(nullif(item_no,''),'1'), crawled_at desc nulls last
-  )
+  -- 최신 매물은 (court, case_no, item_no) 인덱스로 행마다 찾는다. 세 컬럼 조인은 플래너가 결과를
+  -- 1~2행으로 잡아 중첩 루프로 매물 전체를 행마다 다시 훑는다(복기 API 4분 이상).
   select e.case_no, coalesce(nullif(e.item_no,''),'1') as item_no, e.sale_date, e.matched, e.sold,
          e.sold_amount, e.sale_ratio, e.realized_bid_margin, e.would_have_won_under_max_safe_bid,
          r.risk_grade, r.assumed_amount, r.max_safe_bid,
@@ -521,13 +605,21 @@ create or replace view gm_rights_risk_eval as
            select 1 from jsonb_array_elements(coalesce(r.tenants, '[]'::jsonb)) t
             where coalesce((t->>'hasOpposition')::boolean, false)
          ) as has_opposition_tenant,
-         jsonb_array_length(coalesce(r.red_flags, '[]'::jsonb)) as red_flag_count
+         jsonb_array_length(coalesce(r.red_flags, '[]'::jsonb)) as red_flag_count,
+         e.court
     from gm_trusted_outcome_eval e
-    left join latest_listing l on l.case_no = e.case_no and l.item_no = coalesce(nullif(e.item_no,''),'1')
+    left join lateral (
+      select g.id as listing_id
+        from gm_listings g
+       where g.court = e.court and g.case_no = e.case_no and g.item_no = coalesce(nullif(e.item_no,''),'1')
+       order by g.crawled_at desc nulls last, g.id desc
+       limit 1
+    ) l on true
     left join gm_rights_analysis r on r.listing_id = l.listing_id
    where e.sale_date < current_date;
 
 create table if not exists gm_result_retry_status (
+  court text not null,
   case_no text not null,
   item_no text not null default '1',
   sale_date date not null,
@@ -541,7 +633,7 @@ create table if not exists gm_result_retry_status (
   last_round_count int not null default 0,
   last_attempted_at timestamptz,
   succeeded_at timestamptz,
-  primary key (case_no, item_no, sale_date),
+  primary key (court, case_no, item_no, sale_date),
   check (last_status in ('pending','success','empty','blocked','error'))
 );
 
@@ -549,6 +641,7 @@ create index if not exists gm_result_retry_status_status_idx on gm_result_retry_
 
 create table if not exists gm_shadow_scores (
   id bigint generated always as identity primary key,
+  court text not null,
   case_no text not null,
   item_no text not null default '1',
   sale_date date not null,
@@ -560,13 +653,12 @@ create table if not exists gm_shadow_scores (
   feature_snapshot_hash text not null,
   features jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
-  unique (case_no, item_no, sale_date, model_name, model_version),
+  constraint gm_shadow_scores_court_case_item_sale_model_key unique (court, case_no, item_no, sale_date, model_name, model_version),
   check (predicted_sale_ratio > 0),
   check (conservative_sale_ratio is null or conservative_sale_ratio > 0),
   check (confidence is null or (confidence >= 0 and confidence <= 1))
 );
 
-create index if not exists gm_shadow_scores_case_sale_idx on gm_shadow_scores (case_no, item_no, sale_date);
 create index if not exists gm_shadow_scores_model_idx on gm_shadow_scores (model_name, model_version, created_at desc);
 
 create or replace view gm_result_retry_queue as
@@ -584,7 +676,8 @@ create or replace view gm_result_retry_queue as
          end as retry_priority
     from gm_outcome_eval e
     left join gm_result_retry_status rs
-      on rs.case_no = e.case_no
+      on rs.court = e.court
+     and rs.case_no = e.case_no
      and rs.item_no = coalesce(nullif(e.item_no,''),'1')
      and rs.sale_date = e.sale_date
    where e.sale_date < current_date
@@ -596,7 +689,7 @@ create or replace view gm_result_retry_queue as
 create or replace view gm_shadow_score_eval as
   select s.id, s.case_no, s.item_no, s.sale_date, s.model_name, s.model_version,
          s.predicted_sale_ratio, s.confidence, s.feature_snapshot_hash, s.created_at,
-         e.property_type, e.court, e.address, e.appraisal_value, e.matched, e.sold,
+         e.property_type, s.court, e.address, e.appraisal_value, e.matched, e.sold,
          e.sold_amount, e.sale_ratio, e.realized_bid_margin,
          case when e.sale_ratio is not null then s.predicted_sale_ratio - e.sale_ratio end as sale_ratio_error,
          case when e.sale_ratio is not null then abs(s.predicted_sale_ratio - e.sale_ratio) end as abs_sale_ratio_error,
@@ -604,7 +697,8 @@ create or replace view gm_shadow_score_eval as
          s.conservative_sale_ratio
     from gm_shadow_scores s
     left join gm_trusted_outcome_eval e
-      on e.case_no = s.case_no
+      on e.court = s.court
+     and e.case_no = s.case_no
      and coalesce(nullif(e.item_no,''),'1') = s.item_no
      and e.sale_date = s.sale_date;
 
@@ -694,7 +788,7 @@ with active_listings as (
          q.sale_date as sort_date,
          l.source_url
     from gm_result_retry_queue q
-    join gm_listings l on l.case_no = q.case_no and coalesce(nullif(l.item_no, ''), '1') = q.item_no
+    join gm_listings l on l.court = q.court and l.case_no = q.case_no and coalesce(nullif(l.item_no, ''), '1') = q.item_no
    where q.days_overdue > 0
   union all
   select l.id as listing_id, e.case_no, coalesce(nullif(e.item_no, ''), '1') as item_no,
@@ -712,7 +806,7 @@ with active_listings as (
          e.sale_date as sort_date,
          l.source_url
     from gm_outcome_eval e
-    join gm_listings l on l.case_no = e.case_no and coalesce(nullif(l.item_no, ''), '1') = coalesce(nullif(e.item_no, ''), '1')
+    join gm_listings l on l.court = e.court and l.case_no = e.case_no and coalesce(nullif(l.item_no, ''), '1') = coalesce(nullif(e.item_no, ''), '1')
    where e.sale_date >= current_date - 14
      and (
        (e.sold and e.residual_pct > 0.15)

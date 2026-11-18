@@ -14,7 +14,6 @@ export function PrecisionVerdict({ precision }: { precision?: PrecisionObj | nul
   if (!precision) {
     return (
       <section className="precision-verdict precision-verdict-unknown" aria-labelledby="precision-verdict-title">
-        <span className="precision-kicker">PRECISION VERDICT</span>
         <h3 id="precision-verdict-title">정밀 추천 데이터 없음 — 전체 목록은 정밀 추천이 아닙니다</h3>
       </section>
     );
@@ -26,7 +25,6 @@ export function PrecisionVerdict({ precision }: { precision?: PrecisionObj | nul
     <section className={`precision-verdict precision-verdict-${view.tone}`} aria-labelledby="precision-verdict-title">
       <div className="precision-verdict-head">
         <div>
-          <span className="precision-kicker">PRECISION VERDICT</span>
           <h3 id="precision-verdict-title">{view.label}</h3>
         </div>
         <span className="precision-confidence">신뢰도 {confidenceLabel(precision.confidence)}</span>

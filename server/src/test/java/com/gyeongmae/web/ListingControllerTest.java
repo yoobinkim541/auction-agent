@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.gyeongmae.service.ListingService;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -60,14 +61,33 @@ class ListingControllerTest {
 
   @Test
   void detailByCasePassesTheSelectedItemNumber() throws Exception {
-    when(service.detailJson("2026타경1", "2")).thenReturn("{\"id\":42,\"item_no\":\"2\"}");
+    when(service.detailJson("2026타경1", "2", null)).thenReturn("{\"id\":42,\"item_no\":\"2\"}");
 
     mvc.perform(get("/api/listings/2026타경1").param("itemNo", "2"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.id").value(42))
         .andExpect(jsonPath("$.item_no").value("2"));
 
-    verify(service).detailJson("2026타경1", "2");
+    verify(service).detailJson("2026타경1", "2", null);
+  }
+
+  @Test
+  void detailByCasePassesCourtAndReturnsAmbiguousCourts() throws Exception {
+    when(service.detailJson("2026타경1", "2", "인천지방법원")).thenReturn("{\"id\":42,\"court\":\"인천지방법원\"}");
+    when(service.detailJson("2026타경1", null, null))
+        .thenThrow(new ListingService.AmbiguousCourtException(List.of("인천지방법원", "수원지방법원")));
+
+    mvc.perform(get("/api/listings/2026타경1").param("itemNo", "2").param("court", "인천지방법원"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.court").value("인천지방법원"));
+    mvc.perform(get("/api/listings/2026타경1"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.error").value("ambiguous_court"))
+        .andExpect(jsonPath("$.courts[0]").value("인천지방법원"))
+        .andExpect(jsonPath("$.courts[1]").value("수원지방법원"));
+
+    verify(service).detailJson("2026타경1", "2", "인천지방법원");
+    verify(service).detailJson("2026타경1", null, null);
   }
 
   @Test

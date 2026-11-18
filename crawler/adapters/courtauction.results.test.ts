@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseSaleResults, nextSaleDate, failedRoundCount, parseCaseResult, courtCodeByName, type SaleResultRound } from './courtauction.ts';
+import { parseSaleResults, nextSaleDate, failedRoundCount, parseCaseResult, courtCodeByName, canonicalCourt, type SaleResultRound } from './courtauction.ts';
 
 describe('courtCodeByName', () => {
   it('담당계가 붙은 DB 법원명도 본원/지원 코드로 매핑', () => {
@@ -7,6 +7,15 @@ describe('courtCodeByName', () => {
     expect(courtCodeByName('고양3계')).toBe('B214807');
     expect(courtCodeByName('서울북부1계')).toBe('B000213');
     expect(courtCodeByName('성남9계')).toBe('B000251');
+  });
+});
+
+describe('canonicalCourt', () => {
+  it('담당계 표기를 법원명으로 맞추고, 모르는 표기는 그대로 둔다', () => {
+    expect(canonicalCourt('인천8계')).toBe('인천지방법원');
+    expect(canonicalCourt('고양3계')).toBe('고양지원');
+    expect(canonicalCourt(' 수원지방법원 ')).toBe('수원지방법원');
+    expect(canonicalCourt('3계')).toBe('3계');
   });
 });
 

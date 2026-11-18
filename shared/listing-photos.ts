@@ -154,12 +154,12 @@ export async function cacheListingPhotos(
   return publicUrls;
 }
 
-export async function deleteCachedPhotosForSoldListing(caseNo: string, itemNo: string, reason = 'sold'): Promise<number> {
+export async function deleteCachedPhotosForSoldListing(court: string, caseNo: string, itemNo: string, reason = 'sold'): Promise<number> {
   try {
-    const paths = await markListingPhotosDeletedByCase(caseNo, itemNo, reason);
+    const paths = await markListingPhotosDeletedByCase(court, caseNo, itemNo, reason);
     return deletePhotoFiles(paths);
   } catch (err) {
-    console.warn(`[listing-photos] sold photo cleanup skipped for ${caseNo}/${itemNo}: ${err instanceof Error ? err.message : String(err)}`);
+    console.warn(`[listing-photos] sold photo cleanup skipped for ${court}/${caseNo}/${itemNo}: ${err instanceof Error ? err.message : String(err)}`);
     return 0;
   }
 }

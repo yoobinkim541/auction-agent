@@ -6,10 +6,11 @@
  *   한 번 받은 (엔드포인트·LAWD_CD·년월) 원자료를 gm_molit_cache 에 영구 저장하고 재사용한다.
  *   → 두 번째 실행부터는 API 호출이 거의 0 → 쿼터 안전 + 차단/타임아웃 중에도 캐시로 분석 가능.
  *
- * 회로차단(circuit breaker):
- *   - 429(쿼터초과) 1회 → 이후 API 호출 중단, DB 캐시만 사용.
- *   - 연속 타임아웃/5xx N회 → 스로틀/장애로 보고 중단(전월세 엔드포인트가 429 대신 행에 빠지는 현상 대비).
+ *   - 429가 간격을 띄운 재시도 뒤에도 이어지면(쿼터초과) → 이후 자체 API 호출 중단. k-skill 프록시가 있으면 그쪽으로 폴백 후 같은 캐시에 적재.
+ *   - 연속 타임아웃/5xx N회 → 스로틀/장애로 보고 자체 API 중단(전월세 엔드포인트가 429 대신 행에 빠지는 현상 대비).
+ *   - 단독·상업(SH/Nrg 엔드포인트)은 개발키 활용신청이 없는 경우가 많아 자체 호출 없이 프록시만 쓴다.
  */
+import { fetchKskillDeals, resetKskillProxyCircuit, skipOwnMolit } from './kskill-real-estate.ts';
 import { query } from './db.ts';
 
 const MOLIT_BASE = 'https://apis.data.go.kr/1613000';
@@ -18,10 +19,17 @@ const RECENT_MONTHS = 3; // 최근 3개월은 신고지연(30일+)으로 갱신 
 const RECENT_TTL_MS = 7 * 86_400_000; // 최근 월 캐시는 7일 후 갱신
 const FAIL_CIRCUIT = 5; // 연속 실패 임계 — 초과 시 API 호출 중단
 const REQ_TIMEOUT_MS = 15_000;
+// 게이트웨이는 초당 수십 건을 넘기면 429로 막고 1초쯤 뒤 풀린다(2026-11 재현: 4.5초에 300건 → 265건 429).
+// 일일 쿼터 소진과 응답 코드가 같아, 간격을 띄우고 몇 번 다시 보낸 뒤에도 429일 때만 쿼터로 본다.
+const MIN_INTERVAL_MS = 50;
+const RATE_RETRIES = 3;
+const RATE_BACKOFF_MS = 1_000;
 
 let _quotaHit = false; // 429 또는 회로차단 시 true
 let _consecFail = 0;
 let _ensured = false;
+let _nextSlot = 0;
+const _blockedEps = new Set<string>(); // 활용신청이 안 된 엔드포인트(401/403) — 이번 실행에선 다시 부르지 않는다
 const _mem = new Map<string, Promise<unknown[] | null>>(); // 프로세스 내 중복 호출 dedup
 
 export function molitQuotaHit(): boolean {
@@ -31,7 +39,10 @@ export function molitQuotaHit(): boolean {
 export function resetMolitCircuit(): void {
   _quotaHit = false;
   _consecFail = 0;
+  _nextSlot = 0;
+  _blockedEps.clear();
   _mem.clear();
+  resetKskillProxyCircuit();
 }
 
 async function ensureTable(): Promise<void> {
@@ -63,6 +74,21 @@ function isRecentMonth(ym: string): boolean {
   return dist >= 0 && dist < RECENT_MONTHS;
 }
 
+const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
+
+/** 요청 간격을 띄워 보내고, 429는 잠깐 쉬었다 다시 보낸다. 끝까지 429면 그 응답을 돌려준다. */
+async function requestMolit(url: string): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const now = Date.now();
+    const slot = Math.max(now, _nextSlot);
+    _nextSlot = slot + MIN_INTERVAL_MS;
+    if (slot > now) await sleep(slot - now);
+    const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(REQ_TIMEOUT_MS) });
+    if (res.status !== 429 || attempt >= RATE_RETRIES) return res;
+    await sleep(RATE_BACKOFF_MS * (attempt + 1));
+  }
+}
+
 interface CacheRow {
   items: unknown[] | null;
   fetched_at: string;
@@ -89,6 +115,60 @@ export async function fetchMolitRaw(ep: string, lawdCd: string, ym: string): Pro
   return p;
 }
 
+async function writeCache(ep: string, lawdCd: string, ym: string, items: unknown[]): Promise<void> {
+  await query(
+    `insert into gm_molit_cache (ep, lawd_cd, ym, items, n, fetched_at)
+     values ($1,$2,$3,$4::jsonb,$5,now())
+     on conflict (ep, lawd_cd, ym) do update set items=excluded.items, n=excluded.n, fetched_at=now()`,
+    [ep, lawdCd, ym, JSON.stringify(items), items.length],
+  );
+}
+
+/** 한 쪽 1000행. 강남·송파 전월세는 한 달에 1000건을 넘어 쪽을 넘겨야 다 온다(2026-10 강남 아파트 전월세 1,314건). */
+const OWN_PAGE_ROWS = 1000;
+const OWN_MAX_PAGES = 10;
+
+async function fetchOwn(ep: string, lawdCd: string, ym: string, key: string): Promise<unknown[] | null> {
+  const items: unknown[] = [];
+  for (let pageNo = 1; pageNo <= OWN_MAX_PAGES; pageNo++) {
+    const page = await fetchOwnPage(ep, lawdCd, ym, key, pageNo);
+    if (!page) return null; // 일부 쪽만 받은 결과는 저장하지 않는다
+    items.push(...page.items);
+    if (page.items.length < OWN_PAGE_ROWS || items.length >= page.totalCount) break;
+  }
+  _consecFail = 0;
+  await writeCache(ep, lawdCd, ym, items);
+  return items;
+}
+
+async function fetchOwnPage(ep: string, lawdCd: string, ym: string, key: string, pageNo: number): Promise<{ items: unknown[]; totalCount: number } | null> {
+  const url = `${MOLIT_BASE}/${ep}/get${ep}?serviceKey=${encodeURIComponent(key)}&LAWD_CD=${lawdCd}&DEAL_YMD=${ym}&numOfRows=${OWN_PAGE_ROWS}&pageNo=${pageNo}&_type=json`;
+  try {
+    const res = await requestMolit(url);
+    if (res.status === 429) {
+      _quotaHit = true;
+      console.warn('[molit] 일일 쿼터 초과(429) — k-skill 프록시/캐시 폴백');
+      return null;
+    }
+    if (!res.ok) {
+      if (res.status >= 500) bumpFail();
+      if ((res.status === 401 || res.status === 403) && !_blockedEps.has(ep)) {
+        // 미승인 엔드포인트를 매물마다 다시 부르면 그 실패 호출이 초당 제한을 넘겨 다른 엔드포인트까지 429로 막힌다
+        _blockedEps.add(ep);
+        console.warn(`[molit] ${ep} 미승인(${res.status}) — 이번 실행은 호출 생략`);
+      }
+      return null;
+    }
+    const json = (await res.json()) as { response?: { body?: { totalCount?: number; items?: { item?: unknown } } } };
+    const raw = json?.response?.body?.items?.item;
+    const items = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    return { items, totalCount: Number(json?.response?.body?.totalCount ?? items.length) };
+  } catch {
+    bumpFail(); // 타임아웃 등 — 전월세 엔드포인트가 429 대신 행에 빠지는 경우 회로 차단
+    return null;
+  }
+}
+
 async function _fetch(ep: string, lawdCd: string, ym: string): Promise<unknown[] | null> {
   const key = process.env.MOLIT_SERVICE_KEY;
   await ensureTable();
@@ -97,36 +177,16 @@ async function _fetch(ep: string, lawdCd: string, ym: string): Promise<unknown[]
     const fresh = !isRecentMonth(ym) || Date.now() - new Date(cached.fetched_at).getTime() < RECENT_TTL_MS;
     if (fresh) return cached.items ?? [];
   }
-  // 캐시 없음/만료 → API. 쿼터차단·키없음이면 (만료라도) 있던 캐시 폴백.
-  if (!key || _quotaHit) return cached ? (cached.items ?? []) : null;
-
-  const url = `${MOLIT_BASE}/${ep}/get${ep}?serviceKey=${encodeURIComponent(key)}&LAWD_CD=${lawdCd}&DEAL_YMD=${ym}&numOfRows=1000&pageNo=1&_type=json`;
-  try {
-    const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(REQ_TIMEOUT_MS) });
-    if (res.status === 429) {
-      _quotaHit = true;
-      console.warn('[molit] 일일 쿼터 초과(429) — 이후 DB 캐시만 사용');
-      return cached ? (cached.items ?? []) : null;
-    }
-    if (!res.ok) {
-      if (res.status >= 500) bumpFail();
-      return cached ? (cached.items ?? []) : null;
-    }
-    const json = (await res.json()) as { response?: { body?: { items?: { item?: unknown } } } };
-    const raw = json?.response?.body?.items?.item;
-    const items = Array.isArray(raw) ? raw : raw ? [raw] : [];
-    _consecFail = 0;
-    await query(
-      `insert into gm_molit_cache (ep, lawd_cd, ym, items, n, fetched_at)
-       values ($1,$2,$3,$4::jsonb,$5,now())
-       on conflict (ep, lawd_cd, ym) do update set items=excluded.items, n=excluded.n, fetched_at=now()`,
-      [ep, lawdCd, ym, JSON.stringify(items), items.length],
-    );
-    return items;
-  } catch {
-    bumpFail(); // 타임아웃 등 — 전월세 엔드포인트가 429 대신 행에 빠지는 경우 회로 차단
-    return cached ? (cached.items ?? []) : null;
+  if (!skipOwnMolit(ep, !!key, _quotaHit) && key && !_blockedEps.has(ep)) {
+    const own = await fetchOwn(ep, lawdCd, ym, key);
+    if (own) return own;
   }
+  const proxied = await fetchKskillDeals(ep, lawdCd, ym);
+  if (proxied) {
+    await writeCache(ep, lawdCd, ym, proxied);
+    return proxied;
+  }
+  return cached ? (cached.items ?? []) : null;
 }
 
 function bumpFail(): void {

@@ -40,7 +40,7 @@ describe('web scoreClient', () => {
   });
 
   it('데이터 불완전 헤드라인 → 탈락', () => {
-    const r = scoreClient(mk(loc({ report: { dangerCount: 0, headline: '[데이터 불완전] 등기 미수집' } })), DEFAULT_CONFIG);
+    const r = scoreClient(mk(loc({ report: { dangerCount: 0, headline: '[데이터 불완전] 명세서 공개 전 수집' } })), DEFAULT_CONFIG);
     expect(r.passed).toBe(false);
   });
 

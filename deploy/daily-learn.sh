@@ -7,6 +7,7 @@
 # 전부 bounded·claude CLI는 스크립트 내부 백오프. 단계별 실패는 무시하고 다음 단계로 간다(본 배치 무관).
 #  - registry-opinion: EMPTY_REGISTRY 단독 hold 물건에 AI 1차 소견(다음날 analyze가 조회해 hold→conditional 완화).
 #  - eval:postmortem: 서프라이즈 케이스 정성 복기(Phase3) 점진 축적.
+#  - ml:avm: 실거래 시세 모델 재학습 후 매물 시세(gm_avm_estimates) 갱신. ml:eval·ml:shadow가 이 값을 읽으므로 그 앞.
 #  - ml:eval: 오프라인 ML 리포트 갱신(report-only, 운영 미반영).
 #  - ml:shadow: trusted 결과로 앙상블 재학습 후 예정 매물 shadow 점수만 갱신.
 # claude CLI 호출량 억제(memo 단계와 합산): registry 30 + postmortem 최대 15(타입3×5) + 3s 간격.
@@ -25,6 +26,7 @@ OUTCOME_RETRY_TIME_BUDGET_MS="${OUTCOME_RETRY_TIME_BUDGET_MS:-6000000}" \
 
 REGISTRY_OPINION_LIMIT="${REGISTRY_OPINION_LIMIT:-30}" npm run registry-opinion:backfill 2>&1 || echo "[registry-opinion] 실패(무시)"
 POSTMORTEM_LIMIT="${POSTMORTEM_LIMIT:-5}" npm run eval:postmortem 2>&1 || echo "[eval:postmortem] 실패(무시)"
+npm run ml:avm 2>&1 || echo "[ml:avm] 실패(무시)"
 npm run ml:eval 2>&1 || echo "[ml:eval] 실패(무시)"
 ML_SHADOW_LEAD_DAYS="${ML_SHADOW_LEAD_DAYS:-30}" npm run ml:shadow 2>&1 || echo "[ml:shadow] 실패(무시)"
 

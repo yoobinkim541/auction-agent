@@ -118,14 +118,21 @@ export function sortRows(rows: ScoredRow[], sort: SortKey, sortDir: 'asc' | 'des
   return v;
 }
 
-/** 사건(case_no) 단위 그룹화 — 한 사건의 여러 물건을 묶는다. 정렬 순서 보존(그룹은 최상위 멤버 위치에). */
-export function groupRowsByCase(rows: ScoredRow[]): { caseNo: string; rows: ScoredRow[] }[] {
+export function caseGroupKey(court: string | null | undefined, caseNo: string): string {
+  return `${court ?? ''}\u0000${caseNo}`;
+}
+
+/** 법원+사건번호 단위 그룹화. 같은 사건번호라도 법원이 다르면 묶지 않는다. 정렬 순서 보존. */
+export function groupRowsByCase(rows: ScoredRow[]): { key: string; caseNo: string; court: string; rows: ScoredRow[] }[] {
   const order: string[] = [];
   const map = new Map<string, ScoredRow[]>();
   for (const r of rows) {
-    const k = r.item.case_no;
+    const k = caseGroupKey(r.item.court, r.item.case_no);
     if (!map.has(k)) { map.set(k, []); order.push(k); }
     map.get(k)!.push(r);
   }
-  return order.map((caseNo) => ({ caseNo, rows: map.get(caseNo)! }));
+  return order.map((key) => {
+    const grouped = map.get(key)!;
+    return { key, caseNo: grouped[0]!.item.case_no, court: grouped[0]!.item.court ?? '', rows: grouped };
+  });
 }

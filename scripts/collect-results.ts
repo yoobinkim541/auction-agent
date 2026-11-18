@@ -10,7 +10,7 @@
 import 'dotenv/config';
 import { query, pool } from '../shared/db.ts';
 import {
-  collectSaleResults, collectCaseResults, courtCodeByName,
+  canonicalCourt, collectSaleResults, collectCaseResults, courtCodeByName,
   nextSaleDate, failedRoundCount, type SaleResultRound,
 } from '../crawler/adapters/courtauction.ts';
 import { normalizeCaseNo } from '../crawler/normalize.ts';
@@ -48,20 +48,21 @@ function toCourtItemNo(itemNo: string | null | undefined): string {
 }
 
 /** 회차 결과 upsert + 유찰 차기기일 sale_date 백필(변경 있을 때만). 1·2차 공용. */
-async function recordRounds(caseNo: string, itemNo: string, court: string | null, rounds: SaleResultRound[], today: string, ctr: Counters): Promise<void> {
+async function recordRounds(caseNo: string, itemNo: string, court: string, rounds: SaleResultRound[], today: string, ctr: Counters): Promise<void> {
+  const storedCourt = canonicalCourt(court);
   for (const rd of rounds) {
     await query(
       `insert into gm_auction_results (case_no,item_no,court,dxdy_date,kind_cd,result_cd,min_price,sold_amount,sold,captured_at)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
-       on conflict (case_no,item_no,dxdy_date) do update set
+       on conflict (court,case_no,item_no,dxdy_date) do update set
          kind_cd=excluded.kind_cd, result_cd=excluded.result_cd, min_price=excluded.min_price,
          sold_amount=excluded.sold_amount, sold=excluded.sold, captured_at=now()`,
-      [caseNo, itemNo, court, rd.date, rd.kindCd, rd.resultCd, rd.minPrice, rd.soldAmount, rd.sold],
+      [caseNo, itemNo, storedCourt, rd.date, rd.kindCd, rd.resultCd, rd.minPrice, rd.soldAmount, rd.sold],
     );
     ctr.upserted++;
     if (rd.sold) {
       ctr.sold++;
-      const deleted = await deleteCachedPhotosForSoldListing(caseNo, itemNo, 'sold');
+      const deleted = await deleteCachedPhotosForSoldListing(storedCourt, caseNo, itemNo, 'sold');
       if (deleted) console.log(`[collect-results] 사진 캐시 삭제 ${caseNo}/${itemNo}: ${deleted}개`);
     }
   }
@@ -69,9 +70,9 @@ async function recordRounds(caseNo: string, itemNo: string, court: string | null
   if (next) {
     const res = await query(
       `update gm_listings set sale_date=$1::date, min_bid_price=coalesce($2, min_bid_price), fail_count=$3
-         where case_no=$4 and coalesce(nullif(item_no,''),'1')=$5 and sale_date is distinct from $1::date
+         where court=$6 and case_no=$4 and coalesce(nullif(item_no,''),'1')=$5 and sale_date is distinct from $1::date
        returning case_no`,
-      [next.date, next.minPrice, failedRoundCount(rounds, today), caseNo, itemNo],
+      [next.date, next.minPrice, failedRoundCount(rounds, today), caseNo, itemNo, storedCourt],
     );
     if (res.length) ctr.refreshed++;
   }
@@ -86,10 +87,12 @@ async function main(): Promise<void> {
     const cases = rows.map((r) => {
       const caseNo = toCourtCaseNo(r.case_no);
       const itemNo = toCourtItemNo(r.item_no);
-      const key = `${caseNo}|${itemNo}`;
-      courtOf.set(key, r.court);
+      const court = canonicalCourt(r.court);
+      const cortOfcCd = courtCodeByName(court) ?? '';
+      const key = `${cortOfcCd}|${caseNo}|${itemNo}`;
+      courtOf.set(key, court);
       dbKeyOf.set(key, { caseNo: r.case_no, itemNo: r.item_no });
-      return { caseNo, cortOfcCd: courtCodeByName(r.court) ?? '', itemNo };
+      return { caseNo, cortOfcCd, itemNo };
     }).filter((c) => c.cortOfcCd);
     return { courtOf, dbKeyOf, cases };
   };
@@ -105,16 +108,19 @@ async function main(): Promise<void> {
     `select distinct l.case_no, coalesce(nullif(l.item_no,''),'1') item_no, l.court, l.sale_date
        from gm_listings l
       where l.sale_date >= current_date - $1::int and l.sale_date <= current_date + $2::int
-        and not exists (select 1 from gm_auction_results r where r.case_no=l.case_no and r.item_no=coalesce(nullif(l.item_no,''),'1') and r.sold)
+        and not exists (select 1 from gm_auction_results r
+           where r.court = l.court and r.case_no=l.case_no and r.item_no=coalesce(nullif(l.item_no,''),'1') and r.sold)
       order by l.sale_date limit $3`,
     [daysBack, daysFwd, limit],
   ));
   console.log(`[collect-results] 1차(활성) 대상 ${a.cases.length}건…`);
   const c1: Counters = { upserted: 0, sold: 0, refreshed: 0 };
   await runPhase('1차 활성 결과 수집', tracker, undefined, () => collectSaleResults(a.cases, (key, rounds) => {
-    const [caseNo, itemNo] = key.split('|');
-    const dbKey = a.dbKeyOf.get(key) ?? { caseNo: caseNo!, itemNo: itemNo! };
-    return recordRounds(dbKey.caseNo, dbKey.itemNo, a.courtOf.get(key) ?? null, rounds, today, c1);
+    const parts = key.split('|');
+    const dbKey = a.dbKeyOf.get(key) ?? { caseNo: parts[1]!, itemNo: parts[2]! };
+    const court = a.courtOf.get(key);
+    if (!court) return;
+    return recordRounds(dbKey.caseNo, dbKey.itemNo, court, rounds, today, c1);
   }).then(() => undefined));
   console.log(`[collect-results] 1차: upsert ${c1.upserted} · 매각 ${c1.sold} · 기일갱신 ${c1.refreshed}`);
 
@@ -125,7 +131,7 @@ async function main(): Promise<void> {
        from gm_listings l
       where l.source='courtauction' and l.sale_date < current_date
         and not exists (select 1 from gm_auction_results r
-           where r.case_no=l.case_no and r.item_no=coalesce(nullif(l.item_no,''),'1')
+           where r.court = l.court and r.case_no=l.case_no and r.item_no=coalesce(nullif(l.item_no,''),'1')
              and (r.sold or r.captured_at > now() - interval '6 days'))
       order by l.sale_date desc limit $1`,
     [backfillLimit],
@@ -133,9 +139,11 @@ async function main(): Promise<void> {
   console.log(`[collect-results] 2차(소급 pgj15A) 대상 ${b.cases.length}건…`);
   const c2: Counters = { upserted: 0, sold: 0, refreshed: 0 };
   await runPhase('2차 종결 소급 수집', tracker, undefined, () => collectCaseResults(b.cases, (key, rounds) => {
-    const [caseNo, itemNo] = key.split('|');
-    const dbKey = b.dbKeyOf.get(key) ?? { caseNo: caseNo!, itemNo: itemNo! };
-    return recordRounds(dbKey.caseNo, dbKey.itemNo, b.courtOf.get(key) ?? null, rounds, today, c2);
+    const parts = key.split('|');
+    const dbKey = b.dbKeyOf.get(key) ?? { caseNo: parts[1]!, itemNo: parts[2]! };
+    const court = b.courtOf.get(key);
+    if (!court) return;
+    return recordRounds(dbKey.caseNo, dbKey.itemNo, court, rounds, today, c2);
   }).then(() => undefined));
   console.log(`[collect-results] 2차: upsert ${c2.upserted} · 매각 ${c2.sold} · 기일갱신 ${c2.refreshed}`);
 
@@ -151,16 +159,20 @@ async function main(): Promise<void> {
   console.log(`[collect-results] 3차(Phase2 미매칭) 대상 ${e.cases.length}건(limit=${evalBackfillLimit})…`);
   const c3: Counters = { upserted: 0, sold: 0, refreshed: 0 };
   const activeRounds = e.cases.length ? await runPhase('3차 Phase2 진행물건 수집', tracker, new Map<string, SaleResultRound[]>(), () => collectSaleResults(e.cases, (key, rounds) => {
-    const [caseNo, itemNo] = key.split('|');
-    const dbKey = e.dbKeyOf.get(key) ?? { caseNo: caseNo!, itemNo: itemNo! };
-    return recordRounds(dbKey.caseNo, dbKey.itemNo, e.courtOf.get(key) ?? null, rounds, today, c3);
+    const parts = key.split('|');
+    const dbKey = e.dbKeyOf.get(key) ?? { caseNo: parts[1]!, itemNo: parts[2]! };
+    const court = e.courtOf.get(key);
+    if (!court) return;
+    return recordRounds(dbKey.caseNo, dbKey.itemNo, court, rounds, today, c3);
   })) : new Map<string, SaleResultRound[]>();
-  const closedCases = e.cases.filter((c) => (activeRounds.get(`${c.caseNo}|${c.itemNo}`)?.length ?? 0) === 0);
+  const closedCases = e.cases.filter((c) => (activeRounds.get(`${c.cortOfcCd}|${c.caseNo}|${c.itemNo}`)?.length ?? 0) === 0);
   if (closedCases.length) {
     await runPhase('3차 Phase2 종결사건 수집', tracker, undefined, () => collectCaseResults(closedCases, (key, rounds) => {
-      const [caseNo, itemNo] = key.split('|');
-      const dbKey = e.dbKeyOf.get(key) ?? { caseNo: caseNo!, itemNo: itemNo! };
-      return recordRounds(dbKey.caseNo, dbKey.itemNo, e.courtOf.get(key) ?? null, rounds, today, c3);
+      const parts = key.split('|');
+      const dbKey = e.dbKeyOf.get(key) ?? { caseNo: parts[1]!, itemNo: parts[2]! };
+      const court = e.courtOf.get(key);
+      if (!court) return;
+      return recordRounds(dbKey.caseNo, dbKey.itemNo, court, rounds, today, c3);
     }).then(() => undefined));
   }
   console.log(`[collect-results] 3차: active ${activeRounds.size} · closed ${closedCases.length} · upsert ${c3.upserted} · 매각 ${c3.sold} · 기일갱신 ${c3.refreshed}`);

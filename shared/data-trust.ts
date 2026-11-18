@@ -10,13 +10,14 @@ export interface ListingTrustInput {
   caseNo: string; itemNo: string; appraisalValue: number | null; minBidPrice: number | null;
   crawledAt: string; rightsAnalyzed: boolean; registryCount: number; tenantCount: number;
   moneyParseWarnings: number; documentItemMismatch: boolean; locationAnalyzed: boolean;
-  marketPrice: number | null; expectedBidPrice: number | null; comparableCount: number;
+  marketPrice: number | null; marketConfidence: 'high' | 'medium' | 'low' | null;
+  expectedBidPrice: number | null; comparableCount: number;
   rightsAnalyzedAt: string | null; locationAnalyzedAt: string | null;
 }
 
 export interface ListingTrustResult {
   status: DataTrustStatus; score: number; reasonCodes: DataTrustReasonCode[];
-  checks: Record<string, boolean>; evaluatorVersion: 'listing-trust-v2';
+  checks: Record<string, boolean>; evaluatorVersion: 'listing-trust-v4';
 }
 
 const MAX_ANALYSIS_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -54,7 +55,10 @@ export const evaluateListingTrust = (input: ListingTrustInput, now = new Date())
     ['MISSING_LOCATION', !input.locationAnalyzed],
     ['MISSING_MARKET_PRICE', input.marketPrice === null],
     ['MISSING_EXPECTED_BID', input.expectedBidPrice === null],
-    ['INSUFFICIENT_COMPS', input.comparableCount < 3],
+    // 건수가 아니라 근거의 질을 본다 — 시세 신뢰도 medium 이상(같은 건물 실거래, 또는 동·면적·준공 3건 이상)이면
+    //   3건 미만이어도 충분하다. 같은 건물·같은 면적 1건의 중앙 오차(5.4~8.9%)가 동 단위 3건 이상(14~16%)보다 작다
+    //   (2026-11 실거래 재현, pipeline/location/comps.ts). 신뢰도 low·미상은 3건 이상이어야 한다.
+    ['INSUFFICIENT_COMPS', input.comparableCount < 3 && input.marketConfidence !== 'high' && input.marketConfidence !== 'medium'],
     ['ITEM_MISMATCH', input.documentItemMismatch],
     ['MONEY_PARSE_WARNING', input.moneyParseWarnings > 0],
     ['STALE_RIGHTS_ANALYSIS', staleAnalysis(input.rightsAnalyzedAt)],
@@ -73,6 +77,6 @@ export const evaluateListingTrust = (input: ListingTrustInput, now = new Date())
     score,
     reasonCodes,
     checks: Object.fromEntries(failedChecks.map(([reason, failed]) => [reason, !failed])),
-    evaluatorVersion: 'listing-trust-v2',
+    evaluatorVersion: 'listing-trust-v4',
   };
 };

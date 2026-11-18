@@ -6,7 +6,7 @@ const complete = (over: Partial<ListingTrustInput> = {}): ListingTrustInput => (
   minBidPrice: 210_000_000, crawledAt: '2026-08-21T00:00:00Z',
   rightsAnalyzed: true, registryCount: 2, tenantCount: 0,
   moneyParseWarnings: 0, documentItemMismatch: false,
-  locationAnalyzed: true, marketPrice: 350_000_000,
+  locationAnalyzed: true, marketPrice: 350_000_000, marketConfidence: 'medium',
   expectedBidPrice: 230_000_000, comparableCount: 3,
   rightsAnalyzedAt: '2026-08-21T00:00:00Z',
   locationAnalyzedAt: '2026-08-21T00:00:00Z',
@@ -21,6 +21,14 @@ describe('evaluateListingTrust', () => {
     const result = evaluateListingTrust(complete({ marketPrice: null, comparableCount: 0 }));
     expect(result.status).toBe('hold');
     expect(result.reasonCodes).toContain('MISSING_MARKET_PRICE');
+  });
+  it('accepts fewer than three comparables unless the market price is low-confidence', () => {
+    const now = new Date('2026-08-21T12:00:00Z');
+    expect(evaluateListingTrust(complete({ comparableCount: 1, marketConfidence: 'low' }), now).reasonCodes).toEqual(['INSUFFICIENT_COMPS']);
+    expect(evaluateListingTrust(complete({ comparableCount: 1, marketConfidence: null }), now).reasonCodes).toContain('INSUFFICIENT_COMPS');
+    expect(evaluateListingTrust(complete({ comparableCount: 1, marketConfidence: 'medium' }), now).status).toBe('trusted');
+    expect(evaluateListingTrust(complete({ comparableCount: 2, marketConfidence: 'high' }), now).status).toBe('trusted');
+    expect(evaluateListingTrust(complete({ comparableCount: 3, marketConfidence: 'low' }), now).status).toBe('trusted');
   });
   it('quarantines item mismatch and money warnings', () => {
     const result = evaluateListingTrust(complete({ documentItemMismatch: true, moneyParseWarnings: 1 }));

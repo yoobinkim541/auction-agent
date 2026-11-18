@@ -24,7 +24,7 @@ describe('formatBidPrep', () => {
     expect(s).toContain('★');
     expect(s).toContain('인천지방법원');
     expect(s).toContain('보증금 1,400만원 (10%)');
-    expect(s).toContain('https://dash.example/#case=2025%ED%83%80%EA%B2%BD507294&item=2');
+    expect(s).toContain('https://dash.example/#case=2025%ED%83%80%EA%B2%BD507294&item=2&court=%EC%9D%B8%EC%B2%9C%EC%A7%80%EB%B0%A9%EB%B2%95%EC%9B%90');
     expect(s).toContain('준비물');
     expect(s).toContain('특별매각조건');
   });

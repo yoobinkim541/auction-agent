@@ -32,7 +32,8 @@ async function main(): Promise<void> {
     `select t.status, count(*)::int as rows
        from gm_outcome_trust t
        join gm_outcome_eval e
-         on e.case_no = t.case_no
+         on e.court = t.court
+        and e.case_no = t.case_no
         and coalesce(nullif(e.item_no, ''), '1') = t.item_no
         and e.sale_date = t.sale_date
       where e.sale_date < current_date

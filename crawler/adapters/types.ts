@@ -13,7 +13,7 @@ export interface CrawlFilter {
   perCourt?: number;
   /** 증분 모드(정기 배치용) — knownKeys에 있는 물건은 상세(fetchDetail)를 건너뛰고 검색 메타만 갱신. 신규 물건만 풀 파싱. */
   incremental?: boolean;
-  /** 이미 권리분석이 끝난 물건 키 집합(`case_no|item_no`). incremental=true일 때만 사용. */
+  /** 이미 권리분석이 끝난 물건 키 집합(`court|case_no|item_no`). incremental=true일 때만 사용. */
   knownKeys?: Set<string>;
   /** 이번 실행에서 상세(fetchDetail)까지 받을 신규 물건 상한 — 배치 실행시간 유계화(systemd 타임아웃 예방).
    *  초과분은 메타만 저장되고 권리분석이 없어 다음 실행에서 자동으로 다시 "신규"로 잡혀 이어서 파싱된다. */
@@ -23,9 +23,12 @@ export interface CrawlFilter {
   refreshImminentDays?: number;
   /** 임박 기존 물건 상세 재수집 일일 상한 — 시간 유계화. 미설정 시 기본 250. */
   maxRefreshDetails?: number;
+  /** 재수집 우선 대상 키 집합(`court|case_no|item_no`) — 명세서 공개 전에 받아 최선순위설정이 비어 있는 임박 물건.
+   *  maxRefreshDetails 이내로 뽑아 넘기며, 이 몫만큼 일반 임박 재수집 예산에서 뺀다(총량은 그대로). */
+  refreshKeys?: Set<string>;
   /** 사진이 없는 기존 물건만 상세를 재수집하는 보강 모드. */
   photosOnly?: boolean;
-  /** 활성 사진이 이미 있는 물건의 사건|물건 키 집합. */
+  /** 활성 사진이 이미 있는 물건의 `court|case_no|item_no` 키 집합. */
   photoKeys?: Set<string>;
   /** photosOnly 실행에서 상세를 받을 최대 건수. */
   maxPhotoDetails?: number;
@@ -40,6 +43,8 @@ export interface ScrapedListing {
 
 export interface CrawlSink {
   onListing(scraped: ScrapedListing): Promise<void> | void;
+  /** 사이트가 차단해 도중에 멈췄다 — 그때까지 넘긴 물건은 유효하다. */
+  onBlocked?(): void;
 }
 
 export interface Adapter {

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { formatDigest, formatResultsRecap, formatUpcoming, buildDigestCardKeyboard, type DigestRow, type DigestResult } from './digest-format.ts';
 
 const row = (over: Partial<DigestRow> = {}): DigestRow => ({
-  case_no: '2024타경1', item_no: '1', property_type: 'apartment', address: '서울특별시 강남구 역삼동 1-2',
+  case_no: '2024타경1', item_no: '1', court: '서울중앙지방법원', property_type: 'apartment', address: '서울특별시 강남구 역삼동 1-2',
   appraisal_value: 3e8, min_bid_price: 2e8, sale_date: '2026-07-01',
   source_url: 'https://x', inq_cnt: 3, interest_cnt: 0, crawled_at: '2026-06-27T00:00:00Z',
   risk_grade: 'clean', safety_margin: 0.33, true_margin: 0.28, total_score: 82, memo: null, ...over,
@@ -55,14 +55,14 @@ describe('formatDigest', () => {
 
   it('dashboardBase 설정 시 원본 대신 대시보드 딥링크(#case=)', () => {
     const s = formatDigest([row({ case_no: '2024타경1', item_no: '2' })], { today: '2026-06-27', totalPassed: 1, dashboardBase: 'https://dash.example.com/' });
-    expect(s).toContain('https://dash.example.com/#case=2024%ED%83%80%EA%B2%BD1&item=2');
+    expect(s).toContain('https://dash.example.com/#case=2024%ED%83%80%EA%B2%BD1&item=2&court=%EC%84%9C%EC%9A%B8%EC%A4%91%EC%95%99%EC%A7%80%EB%B0%A9%EB%B2%95%EC%9B%90');
     expect(s).not.toContain('https://x'); // source_url 대체됨
   });
 });
 
 describe('formatUpcoming', () => {
   const row = (over: Partial<DigestRow> = {}): DigestRow => ({
-    case_no: '2024타경1', item_no: '1', property_type: 'apartment', address: '서울특별시 강남구 역삼동 1-2',
+    case_no: '2024타경1', item_no: '1', court: '서울중앙지방법원', property_type: 'apartment', address: '서울특별시 강남구 역삼동 1-2',
     appraisal_value: 3e8, min_bid_price: 2e8, sale_date: '2026-07-11',
     source_url: null, inq_cnt: null, interest_cnt: null, crawled_at: null,
     risk_grade: 'clean', safety_margin: 0.3, true_margin: 0.25, total_score: 80, memo: null, ...over,
@@ -110,5 +110,7 @@ describe('buildDigestCardKeyboard', () => {
   it('이미 관심 등록된 매물은 관심해제 라벨을 표시한다', () => {
     const keyboard = buildDigestCardKeyboard('2024타경5678', '2', true);
     expect(keyboard.inline_keyboard[0]![0]!.text).toBe('★ 관심해제');
+    const scoped = buildDigestCardKeyboard('2024타경5678', '2', true, '인천지방법원');
+    expect(scoped.inline_keyboard[0]![0]!.callback_data).toBe('fav|2024타경5678|2|인천지방법원');
   });
 });

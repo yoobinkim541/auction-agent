@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { eok, won, pct, type DecisionEvent, type ListingItem, type RightsObj, type LocationObj } from './api.ts';
-import { RISK, TYPE_LABEL, KIND_LABEL } from './labels.ts';
+import { RISK, TYPE_LABEL, KIND_LABEL, AMENITY_LABEL } from './labels.ts';
 import { resolveRound } from './listing-utils.ts';
 import { Section } from './ui.tsx';
 import { EvictionBlock, IncomeBlock, ReportBlock, FieldVisitChecklist } from './detail-blocks.tsx';
@@ -115,7 +115,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
           </div>
           {fieldwork && (
             <button className={`fieldmode-btn${fieldMode ? ' on' : ''}`} onClick={() => setFieldMode((v) => !v)} title="현장에서 체크리스트만 크게 보기">
-              🚶 {fieldMode ? '분석 보기' : '현장모드'}
+              {fieldMode ? '분석 보기' : '현장 모드'}
             </button>
           )}
           <button className="close" onClick={onClose} aria-label="상세 닫기">✕</button>
@@ -128,16 +128,16 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
             {(() => {
               const nav = buildNavigationLinks(row.address, row.lat, row.lng);
               return (
-                <div className="nav-links" style={{ display: 'flex', gap: '8px', margin: '8px 0', flexWrap: 'wrap' }}>
-                  <a href={nav.tmap} className="nav-btn" style={{ padding: '6px 10px', background: '#e0f2fe', color: '#0369a1', borderRadius: '6px', fontSize: '13px', textDecoration: 'none' }}>🚗 티맵 길안내</a>
-                  <a href={nav.kakao} target="_blank" rel="noopener noreferrer" className="nav-btn" style={{ padding: '6px 10px', background: '#fef3c7', color: '#92400e', borderRadius: '6px', fontSize: '13px', textDecoration: 'none' }}>🗺 카카오맵</a>
-                  <a href={nav.naver} target="_blank" rel="noopener noreferrer" className="nav-btn" style={{ padding: '6px 10px', background: '#dcfce7', color: '#166534', borderRadius: '6px', fontSize: '13px', textDecoration: 'none' }}>📍 네이버지도</a>
+                <div className="nav-links">
+                  <a href={nav.tmap} className="nav-btn">티맵 길안내</a>
+                  <a href={nav.kakao} target="_blank" rel="noopener noreferrer" className="nav-btn">카카오맵</a>
+                  <a href={nav.naver} target="_blank" rel="noopener noreferrer" className="nav-btn">네이버지도</a>
                 </div>
               );
             })()}
             <div className="srclinks">
-              <p className="srclink"><a href={courtCheckUrl} target="_blank" rel="noopener noreferrer">🔗 법원경매 더블체크{itemHint} ↗</a></p>
-              <p className="srclink"><a href={deonakchalCheckUrl} target="_blank" rel="noopener noreferrer">🔎 더낙찰 더블체크{itemHint} ↗</a></p>
+              <p className="srclink"><a href={courtCheckUrl} target="_blank" rel="noopener noreferrer">법원경매에서 확인{itemHint}</a></p>
+              <p className="srclink"><a href={deonakchalCheckUrl} target="_blank" rel="noopener noreferrer">더낙찰에서 확인{itemHint}</a></p>
             </div>
             <FieldVisitChecklist listingId={row.id} items={fieldwork.fieldChecklist} big />
           </div>
@@ -146,24 +146,26 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
         <h2 id="detail-dialog-title">
           <button type="button" className="star" onClick={onFav} title="관심 (단축키: f)" aria-label="관심 매물 토글">{row.is_favorite ? '★' : '☆'}</button>{' '}
           {row.case_no}{' '}
-          <button className="copy-btn" onClick={copyCase} title="사건번호 복사 (단축키: c)">{copied ? '✓' : '⧉'}</button>{' '}
+          <button className="copy-btn" onClick={copyCase} title="사건번호 복사 (단축키: c)">{copied ? '복사됨' : '복사'}</button>{' '}
           <span className={`badge ${risk.cls}`}>{risk.label}</span>
         </h2>
         <p className="addr">{row.address} · {TYPE_LABEL[row.property_type]} · {row.court}</p>
         <PrecisionVerdict precision={row.precision} />
         <DecisionActions key={row.id} listingId={row.id} onSaved={onDecisionSaved} />
         <div className="srclinks">
-          <p className="srclink"><a href={courtCheckUrl} target="_blank" rel="noopener noreferrer">🔗 법원경매 더블체크{itemHint}(사건번호 ⧉ 복사 후 검색) ↗</a> <span className="key-hint" title="단축키">o</span></p>
-          <p className="srclink"><a href={deonakchalCheckUrl} target="_blank" rel="noopener noreferrer">🔎 더낙찰 더블체크{itemHint} ↗</a> <span className="key-hint" title="단축키">d</span></p>
+          <p className="srclink"><a href={courtCheckUrl} target="_blank" rel="noopener noreferrer" title="사건번호를 복사한 뒤 법원경매정보에서 검색">법원경매에서 확인{itemHint}</a> <span className="key-hint" title="단축키">o</span></p>
+          <p className="srclink"><a href={deonakchalCheckUrl} target="_blank" rel="noopener noreferrer">더낙찰에서 확인{itemHint}</a> <span className="key-hint" title="단축키">d</span></p>
         </div>
         {row.source === 'courtauction' && (
-          (rights?.malso_basis || (rights?.classified && rights.classified.length > 0)) ? (
+          (!loc?.report?.headline?.startsWith('[데이터 불완전]') && (rights?.malso_basis || (rights?.classified && rights.classified.length > 0))) ? (
             <div className="court-notice court-notice-soft" role="note">
-              ℹ️ <strong>법원 매각물건명세서 기반</strong> — 최선순위설정·비고로 권리분석했습니다. 등기부 원본·임차인 상세는 입찰 전 <a href="https://www.courtauction.go.kr" target="_blank" rel="noopener noreferrer">법원경매정보</a>에서 직접 확인 권장.
+              <strong>법원 매각물건명세서 기반</strong> 최선순위설정·비고로 권리분석했습니다. 등기부 원본·임차인 상세는 입찰 전 <a href="https://www.courtauction.go.kr" target="_blank" rel="noopener noreferrer">법원경매정보</a>에서 직접 확인 권장.
             </div>
           ) : (
             <div className="court-notice" role="alert">
-              ⚠️ <strong>법원경매 원천</strong> — 등기/명세서 미수집(상세 조회 실패). 권리분석 보류 — 입찰 전 반드시 <a href="https://www.courtauction.go.kr" target="_blank" rel="noopener noreferrer">법원경매정보</a>에서 직접 확인하세요.
+              <strong>권리분석 보류</strong> {loc?.report?.rightsSummary && loc.report.headline?.startsWith('[데이터 불완전]')
+                ? loc.report.rightsSummary
+                : '매각물건명세서에서 말소기준(최선순위설정)을 확인하지 못했습니다.'} 입찰 전 반드시 <a href="https://www.courtauction.go.kr" target="_blank" rel="noopener noreferrer">법원경매정보</a>에서 직접 확인하세요.
             </div>
           )
         )}
@@ -176,8 +178,8 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
             ))}
           </div>
         ) : (
-          <div className="no-photos-hint" style={{ padding: '10px 14px', background: 'var(--panel2, #f8fafc)', borderRadius: '8px', margin: '10px 0', fontSize: '13px', color: 'var(--text-muted, #64748b)' }}>
-            📷 등록된 사진이 없습니다. <a href={courtCheckUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent, #2563eb)' }}>법원경매 원본 페이지↗</a>에서 사진을 확인하세요.
+          <div className="no-photos-hint">
+            등록된 사진이 없습니다. <a href={courtCheckUrl} target="_blank" rel="noopener noreferrer">법원경매 원본 페이지</a>에서 사진을 확인하세요.
           </div>
         )}
 
@@ -260,7 +262,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
             <div className="flags">
               {loc.land_use_flags.map((f, i) => (
                 <span key={i} className={`flag flag-luf-${f.kind}`} title={f.impact}>
-                  {f.kind === 'opportunity' ? '🟢' : f.kind === 'risk' ? '🔴' : 'ℹ️'} {f.label}
+                  {f.label}
                 </span>
               ))}
             </div>
@@ -283,7 +285,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
           )}
           {loc?.building && (
             <p className="muted">
-              건물: {loc.building.mainUse ?? ''} {loc.building.households ? `${loc.building.households}세대` : ''}
+              건물: {loc.building.mainUse ?? ''} {loc.building.households ? `${loc.building.households}세대` : loc.building.units ? `${loc.building.units}호` : ''}
               {loc.building.approvalDate ? ` · 사용승인 ${loc.building.approvalDate}` : ''}
               {loc.building.floorsAbove ? ` · 지상${loc.building.floorsAbove}/지하${loc.building.floorsBelow ?? 0}층` : ''}
               {loc.building.far ? ` · 용적률 ${loc.building.far}%` : ''}
@@ -310,7 +312,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
           )}
           {showLegacyBid && loc?.expected_bid_basis && <p className="muted">일반 예상낙찰가 근거 (정밀 추천 아님): {loc.expected_bid_basis}</p>}
           {loc?.amenities && (
-            <div className="amen">{Object.entries(loc.amenities).map(([k, v]) => <span key={k}>{k}: {v}</span>)}</div>
+            <div className="amen">{Object.entries(loc.amenities).map(([k, v]) => <span key={k}>{AMENITY_LABEL[k] ?? k} {v}</span>)}</div>
           )}
           {loc?.dev_signals && loc.dev_signals.length > 0 && (
             <div className="amen">{loc.dev_signals.map((s, i) => <span key={i}>{s}</span>)}</div>

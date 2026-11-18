@@ -28,9 +28,9 @@ npm run photos:migrate-webp
 상세 메타는 있지만 활성 사진이 없는 물건만 법원 상세를 다시 조회한다. 권리분석 전체를 재실행하지 않고, 한 번에 사진 상세 예산만 사용한다.
 
 ```bash
-npm run crawl -- --source=courtauction --photos-only --photo-max=50 --max=1000
+npm run crawl -- --source=courtauction --photos-only --photo-max=50
 ```
 
-`--photo-max`를 낮게 유지해 법원 원천의 요청량과 차단 위험을 통제한다. 신규 상세 결과는 수집 단계에서 바로 사진 캐시로 연결되며, 목록 API에는 대표사진 한 장만 포함된다.
+`--photo-max`가 이번 실행의 상세 예산이다. 이미 사진이 있는 물건은 검색 상한(`--max`)을 소모하지 않고 건너뛰므로, 앞 법원에 사진이 있어도 예산은 사진 없는 물건에 쓰인다. 신규 상세 결과는 수집 단계에서 바로 사진 캐시로 연결되며, 목록 API에는 대표사진 한 장만 포함된다.
 
 운영 서버에는 `gyeongmae-photo-backfill.timer`를 설치해 매일 03:30 전후 50건씩 자동 보강한다. 사진이 이미 있는 사건은 `photoKeys`로 건너뛴다.

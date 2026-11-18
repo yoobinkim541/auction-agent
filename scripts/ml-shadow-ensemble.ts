@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { query, pool } from '../shared/db.ts';
+import { TRAINING_ROWS_SQL } from './export-ml-dataset.ts';
 
 type Cell = string | number | boolean | null | undefined | Date;
 type DbRow = Record<string, Cell>;
@@ -23,7 +24,7 @@ export const csvCell = (value: Cell): string => {
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 };
 
-function writeCsv(path: string, rows: DbRow[]): void {
+export function writeCsv(path: string, rows: DbRow[]): void {
   if (!rows.length) {
     writeFileSync(path, '');
     return;
@@ -86,50 +87,18 @@ export function pythonPath(): string {
 }
 
 async function main(): Promise<void> {
-  const trainingRows = await query<DbRow>(
-    `with latest_listing as (
-       select distinct on (case_no, coalesce(nullif(item_no, ''), '1'))
-              id as listing_id, case_no, coalesce(nullif(item_no, ''), '1') as item_no,
-              fail_count, area_m2, building_area_m2, is_collective_building
-         from gm_listings
-        order by case_no, coalesce(nullif(item_no, ''), '1'), crawled_at desc nulls last, id desc
-     ), trusted as (
-       select e.*, l.fail_count, l.area_m2, l.building_area_m2, l.is_collective_building,
-              loc.market_confidence, rr.risk_grade, rr.assumed_amount,
-              exists (
-                select 1
-                  from jsonb_array_elements(coalesce(rr.tenants, '[]'::jsonb)) tenant
-                 where coalesce((tenant->>'hasOpposition')::boolean, false)
-              ) as has_opposition_tenant
-         from gm_trusted_outcome_eval e
-         left join latest_listing l
-           on l.case_no = e.case_no
-          and l.item_no = coalesce(nullif(e.item_no, ''), '1')
-         left join gm_rights_analysis rr on rr.listing_id = l.listing_id
-         left join gm_location_analysis loc on loc.listing_id = l.listing_id
-        where e.sale_date < current_date
-     )
-     select case_no, item_no, sale_date::text, property_type, court, address,
-            appraisal_value::float8, expected_bid::float8, market_price::float8, min_bid_price::float8,
-            total_score::float8, passed_filter, recommendation, true_margin::float8, max_safe_bid::float8,
-            inq_cnt::float8, interest_cnt::float8,
-            fail_count::float8, area_m2::float8, building_area_m2::float8,
-            is_collective_building, market_confidence,
-            sold, sold_amount::float8, result_cd, matched, residual::float8, residual_pct, sale_ratio,
-            would_have_won_under_max_safe_bid, realized_bid_margin,
-            risk_grade, assumed_amount::float8, has_opposition_tenant
-       from trusted
-      order by sale_date, case_no, item_no`,
-  );
+  // 매각 당일은 뺀다. 배치가 도는 10:15(KST)에는 입찰이 이미 시작돼, 그날 다시 쓴 점수는 매각 전 예측이 아니다.
+  const today = new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10); // KST
+  const trainingRows = await query<DbRow>(TRAINING_ROWS_SQL);
 
   const predictionRows = await query<DbRow>(
     `with latest_listing as (
-       select distinct on (case_no, coalesce(nullif(item_no, ''), '1')) *
+       select distinct on (court, case_no, coalesce(nullif(item_no, ''), '1')) *
          from gm_listings
-        order by case_no, coalesce(nullif(item_no, ''), '1'), crawled_at desc nulls last, id desc
+        order by court, case_no, coalesce(nullif(item_no, ''), '1'), crawled_at desc nulls last, id desc
      )
-     select l.case_no, coalesce(nullif(l.item_no, ''), '1') as item_no, l.sale_date::text,
-            l.property_type, l.court, l.address,
+     select l.court, l.case_no, coalesce(nullif(l.item_no, ''), '1') as item_no, l.sale_date::text,
+            l.property_type, l.address,
             l.appraisal_value::float8, loc.expected_bid_price::float8 as expected_bid,
             loc.market_price::float8, l.min_bid_price::float8,
             s.total_score::float8, s.passed_filter,
@@ -143,19 +112,28 @@ async function main(): Promise<void> {
               select 1
                 from jsonb_array_elements(coalesce(r.tenants, '[]'::jsonb)) tenant
                where coalesce((tenant->>'hasOpposition')::boolean, false)
-            ) as has_opposition_tenant
+            ) as has_opposition_tenant,
+            a.value::float8 as avm_value, a.value_low::float8 as avm_low, a.value_high::float8 as avm_high,
+            a.basis as avm_basis, a.building_comps::float8 as avm_building_comps,
+            (loc.acquisition_cost->>'moveOutCost')::float8 as move_out_cost,
+            (loc.acquisition_cost->>'bondCost')::float8 as bond_cost
        from latest_listing l
        left join gm_location_analysis loc on loc.listing_id = l.id
        left join gm_scores s on s.listing_id = l.id
        left join gm_rights_analysis r on r.listing_id = l.id
-      where l.sale_date >= current_date
-        and l.sale_date <= current_date + $1::int
-      order by l.sale_date, l.case_no, item_no`,
-    [leadDays],
+       left join gm_avm_estimates a
+         on a.court = l.court
+        and a.case_no = l.case_no
+        and a.item_no = coalesce(nullif(l.item_no, ''), '1')
+        and a.sale_date = l.sale_date
+      where l.sale_date > $2::date
+        and l.sale_date <= $2::date + $1::int
+      order by l.sale_date, l.court, l.case_no, item_no`,
+    [leadDays, today],
   );
 
   if (!predictionRows.length) {
-    console.log(`[ml:shadow] D-0~D-${leadDays} 예정 매물이 없어 종료합니다`);
+    console.log(`[ml:shadow] D-1~D-${leadDays} 예정 매물이 없어 종료합니다`);
     return;
   }
   if (!trainingRows.length) throw new Error('신뢰 가능한 과거 결과가 없어 shadow 학습을 중단합니다');
@@ -182,6 +160,7 @@ async function main(): Promise<void> {
     }
 
     const payload = predictions.map((prediction) => ({
+      court: prediction.court,
       case_no: prediction.case_no,
       item_no: prediction.item_no || '1',
       sale_date: prediction.sale_date,
@@ -193,11 +172,12 @@ async function main(): Promise<void> {
     }));
     await query(
       `insert into gm_shadow_scores
-         (case_no, item_no, sale_date, model_name, model_version,
+         (court, case_no, item_no, sale_date, model_name, model_version,
           predicted_sale_ratio, conservative_sale_ratio, confidence, feature_snapshot_hash, features)
-       select p.case_no, p.item_no, p.sale_date::date, $2, $3,
+       select p.court, p.case_no, p.item_no, p.sale_date::date, $2, $3,
               p.predicted_sale_ratio, p.conservative_sale_ratio, p.confidence, p.feature_snapshot_hash, p.features
          from jsonb_to_recordset($1::jsonb) as p(
+           court text,
            case_no text,
            item_no text,
            sale_date text,
@@ -207,7 +187,7 @@ async function main(): Promise<void> {
            feature_snapshot_hash text,
            features jsonb
          )
-       on conflict (case_no, item_no, sale_date, model_name, model_version) do update set
+       on conflict (court, case_no, item_no, sale_date, model_name, model_version) do update set
          predicted_sale_ratio=excluded.predicted_sale_ratio,
          conservative_sale_ratio=excluded.conservative_sale_ratio,
          confidence=excluded.confidence,

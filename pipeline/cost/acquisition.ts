@@ -144,7 +144,7 @@ export function expectedBid(
   appraisalValue: number, sameBuilding?: number[], nearby?: number[], minBidPrice?: number,
   empirical?: { ratioPct: number; basis: string } | null,
 ): { price: number | null; ratioPct: number | null; basis: string } {
-  // 우선순위: 동일건물 실거래 낙찰율 > 인근 실거래 > 실증 낙찰가율(종류×지역 폴백)
+  // 우선순위: 동일건물 실거래 낙찰율 > 인근 실거래 > 실증 낙찰가율(종류×지역×회차밴드의 최저가 대비 배율)
   let ratios: number[];
   let which: string;
   let isEmpirical = false;

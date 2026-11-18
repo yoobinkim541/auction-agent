@@ -74,6 +74,11 @@ describe('api client', () => {
       itemNo: '2',
     });
     expect(parseDetailHash('#case=2026%ED%83%80%EA%B2%BD1')).toEqual({ caseNo: '2026타경1' });
+    expect(parseDetailHash('#case=2026%ED%83%80%EA%B2%BD1&item=2&court=%EC%9D%B8%EC%B2%9C%EC%A7%80%EB%B0%A9%EB%B2%95%EC%9B%90')).toEqual({
+      caseNo: '2026타경1',
+      itemNo: '2',
+      court: '인천지방법원',
+    });
   });
 
   it('rejects a same-case response for a different listing id', () => {

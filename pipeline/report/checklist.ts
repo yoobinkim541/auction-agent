@@ -8,6 +8,7 @@
  *
  * ⚠️ 참고용. 공식 등기사항전부증명서·매각물건명세서·현황조사서 원본을 입찰 전 반드시 직접 확인.
  */
+import { DATA_GAP_TEXT, type DataGap } from './data-gap.ts';
 import type {
   PreBidItem, RightsAnalysisResult, LocationAnalysis, Listing, RedFlagKind,
 } from '../../shared/types.ts';
@@ -55,19 +56,20 @@ export function buildPreBidChecklist(args: {
   listing: Listing;
   notes: string[];
   scanText: string;
-  dataComplete?: boolean; // 등기 등 원천 데이터가 수집됐는지(false면 분석 신뢰 불가)
+  dataGap?: DataGap | null; // 권리분석을 보류할 자료 공백(있으면 보류 안내만 낸다)
 }): PreBidItem[] {
   const { rights, loc, listing } = args;
-  const dataComplete = args.dataComplete !== false;
+  const dataGap = args.dataGap ?? null;
   const items: PreBidItem[] = [];
   const seen = new Set<string>();
   const push = (it: PreBidItem) => { if (!seen.has(it.id)) { seen.add(it.id); items.push(it); } };
   const text = `${args.notes.join(' ')} ${args.scanText}`.replace(/\s+/g, ' ');
 
-  // 데이터 불완전(등기 미수집 — 차단/로드실패): 잘못된 위험 판정을 막기 위해 분석 보류 안내만.
-  if (!dataComplete) {
-    push({ id: 'data-incomplete', label: '⚠️ 등기 등 원천 데이터 미수집 — 분석 보류', category: '절차비용', severity: 'warn', detail: '상세페이지 등기/명세서가 수집되지 않아(사이트 접속차단 또는 로드 실패) 권리분석을 신뢰할 수 없습니다. 재수집 후 다시 분석하거나 원본을 직접 확인하세요.', source: '수집 상태', verify: listing.sourceUrl ?? '원본 상세페이지' });
-    push({ id: 'verify-source', label: '원본 공부서류 직접 확인', category: '절차비용', severity: 'info', detail: '데이터가 불완전하므로 매각물건명세서·등기부 원본을 반드시 직접 확인하세요.', source: '원본 상세페이지', verify: listing.sourceUrl ?? '더낙찰옥션 상세페이지' });
+  // 자료 공백(명세서 미수집·공개 전·기재 없음): 잘못된 위험 판정을 막기 위해 분석 보류 안내만.
+  if (dataGap) {
+    const gap = DATA_GAP_TEXT[dataGap];
+    push({ id: 'data-incomplete', label: gap.label, category: '절차비용', severity: 'warn', detail: gap.detail, source: '수집 상태', verify: listing.sourceUrl ?? '원본 상세페이지' });
+    push({ id: 'verify-source', label: '원본 공부서류 직접 확인', category: '절차비용', severity: 'info', detail: '권리자료가 비어 있으므로 매각물건명세서·등기부 원본을 반드시 직접 확인하세요.', source: '원본 상세페이지', verify: listing.sourceUrl ?? '법원경매정보 상세페이지' });
     return items;
   }
 

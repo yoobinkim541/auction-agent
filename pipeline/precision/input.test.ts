@@ -66,6 +66,16 @@ describe('precision input mapping', () => {
     });
   });
 
+  it('면적이 다른 비교사례는 물건 전용면적 기준 가격으로 환산한다', () => {
+    const scaled = buildPrecisionInput({
+      listing: { ...listing, areaM2: 60 },
+      rights,
+      location: { ...location, comps: [{ dealAmount: 500_000_000, areaM2: 100 }], siteComps: [] } as unknown as LocationAnalysis,
+      trustStatus: 'trusted',
+    });
+    expect(scaled.comparablePrices).toEqual([300_000_000]);
+  });
+
   it('registryOpinion을 전달하면 그대로 precisionInput에 실린다', () => {
     const opinion = { hasClue: true, requiredChecks: ['등기부 직접 열람 필요'] };
     const precisionInput = buildPrecisionInput({ listing, rights, location, trustStatus: 'hold', registryOpinion: opinion });
@@ -105,7 +115,7 @@ describe('precision input mapping', () => {
     expect(internalEvaluationHold()).toMatchObject({
       status: 'hold', confidence: 'low', reasonCodes: ['INTERNAL_EVALUATION_ERROR'],
       conservativeValue: null, recommendedBid: null, hardCapBid: null,
-      evaluatorVersion: 'precision-v1',
+      evaluatorVersion: 'precision-v3',
     });
   });
 });

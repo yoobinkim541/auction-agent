@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   fetchDetail,
+  ambiguousCourts,
   detailIdentityKey,
   detailResponseMatches,
   listingDetailTarget,
@@ -32,10 +33,11 @@ export function syncDecisionToDetail(
 export function useDetailSelection() {
   const [selected, setSelected] = useState<ListingItem | null>(null);
   const [detailLoading, setDetailLoading] = useState<string | null>(null);
+  const [courtChoices, setCourtChoices] = useState<{ target: ListingDetailTarget; courts: string[] } | null>(null);
   const detailCacheRef = useRef(new Map<string, ListingItem>());
   const detailRequestGateRef = useRef(createRequestGate());
 
-  // 딥링크: listing id 또는 사건/물건번호로 정확한 매물 상세를 연다.
+  // 딥링크: listing id 또는 사건/물건번호/법원으로 정확한 매물 상세를 연다.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const target = parseDetailHash(window.location.hash);
@@ -48,7 +50,10 @@ export function useDetailSelection() {
         detailCacheRef.current.set(detailIdentityKey(listingDetailTarget(full)), full);
         applyIfCurrent(requestGate, requestGeneration, () => setSelected(full));
       })
-      .catch(() => {});
+      .catch((error: unknown) => {
+        const courts = ambiguousCourts(error);
+        if (courts) applyIfCurrent(requestGate, requestGeneration, () => setCourtChoices({ target, courts }));
+      });
   }, []);
 
   const handleSelect = useCallback((item: ListingItem) => {
@@ -56,6 +61,7 @@ export function useDetailSelection() {
     const cacheKey = detailIdentityKey(target);
     const requestGate = detailRequestGateRef.current;
     const requestGeneration = requestGate.begin();
+    setCourtChoices(null);
     const cached = detailCacheRef.current.get(cacheKey);
     if (cached) {
       setSelected(mergeDetailSelection(cached, item));
@@ -80,6 +86,7 @@ export function useDetailSelection() {
     const cacheKey = detailIdentityKey(target);
     const requestGate = detailRequestGateRef.current;
     const requestGeneration = requestGate.begin();
+    setCourtChoices(null);
     const cached = detailCacheRef.current.get(cacheKey);
     if (cached) {
       setSelected(cached);
@@ -93,12 +100,16 @@ export function useDetailSelection() {
         detailCacheRef.current.set(detailIdentityKey(listingDetailTarget(full)), full);
         applyIfCurrent(requestGate, requestGeneration, () => setSelected(full));
       })
-      .catch(() => {})
+      .catch((error: unknown) => {
+        const courts = ambiguousCourts(error);
+        if (courts) applyIfCurrent(requestGate, requestGeneration, () => setCourtChoices({ target, courts }));
+      })
       .finally(() => setDetailLoading((cur) => (cur === cacheKey ? null : cur)));
   }, []);
 
   const closeDetail = useCallback(() => {
     setSelected(null);
+    setCourtChoices(null);
   }, []);
 
   const syncFavorite = useCallback((item: ListingItem, isFavorite: boolean) => {
@@ -129,6 +140,7 @@ export function useDetailSelection() {
     handleSelect,
     openCaseFromReview,
     closeDetail,
+    courtChoices,
     syncFavorite,
     syncDecision,
   };

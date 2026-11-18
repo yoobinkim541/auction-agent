@@ -7,9 +7,10 @@ import { addressToLawdCd } from './lawd-codes.ts';
 import { fetchMolitRaw, molitQuotaHit } from '../../shared/molit-cache.ts';
 import { geocodeSmart, stripToJibun } from './osm.ts';
 import {
-  parseMolitDealAmount, extractDong, extractBuildingName, estimateMarketPrice, capMarketPrice,
+  parseMolitJson, extractDong, extractBuildingName, extractLotNumber, estimateMarketPrice, capMarketPrice, type MolitItem,
 } from './comps.ts';
 import { recentYearMonths } from '../../shared/stats.ts';
+import { parcelLocality, readCache, writeCache } from './public-records.ts';
 
 const KAKAO = 'https://dapi.kakao.com/v2/local';
 // 국토부 실거래가 — 물건종류별 base 엔드포인트(DB 캐시는 shared/molit-cache 가 담당)
@@ -17,6 +18,8 @@ const MOLIT_ENDPOINT: Partial<Record<PropertyType, string>> = {
   apartment: 'RTMSDataSvcAptTrade',   // 아파트 매매
   villa: 'RTMSDataSvcRHTrade',        // 연립다세대 매매
   officetel: 'RTMSDataSvcOffiTrade',  // 오피스텔 매매(승인 시)
+  house: 'RTMSDataSvcSHTrade',        // 단독다가구 — k-skill 프록시
+  commercial: 'RTMSDataSvcNrgTrade',  // 상업업무 — k-skill 프록시
 };
 
 interface GeocodeResult {
@@ -68,52 +71,71 @@ async function molitTrades(propertyType: PropertyType, lawdCd: string, months: n
   return out;
 }
 
-interface MolitItem {
-  dealAmount?: string; excluUseAr?: number | string;
-  dealYear?: number | string; dealMonth?: number | string; dealDay?: number | string;
-  floor?: number | string; buildYear?: number | string; umdNm?: string;
-  aptNm?: string; mhouseNm?: string; offiNm?: string;
-}
-function parseMolitJson(item: MolitItem | MolitItem[] | undefined): Comparable[] {
-  const items = Array.isArray(item) ? item : item ? [item] : [];
-  const comps: Comparable[] = [];
-  for (const it of items) {
-    const dealAmount = parseMolitDealAmount(it.dealAmount); // 음수·정정표기·비정상값 거부
-    const areaM2 = parseFloat(String(it.excluUseAr ?? ''));
-    if (!dealAmount || !areaM2) continue;
-    const name = it.aptNm || it.mhouseNm || it.offiNm;
-    comps.push({
-      apartmentName: name != null ? String(name).trim() || undefined : undefined,
-      dong: it.umdNm?.trim() || undefined,
-      areaM2,
-      dealAmount,
-      dealDate: `${it.dealYear}-${String(it.dealMonth ?? 1).padStart(2, '0')}-${String(it.dealDay ?? 1).padStart(2, '0')}`,
-      floor: it.floor != null ? parseInt(String(it.floor), 10) : undefined,
-      buildYear: it.buildYear != null ? parseInt(String(it.buildYear), 10) : undefined,
-    });
-  }
-  return comps;
-}
-
-
-async function kakaoCategoryCount(code: string, lat: number, lng: number, radius: number): Promise<number> {
+/** null = 호출 실패(키 없음·한도 초과·장애). 0건과 구분한다. */
+async function kakaoCategoryCount(code: string, lat: number, lng: number, radius: number): Promise<number | null> {
   const j = await kakaoGet<{ meta?: { total_count?: number } }>(
     `/search/category.json?category_group_code=${code}&x=${lng}&y=${lat}&radius=${radius}&size=15`,
   );
-  return j?.meta?.total_count ?? 0;
+  return j ? j.meta?.total_count ?? 0 : null;
 }
 
+/** null = 호출 실패. 1.5km 안에 역이 없으면 빈 객체. */
 async function nearestStation(lat: number, lng: number): Promise<{ name?: string; distanceM?: number } | null> {
   const j = await kakaoGet<{ documents: { place_name: string; distance: string }[] }>(
     `/search/category.json?category_group_code=SW8&x=${lng}&y=${lat}&radius=1500&sort=distance&size=1`,
   );
-  const d = j?.documents?.[0];
-  return d ? { name: d.place_name, distanceM: parseInt(d.distance, 10) } : null;
+  if (!j) return null;
+  const d = j.documents?.[0];
+  return d ? { name: d.place_name, distanceM: parseInt(d.distance, 10) } : {};
+}
+
+type NearbyPoi = Pick<LocationAnalysis, 'transit' | 'schools' | 'amenities'>;
+
+/**
+ * 주변 역·학교·편의시설. 물건마다 카테고리 검색 8회라 좌표(소수 4자리, 약 10m)별로 캐시한다 —
+ * 매일 전체 재분석이 카카오 무료 한도(API별 하루 10만 건)를 쓰지 않게. 한 건이라도 실패하면 0으로 굳히지 않고 비운다.
+ */
+async function nearbyPoi(lat: number, lng: number): Promise<NearbyPoi> {
+  if (!process.env.KAKAO_REST_KEY) return {};
+  const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+  const hit = await readCache('poi', key);
+  if (hit) return hit as NearbyPoi;
+  const [station, mart, convenience, hospital, pharmacy, cafe, academyCount, schoolCount] = await Promise.all([
+    nearestStation(lat, lng),
+    kakaoCategoryCount('MT1', lat, lng, 1000),
+    kakaoCategoryCount('CS2', lat, lng, 500),
+    kakaoCategoryCount('HP8', lat, lng, 1000),
+    kakaoCategoryCount('PM9', lat, lng, 500),
+    kakaoCategoryCount('CE7', lat, lng, 500),
+    kakaoCategoryCount('AC5', lat, lng, 1000),
+    kakaoCategoryCount('SC4', lat, lng, 1000),
+  ]);
+  if (station === null || mart === null || convenience === null || hospital === null || pharmacy === null || cafe === null || academyCount === null || schoolCount === null) return {};
+  const poi: NearbyPoi = {
+    transit: station.name ? { nearestStation: station.name, walkMinutes: station.distanceM ? Math.round(station.distanceM / 80) : undefined } : undefined,
+    amenities: { mart, convenience, hospital, pharmacy, cafe },
+    schools: { academyCount, schoolCount },
+  };
+  await writeCache('poi', key, poi);
+  return poi;
 }
 
 export interface LocationOptions {
   buildingName?: string;
   tradeMonths?: number; // 실거래 조회 기간(개월)
+  buildYear?: number; // 사용승인 연도(건축물대장) — 동 단위 비교군을 비슷한 연식으로 좁힌다
+}
+
+/** 주소 표로 시군구·동을 고르고, 동이 없는 도로명 주소는 주소→필지 변환(캐시)으로 채운다. */
+export async function resolveLocality(address: string): Promise<{ lawdCd?: string; dong?: string }> {
+  let lawdCd = addressToLawdCd(address);
+  let dong = extractDong(address);
+  if (!lawdCd || !dong) {
+    const parcel = await parcelLocality(address);
+    lawdCd ??= parcel?.lawdCd;
+    dong ??= parcel?.dong;
+  }
+  return { lawdCd, dong };
 }
 
 export async function analyzeLocation(listing: Listing, opts: LocationOptions = {}): Promise<LocationAnalysis> {
@@ -135,7 +157,8 @@ export async function analyzeLocation(listing: Listing, opts: LocationOptions = 
   }
 
   // 지오코딩 없어도 주소→법정동코드 테이블로 LAWD_CD 확보(안전마진용)
-  const lawdCd = geo?.lawdCd ?? addressToLawdCd(listing.address);
+  const locality = MOLIT_ENDPOINT[listing.propertyType] ? await resolveLocality(listing.address) : {};
+  const lawdCd = geo?.lawdCd ?? locality.lawdCd;
 
   let comps: Comparable[] = [];
   let marketPrice: number | null = null;
@@ -143,9 +166,14 @@ export async function analyzeLocation(listing: Listing, opts: LocationOptions = 
   let compBasis: string | undefined;
   if (lawdCd && MOLIT_ENDPOINT[listing.propertyType]) {
     const all = await molitTrades(listing.propertyType, lawdCd, opts.tradeMonths ?? 12);
-    const dong = extractDong(listing.address);
-    const buildingName = opts.buildingName ?? extractBuildingName(listing.address);
-    const est = estimateMarketPrice(all, { areaM2: listing.areaM2, dong, buildingName });
+    const est = estimateMarketPrice(all, {
+      areaM2: listing.areaM2,
+      dong: listing.legalDong ?? locality.dong,
+      buildingName: opts.buildingName ?? listing.buildingName ?? extractBuildingName(listing.address),
+      jibun: listing.lotNo ?? extractLotNumber(listing.address),
+      buildYear: opts.buildYear,
+      propertyType: listing.propertyType,
+    });
     comps = est.used;
     marketPrice = est.marketPrice;
     marketConfidence = est.confidence;
@@ -164,6 +192,8 @@ export async function analyzeLocation(listing: Listing, opts: LocationOptions = 
     const capped = capMarketPrice(marketPrice, marketConfidence, listing.appraisalValue, listing.propertyType);
     if (capped.capped) {
       compBasis = `${compBasis ?? ''} → 감정가 대비 과대(${capped.overPct}%)로 ${capped.thinType ? '감정가' : '감정가×1.3'} 상한(저신뢰 실거래 매칭 의심)`;
+    } else if (capped.underPct != null) {
+      compBasis = `${compBasis ?? ''} → 감정가의 ${capped.underPct}% — 층·건물급이 다른 비교군 의심, 저신뢰`;
     }
     marketPrice = capped.marketPrice;
     marketConfidence = capped.confidence;
@@ -174,22 +204,7 @@ export async function analyzeLocation(listing: Listing, opts: LocationOptions = 
       ? (marketPrice - listing.minBidPrice) / marketPrice
       : null;
 
-  let transit, schools, amenities;
-  if (geo) {
-    const station = await nearestStation(geo.lat, geo.lng);
-    transit = station ? { nearestStation: station.name, walkMinutes: station.distanceM ? Math.round(station.distanceM / 80) : undefined } : undefined;
-    const [mart, conv, hosp, pharm, cafe, academy, school] = await Promise.all([
-      kakaoCategoryCount('MT1', geo.lat, geo.lng, 1000),
-      kakaoCategoryCount('CS2', geo.lat, geo.lng, 500),
-      kakaoCategoryCount('HP8', geo.lat, geo.lng, 1000),
-      kakaoCategoryCount('PM9', geo.lat, geo.lng, 500),
-      kakaoCategoryCount('CE7', geo.lat, geo.lng, 500),
-      kakaoCategoryCount('AC5', geo.lat, geo.lng, 1000),
-      kakaoCategoryCount('SC4', geo.lat, geo.lng, 1000),
-    ]);
-    amenities = { mart, convenience: conv, hospital: hosp, pharmacy: pharm, cafe };
-    schools = { academyCount: academy, schoolCount: school };
-  }
+  const { transit, schools, amenities } = geo ? await nearbyPoi(geo.lat, geo.lng) : {};
 
   return {
     caseNo: listing.caseNo,

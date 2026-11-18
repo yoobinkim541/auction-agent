@@ -56,19 +56,19 @@ export function ConfigPanel({ cfg, setCfg }: { cfg: ScoreConfig; setCfg: (c: Sco
       </div>
       <div className="cfg-row cfg-checks">
         <span className="cfg-label">최저매각가</span>
-        <input type="number" min={0} placeholder="최소" value={cfg.priceMinEok || ''} style={{ width: 72 }}
+        <input type="number" min={0} placeholder="최소" value={cfg.priceMinEok || ''} className="cfg-num"
           onChange={(e) => setCfg({ ...cfg, priceMinEok: Number(e.target.value) || 0 })} /> 억
         <span>~</span>
-        <input type="number" min={0} placeholder="최대" value={cfg.priceMaxEok || ''} style={{ width: 72 }}
+        <input type="number" min={0} placeholder="최대" value={cfg.priceMaxEok || ''} className="cfg-num"
           onChange={(e) => setCfg({ ...cfg, priceMaxEok: Number(e.target.value) || 0 })} /> 억
         <span className="muted">(0 = 무제한)</span>
       </div>
       <div className="cfg-row cfg-checks">
         <span className="cfg-label">감정가</span>
-        <input type="number" min={0} placeholder="최소" value={cfg.apprMinEok || ''} style={{ width: 72 }}
+        <input type="number" min={0} placeholder="최소" value={cfg.apprMinEok || ''} className="cfg-num"
           onChange={(e) => setCfg({ ...cfg, apprMinEok: Number(e.target.value) || 0 })} /> 억
         <span>~</span>
-        <input type="number" min={0} placeholder="최대" value={cfg.apprMaxEok || ''} style={{ width: 72 }}
+        <input type="number" min={0} placeholder="최대" value={cfg.apprMaxEok || ''} className="cfg-num"
           onChange={(e) => setCfg({ ...cfg, apprMaxEok: Number(e.target.value) || 0 })} /> 억
         <span className="muted">(0 = 무제한)</span>
       </div>

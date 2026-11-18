@@ -16,17 +16,11 @@ export function PrecisionInbox({ items, loading, error, onOpen, onLegacy, onRelo
     <section className="precision-inbox" aria-labelledby="precision-inbox-title">
       <header className="precision-inbox-head">
         <div>
-          <span className="precision-kicker">PRECISION INBOX</span>
           <h2 id="precision-inbox-title">이번 주 정밀 추천</h2>
-          <p>권리·점유·현금흐름 검증을 통과한 건만 표시합니다. 전체 후보 목록이 아닙니다.</p>
+          <p>말소기준권리·임차인·점유·보수적 가치·안전 마진 검증을 모두 통과한 건만 최대 7건 표시합니다.</p>
         </div>
-        <button type="button" className="precision-reload" onClick={onReload} disabled={loading}>정밀 추천 새로고침</button>
+        <button type="button" className="precision-reload" onClick={onReload} disabled={loading}>새로고침</button>
       </header>
-
-      <div className="precision-filter-note" role="note">
-        <strong>엄격 필터 적용</strong>
-        <span>말소기준권리, 임차인, 점유 가능성, 보수적 가치와 안전 마진을 함께 확인합니다.</span>
-      </div>
 
       {loading && <p className="precision-loading" role="status">정밀 추천을 불러오는 중…</p>}
       {error && (
@@ -44,20 +38,19 @@ export function PrecisionInbox({ items, loading, error, onOpen, onLegacy, onRelo
       )}
       {!loading && !error && recommended.length > 0 && (
         <>
-          <p className="precision-count">추천 {recommended.length}건 · 최대 7건까지만 표시</p>
           <div className="precision-list" aria-label="정밀 추천 사건 목록">
             {recommended.map((item) => {
               const precision = item.precision!;
               const view = precisionView(precision);
               return (
                 <button type="button" key={item.id} className="precision-card" onClick={() => onOpen(item)}>
-                  <span className="precision-card-top">
-                    <span className={`precision-status precision-status-${view.tone}`}>{view.label}</span>
-                    <span className="precision-confidence">신뢰도 {confidenceLabel(precision.confidence)}</span>
+                  <span className="precision-card-main">
+                    <strong>{item.address}</strong>
+                    <span className="precision-case">
+                      {item.case_no}{item.item_no && item.item_no !== '1' ? ` · 물건 ${item.item_no}` : ''} · 신뢰도 {confidenceLabel(precision.confidence)}
+                    </span>
+                    <span className="precision-card-summary">{precision.strengths[0] ?? view.summary}</span>
                   </span>
-                  <strong>{item.address}</strong>
-                  <span className="precision-case">{item.case_no}{item.item_no && item.item_no !== '1' ? ` · 물건 ${item.item_no}` : ''}</span>
-                  <span className="precision-card-summary">{precision.strengths[0] ?? view.summary}</span>
                   <span className="precision-card-foot">
                     {canShowBid(precision) && <span>절대 상한 {won(precision.hard_cap_bid)}</span>}
                     {item.current_decision && <span>현재: {decisionLabel(item.current_decision.decision)}</span>}

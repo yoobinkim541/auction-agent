@@ -43,7 +43,7 @@ export interface PrecisionEvaluation {
   strengths: string[];
   risks: string[];
   requiredChecks: string[];
-  evaluatorVersion: 'precision-v1';
+  evaluatorVersion: 'precision-v3';
 }
 
 const isPositive = (value: number | null): value is number => (
@@ -77,7 +77,7 @@ const result = (
   strengths,
   risks,
   requiredChecks,
-  evaluatorVersion: 'precision-v1',
+  evaluatorVersion: 'precision-v3',
 });
 
 export const evaluatePrecision = (input: PrecisionInput): PrecisionEvaluation => {
@@ -100,9 +100,11 @@ export const evaluatePrecision = (input: PrecisionInput): PrecisionEvaluation =>
   const comparablePricesValid = input.comparablePrices.length > 0
     && input.comparablePrices.every(isPositive);
   const positiveComparables = comparablePricesValid ? [...input.comparablePrices] : [];
+  // 비교사례 1건은 시세 신뢰도가 low 가 아닐 때(같은 건물 실거래)만 근거로 받고, 추천이 아니라 조건부로 둔다.
   const enoughComparables = positiveComparables.length >= 2
-    || (positiveComparables.length === 1 && input.marketConfidence === 'high');
+    || (positiveComparables.length === 1 && input.marketConfidence !== 'low');
   const validEvidence = positivePriceEvidence && validCosts && validControls && enoughComparables;
+  const singleComparable = validEvidence && positiveComparables.length === 1;
   const sparseEvidence = positiveComparables.length < 3;
   const reasonCodes: string[] = [];
   const risks: string[] = [];
@@ -153,6 +155,14 @@ export const evaluatePrecision = (input: PrecisionInput): PrecisionEvaluation =>
       reasonCodes.push('PRICE_BASIS_DIVERGENCE');
       risks.push('시장가와 비교사례 하위 25% 가격의 차이가 20%를 초과합니다.');
     }
+  }
+
+  // 저신뢰 시세(동 전체·구 단위 비교군, 감정가와 크게 어긋나 낮춘 값)는 추천 근거로 쓰지 않는다.
+  //   같은 건물 실거래와 견준 중앙 오차율이 동 전체 34~79%, 구 단위 55%였다(2026-11 백테스트).
+  const lowConfidenceMarket = validMarketPrice && input.marketConfidence === 'low';
+  if (lowConfidenceMarket) {
+    reasonCodes.push('LOW_MARKET_CONFIDENCE');
+    requiredChecks.push('시세 비교군이 동·구 단위이거나 감정가와 크게 어긋납니다. 같은 건물·같은 면적 실거래를 확인하세요.');
   }
 
   if (conservativeValue !== null && validMaxSafeBid && validCosts && Number.isFinite(targetMarginPct)) {
@@ -208,7 +218,7 @@ export const evaluatePrecision = (input: PrecisionInput): PrecisionEvaluation =>
     || (hardCapBid !== null && isPositive(input.minBidPrice) && input.minBidPrice > hardCapBid);
   const unresolvedTrust = input.trustStatus !== 'trusted';
   const reviewRequired = input.riskGrade === 'review_required';
-  const unresolvedEvidence = !validEvidence || reasonCodes.includes('PRICE_BASIS_DIVERGENCE');
+  const unresolvedEvidence = !validEvidence || reasonCodes.includes('PRICE_BASIS_DIVERGENCE') || lowConfidenceMarket;
   const unknownOccupancy = input.occupantLabel.includes('미상');
   const caution = input.riskGrade === 'caution';
   // 등기 미확보(EMPTY_REGISTRY)가 유일한 신뢰 실패 사유이고 AI 1차 소견이 단서를 찾았을 때만
@@ -221,7 +231,7 @@ export const evaluatePrecision = (input: PrecisionInput): PrecisionEvaluation =>
   let status: PrecisionStatus;
   if (hardReject) status = 'rejected';
   else if ((unresolvedTrust && !registryGapCoverable) || reviewRequired || unresolvedEvidence) status = 'hold';
-  else if (unknownOccupancy || caution || registryGapCoverable) status = 'conditional';
+  else if (unknownOccupancy || caution || registryGapCoverable || singleComparable) status = 'conditional';
   else status = 'recommended';
 
   if (status === 'recommended') {
@@ -248,6 +258,7 @@ export const evaluatePrecision = (input: PrecisionInput): PrecisionEvaluation =>
     reasonCodes.push('RISK_GRADE_CAUTION');
     requiredChecks.push('주의 등급의 권리·현장 리스크를 추가 확인하세요.');
   }
+  if (singleComparable) reasonCodes.push('SINGLE_COMPARABLE');
   if (sparseEvidence && validEvidence) {
     risks.push('비교사례가 성긴 가격 근거입니다.');
     requiredChecks.push('독립적인 추가 비교사례를 확인하세요.');

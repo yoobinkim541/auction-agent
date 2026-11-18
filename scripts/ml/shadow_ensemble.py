@@ -79,9 +79,33 @@ def train_and_predict(
     confidence = ensemble_confidence(selected_components, weights)
 
     output_rows: list[dict[str, object]] = []
+    try:
+        from .good_listing import GOOD_MARGIN, LABEL_VERSION, conservative_value, score_upcoming
+    except ImportError:
+        from good_listing import GOOD_MARGIN, LABEL_VERSION, conservative_value, score_upcoming
+    good_probability = score_upcoming(train_frame, predict_frame, random_state)
+    good_value = conservative_value(predict_frame).to_numpy()
     for row_index, (_, row) in enumerate(predict_frame.iterrows()):
         snapshot = feature_snapshot(row)
+        features = {
+            "model_features": snapshot,
+            "component_predictions": {
+                name: json_value(values[row_index]) for name, values in selected_components.items()
+            },
+            "blend_weights": weights,
+            "downside_buffer": downside_buffer,
+        }
+        # No market value, no probability: the label cannot be checked for that listing later either.
+        if good_probability is not None and np.isfinite(good_probability[row_index]):
+            features["good_listing"] = {
+                "probability": float(good_probability[row_index]),
+                "version": LABEL_VERSION,
+                "margin": GOOD_MARGIN,
+                "conservative_value": float(good_value[row_index]),
+                "decision": "report-only",
+            }
         output_rows.append({
+            "court": str(row.get("court", "")),
             "case_no": str(row.get("case_no", "")),
             "item_no": str(row.get("item_no", "1")),
             "sale_date": row["sale_date"].strftime("%Y-%m-%d") if isinstance(row.get("sale_date"), pd.Timestamp) else str(row.get("sale_date", "")),
@@ -89,14 +113,7 @@ def train_and_predict(
             "conservative_sale_ratio": float(conservative_prediction[row_index]),
             "confidence": float(confidence[row_index]),
             "feature_snapshot_hash": snapshot_hash(snapshot),
-            "features_json": json.dumps({
-                "model_features": snapshot,
-                "component_predictions": {
-                    name: json_value(values[row_index]) for name, values in selected_components.items()
-                },
-                "blend_weights": weights,
-                "downside_buffer": downside_buffer,
-            }, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False),
+            "features_json": json.dumps(features, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False),
         })
     return pd.DataFrame(output_rows), weights, downside_buffer
 
@@ -113,7 +130,7 @@ def main() -> None:
     predict_frame = load_dataset(args.predict)
     if predict_frame.empty:
         pd.DataFrame(columns=[
-            "case_no", "item_no", "sale_date", "predicted_sale_ratio", "confidence",
+            "court", "case_no", "item_no", "sale_date", "predicted_sale_ratio", "confidence",
             "conservative_sale_ratio", "feature_snapshot_hash", "features_json",
         ]).to_csv(args.output, index=False)
         print("[ml:shadow] 예측 대상이 없습니다")

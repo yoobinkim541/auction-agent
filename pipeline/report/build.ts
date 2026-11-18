@@ -6,6 +6,7 @@ import type {
   ListingReport, PreBidItem, RightsAnalysisResult, LocationAnalysis, Listing,
 } from '../../shared/types.ts';
 import { buildPreBidChecklist } from './checklist.ts';
+import { DATA_GAP_TEXT, type DataGap } from './data-gap.ts';
 import { buildFieldwork } from './fieldwork.ts';
 import { won, eok, pct } from '../../shared/format.ts';
 
@@ -31,10 +32,10 @@ export function buildReport(args: {
   listing: Listing;
   notes: string[];
   scanText: string;
-  dataComplete?: boolean;
+  dataGap?: DataGap | null;
 }): ListingReport {
   const { rights, loc, listing } = args;
-  const dataComplete = args.dataComplete !== false;
+  const dataGap = args.dataGap ?? null;
   const tenantDepositParseFailed = rights.tenants.some((tenant) => tenant.tenant.depositParseFailed);
   const checklist: PreBidItem[] = buildPreBidChecklist(args);
   const dangerCount = checklist.filter((c) => c.severity === 'danger').length;
@@ -43,15 +44,16 @@ export function buildReport(args: {
 
   // 종합 권고: 인수금액/위험등급/danger 항목/진짜마진 기준 (데이터 불완전은 보류=caution)
   const recommendation = decideRecommendation({
-    dataComplete, assumedAmount: rights.assumedAmount, dangerCount, warnCount,
+    dataComplete: dataGap == null, assumedAmount: rights.assumedAmount, dangerCount, warnCount,
     riskGrade: rights.riskGrade, trueMargin,
   });
 
-  if (!dataComplete) {
+  if (dataGap) {
+    const gap = DATA_GAP_TEXT[dataGap];
     return {
-      headline: `[데이터 불완전] 등기 미수집(접속차단/로드실패) — 재수집 후 분석 필요. 시세 ${eok(loc.marketPrice)} · 최저가 ${eok(listing.minBidPrice)}`,
-      recommendation, summary: ['⚠️ 원천 데이터(등기·명세서) 미수집으로 권리분석 보류', `감정가 ${eok(listing.appraisalValue)} · 최저가 ${eok(listing.minBidPrice)}`],
-      rightsSummary: '등기 미수집 — 권리분석 불가(재수집 필요).', locationSummary: loc.compBasis ?? '', costSummary: '',
+      headline: `[데이터 불완전] ${gap.headline}. 시세 ${eok(loc.marketPrice)} · 최저가 ${eok(listing.minBidPrice)}`,
+      recommendation, summary: [gap.summary, `감정가 ${eok(listing.appraisalValue)} · 최저가 ${eok(listing.minBidPrice)}`],
+      rightsSummary: gap.rights, locationSummary: loc.compBasis ?? '', costSummary: '',
       checklist, dangerCount, warnCount, sourceUrl: listing.sourceUrl,
       fieldwork: buildFieldwork(rights, loc, listing),
     };
@@ -80,7 +82,7 @@ export function buildReport(args: {
 
   const locationSummary =
     `${loc.transit?.nearestStation ? `최근접 ${loc.transit.nearestStation}. ` : ''}` +
-    `${loc.building ? `${loc.building.mainUse ?? ''} ${loc.building.households ?? '?'}세대${loc.building.approvalDate ? ` · ${loc.building.approvalDate.slice(0, 4)}년 사용승인` : ''}. ` : ''}` +
+    `${loc.building ? `${loc.building.mainUse ?? ''} ${loc.building.households ? `${loc.building.households}세대` : loc.building.units ? `${loc.building.units}호` : '세대수 미확인'}${loc.building.approvalDate ? ` · ${loc.building.approvalDate.slice(0, 4)}년 사용승인` : ''}. ` : ''}` +
     `${loc.compBasis ? `시세근거: ${loc.compBasis}.` : ''}` +
     `${(loc.landUseFlags ?? []).length ? ` 토지규제 ${loc.landUseFlags!.map((f) => f.label).join(', ')}.` : ''}`;
 

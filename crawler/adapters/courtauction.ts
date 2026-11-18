@@ -23,7 +23,7 @@
  */
 import type { Adapter, CrawlFilter, CrawlSink, ScrapedListing } from './types.ts';
 import type { Listing, RegistryEntry, Tenant, ListingDoc } from '../../shared/types.ts';
-import { parseKoreanDate, normalizeCaseNo, mapRightKind } from '../normalize.ts';
+import { parseKoreanDate, normalizeCaseNo, mapRightKind, parseExclusiveArea } from '../normalize.ts';
 import { courtAuctionFetch } from '../proxy.ts'; // COURTAUCTION_PROXY 전용 egress — 더낙찰 CRAWL_PROXY와 분리
 import { inlinePhotoDataUrl, isBase64Blob } from '../../shared/inline-photo.ts';
 
@@ -130,6 +130,18 @@ export function shouldFetchPhotoDetail(
     && (filter.maxPhotoDetails == null || fetched < filter.maxPhotoDetails);
 }
 
+/** 사진 보강 스캔 판정. 이미 사진이 있는 물건은 검색 상한(maxItems)을 소모하지 않고 건너뛴다. */
+export function photoScanAction(
+  filter: Pick<CrawlFilter, 'photosOnly' | 'photoKeys' | 'maxPhotoDetails'>,
+  key: string,
+  fetched: number,
+): 'fetch' | 'skip' | 'stop' {
+  if (filter.photosOnly !== true) return 'fetch';
+  if (filter.maxPhotoDetails != null && fetched >= filter.maxPhotoDetails) return 'stop';
+  if (filter.photoKeys?.has(key) === true) return 'skip';
+  return 'fetch';
+}
+
 /** 이번 실행에서 이 신규 물건의 상세를 지금 받을지 — 신규 상세 예산(maxNewDetails) 내에서만.
  *  예산 소진 시 메타만 저장(권리분석 없음 → 다음 실행에서 다시 신규로 잡혀 이어짐). 미설정이면 무제한. */
 export function shouldFetchDetailNow(known: boolean, nNewDetail: number, maxNewDetails?: number): boolean {
@@ -138,21 +150,24 @@ export function shouldFetchDetailNow(known: boolean, nNewDetail: number, maxNewD
 
 /** 증분 모드 상세 수집 판정:
  *   'new'     — 신규 물건(문서 없음), 신규 예산 내 → 풀 파싱
- *   'refresh' — 기존 물건이지만 매각 임박(오늘~thresholdDate) → 명세서 변경감지 위해 재수집(재수집 예산 내)
+ *   'refresh' — 기존 물건 재수집. 우선 대상(priority: 공개 전에 받아 명세서가 빈 물건)은 항상,
+ *               그 외 매각 임박(오늘~thresholdDate)은 명세서 변경감지용으로 남은 예산(maxRefresh - reservedRefresh) 내에서만
  *   'skip'    — 그 외(기존·비임박, 또는 예산 소진) → 메타만
- * 순수 함수(테스트 가능). saleDate/today/thresholdDate는 'YYYY-MM-DD'. */
+ * counts.nRefresh는 우선 대상이 아닌 재수집 건수. 순수 함수(테스트 가능). saleDate/today/thresholdDate는 'YYYY-MM-DD'. */
 export function detailDecision(
   known: boolean,
   saleDate: string | null,
   today: string,
   thresholdDate: string,
   counts: { nNew: number; nRefresh: number },
-  caps: { maxNew?: number; maxRefresh: number; refreshDays: number },
+  caps: { maxNew?: number; maxRefresh: number; refreshDays: number; reservedRefresh?: number },
+  priority = false,
 ): 'new' | 'refresh' | 'skip' {
   if (!known) return caps.maxNew == null || counts.nNew < caps.maxNew ? 'new' : 'skip';
   if (caps.refreshDays <= 0) return 'skip';
+  if (priority) return 'refresh';
   const imminent = saleDate != null && saleDate >= today && saleDate <= thresholdDate;
-  if (imminent && counts.nRefresh < caps.maxRefresh) return 'refresh';
+  if (imminent && counts.nRefresh < caps.maxRefresh - (caps.reservedRefresh ?? 0)) return 'refresh';
   return 'skip';
 }
 
@@ -263,10 +278,21 @@ async function initSession(cookies: CookieJar): Promise<void> {
 }
 
 // ── 데이터 정규화 ─────────────────────────────────────────────────────
-/** 용도코드 → PropertyType (법원경매 고유 코드 체계) */
-export function mapUsgCd(cd: string | undefined, bigo: string | undefined): Listing['propertyType'] {
+/** 법원 용도 중분류(mclsUtilCd) 가운데 주거용 건물. 오피스텔(소분류 20110)이 여기에 든다. */
+const RESIDENTIAL_MCLS = '20100';
+
+/**
+ * 용도명 → PropertyType (법원경매 고유 체계).
+ * '상가,오피스텔,근린시설'은 세 용도를 묶은 이름이라 이름만으로는 오피스텔인지 알 수 없다 — 이 이름이 붙은
+ * 활성 매물 1,663건 중 1,062건이 주거용 건물이 아니었다(근린생활시설 751건, 판매시설 61건 등).
+ * 그래서 묶음 이름일 때는 용도 중분류가 주거용 건물이 아니면 상가로 본다. 그 물건들의 낙찰가율 중앙값은 49%로
+ * 오피스텔(65~71%)과 다른 집단이었다. 주거용 안의 소분류(아파트·다세대 코드 107건)는 실거래로 확인되는 비율이
+ * 낮아 가르지 않고 오피스텔로 둔다.
+ */
+export function mapUsgCd(cd: string | undefined, bigo: string | undefined, mclsUtilCd?: string): Listing['propertyType'] {
   const s = `${cd ?? ''} ${bigo ?? ''}`;
   if (/아파트|APT/.test(s)) return 'apartment';
+  if (/오피스텔/.test(cd ?? '') && /상가|근린/.test(cd ?? '') && mclsUtilCd && mclsUtilCd !== RESIDENTIAL_MCLS) return 'commercial';
   if (/오피스텔/.test(s)) return 'officetel';
   if (/다세대|연립|다가구|빌라/.test(s)) return 'villa';
   if (/단독/.test(s)) return 'house';
@@ -300,10 +326,12 @@ const NON_LISTING_IMAGE_RE = /logo|icon|btn|button|blank|spacer|bg[_-]|banner|sp
 
 function normalizeCourtPhotoUrl(raw: string, baseUrl: string): string | null {
   const trimmed = raw.trim();
-  if (!trimmed || /^data:/i.test(trimmed) || NON_LISTING_IMAGE_RE.test(trimmed)) return null;
+  if (!trimmed || /^data:/i.test(trimmed)) return null;
+  // base64 본문에 icon/btn 같은 우연히 포함된 글자가 로고 필터에 걸리면 안 된다.
   const inlinePhoto = inlinePhotoDataUrl(trimmed);
   if (inlinePhoto) return inlinePhoto;
   if (isBase64Blob(trimmed)) return null;
+  if (NON_LISTING_IMAGE_RE.test(trimmed)) return null;
   if (!PHOTO_URL_RE.test(trimmed)) return null;
   try {
     if (trimmed.startsWith('//')) return `https:${trimmed}`;
@@ -338,7 +366,10 @@ export function extractCourtPhotoUrls(detail: unknown, baseUrl = BASE): string[]
       for (const item of value) walk(item, keyHint);
       return;
     }
-    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    const record = value as Record<string, unknown>;
+    const inlineFile = typeof record.picFile === 'string' ? inlinePhotoDataUrl(record.picFile) : null;
+    for (const [key, nested] of Object.entries(record)) {
+      if (inlineFile && (key === 'picFileUrl' || key === 'picTitlNm')) continue;
       walk(nested, key);
       if (out.length >= 15) return;
     }
@@ -364,7 +395,8 @@ export function rowToScraped(row: any, courtCode: string): ScrapedListing | null
   if (row.mulJinYn === 'N') return null;
 
   const appraisal = parseMoney(row.gamevalAmt);
-  const minBid = parseMoney(row.minmaePrice || row.notifyMinmaePrice1);
+  // 이번 기일 최저가는 notifyMinmaePrice1이다. minmaePrice는 유찰 물건에서 직전 회차 값(한 회차 높음)이라 폴백으로만 쓴다.
+  const minBid = parseMoney(row.notifyMinmaePrice1) || parseMoney(row.minmaePrice);
   if (!appraisal && !minBid) return null;
 
   const address = (row.realSt ?? row.printSt ?? '').replace(/\s+/g, ' ').trim();
@@ -372,7 +404,7 @@ export function rowToScraped(row: any, courtCode: string): ScrapedListing | null
 
   const failCount = parseInt(row.yuchalCnt ?? '0', 10) || 0;
   const saleDate = parseCourtDate(row.maeGiil ?? row.maeHh1);
-  const propertyType = mapUsgCd(row.dspslUsgNm, row.mulBigo); // 용도명 텍스트("아파트"…). maemulUtilCd는 숫자코드라 안 됨
+  const propertyType = mapUsgCd(row.dspslUsgNm, row.mulBigo, row.mclsUtilCd); // 용도명 텍스트("아파트"…). maemulUtilCd는 숫자코드라 안 됨
   const itemNo = row.maemulSer ?? row.mokmulSer ?? '1';
   // 경쟁 신호(검색행에 이미 옴): 조회수 inqCnt · 관심물건수 gwansMulRegCnt. 낮을수록 저경쟁.
   // 참고: 법원경매 검색 응답의 inqCnt는 현재 항상 "0"(목록 단계 미노출) → 실질 신호는 관심수(gwansMulRegCnt).
@@ -390,6 +422,8 @@ export function rowToScraped(row: any, courtCode: string): ScrapedListing | null
     minBidRatio: appraisal ? Math.round((minBid / appraisal) * 100) : undefined,
     failCount,
     saleDate,
+    // 상세를 못 받은 물건도 면적이 있어야 '같은 면적' 실거래 비교군을 쓴다. 목록 응답에 건물 표시가 들어 있다.
+    areaM2: parseExclusiveArea(row.pjbBuldList) ?? undefined,
     inquiryCount: Number.isFinite(inq) ? inq : undefined,
     interestCount: Number.isFinite(interest) ? interest : undefined,
     source: 'courtauction',
@@ -494,18 +528,27 @@ export interface SaleResultRound {
   sold: boolean;           // dspslAmt>0 이면 매각(낙찰)
 }
 
-/** 법원명 → 법원코드(cortOfcCd). 결과 폴러가 DB의 court명으로 상세 조회 시 필요. */
-export function courtCodeByName(name: string): string | null {
+function findCourt(name: string): { code: string; name: string } | null {
   const courts = allCourts();
   const raw = name.trim();
   const exact = courts.find((c) => c.name === raw);
-  if (exact) return exact.code;
+  if (exact) return exact;
   const key = raw
     .replace(/\s+/g, '')
     .replace(/(지방법원|지원)/g, '')
     .replace(/\d+계.*$/, '');
   if (!key) return null;
-  return courts.find((c) => c.name.replace(/\s+/g, '').includes(key))?.code ?? null;
+  return courts.find((c) => c.name.replace(/\s+/g, '').includes(key)) ?? null;
+}
+
+/** 법원명 → 법원코드(cortOfcCd). 결과 폴러가 DB의 court명으로 상세 조회 시 필요. */
+export function courtCodeByName(name: string): string | null {
+  return findCourt(name)?.code ?? null;
+}
+
+/** 담당계가 붙은 표기('인천8계')를 법원명('인천지방법원')으로. 매물 식별 키에 들어가므로 저장 전에 맞춘다. 모르는 표기는 그대로. */
+export function canonicalCourt(name: string): string {
+  return findCourt(name)?.name ?? name.trim();
 }
 
 /** 상세 조회 가능한(코드 매핑 보유) 법원명 목록 — 결과 폴러 SQL 필터용(미매핑 법원에 슬롯 낭비 방지). */
@@ -562,7 +605,7 @@ export async function collectSaleResults(
       const dma = await fetchDetail(c.caseNo, c.cortOfcCd, c.itemNo, buildSrchInfo(c.cortOfcCd), cookies);
       if (dma) {
         const rounds = parseSaleResults(dma);
-        const key = `${c.caseNo}|${c.itemNo}`;
+        const key = `${c.cortOfcCd}|${c.caseNo}|${c.itemNo}`;
         out.set(key, rounds);
         if (onResult && rounds.length) await onResult(key, rounds);
       }
@@ -625,7 +668,7 @@ export async function collectCaseResults(
       const data = await postCaseResult(c.caseNo, c.cortOfcCd, cookies);
       if (data) {
         const rounds = parseCaseResult(data, c.itemNo);
-        const key = `${c.caseNo}|${c.itemNo}`;
+        const key = `${c.cortOfcCd}|${c.caseNo}|${c.itemNo}`;
         out.set(key, rounds);
         if (onResult && rounds.length) await onResult(key, rounds);
       }
@@ -682,8 +725,10 @@ export function parseCourtDetail(dma: any): CourtDetailParsed {
 
   const objct = dma?.gdsDspslObjctLst?.[0] ?? {};
   let areaM2: number | undefined;
-  const aM = String(objct.pjbBuldList ?? '').match(/([\d,]+\.\d+)\s*㎡/) ?? String(objct.objctArDts ?? '').match(/(\d+\.\d+)/);
-  if (aM) { const n = parseFloat(aM[1]!.replace(/,/g, '')); if (n > 0) areaM2 = n; }
+  const listed = parseExclusiveArea(objct.pjbBuldList);
+  const aM = listed == null ? String(objct.objctArDts ?? '').match(/(\d+\.\d+)/) : null;
+  if (listed != null) areaM2 = listed;
+  else if (aM) { const n = parseFloat(aM[1]!); if (n > 0) areaM2 = n; }
   const isCollective = /집합|전유/.test(`${objct.rletDvsDts ?? ''} ${objct.pjbBuldList ?? ''}`);
 
   return { registry, tenants: [], notes, siteAssumedAmount: null, statementSeniorDate, demandDeadline, areaM2, isCollective };
@@ -741,6 +786,7 @@ export class CourtAuctionAdapter implements Adapter {
     let nKnownSkip = 0;    // 증분: 기존 물건 상세 건너뛰고 메타만
     let nNewDetail = 0;    // 증분: 신규라 상세까지 받은 건수
     let nRefreshDetail = 0; // 증분: 임박 기존 물건 상세 재수집(명세서 변경감지용)
+    let nPriorityRefresh = 0; // 증분: 공개 전에 받아 명세서가 빈 물건 재수집(refreshKeys)
     let nPhotoDetail = 0; // 사진 보강: 활성 사진이 없는 물건 상세 재수집
     let nDeferred = 0;     // 신규지만 상세 예산(maxNewDetails) 소진 — 메타만 저장, 다음 실행에서 이어감
 
@@ -753,14 +799,15 @@ export class CourtAuctionAdapter implements Adapter {
 
     let nextBreakAt = Math.round(rnd(BREAK_EVERY_MIN, BREAK_EVERY_MAX));
 
+    let photoDone = false;
     for (const court of courts) {
-      if (blocked || nResults >= maxItems) break;
+      if (blocked || photoDone || nResults >= maxItems) break;
       const courtStart = nResults; // 이 법원 수집량 = nResults - courtStart (perCourt 상한 판정용)
       console.log(`[courtauction] 검색: ${court.name} (${court.code})`);
       const srchInfo = buildSrchInfo(court.code); // 검색·상세 공용
 
       for (let page = 1; ; page++) {
-        if (blocked || nResults >= maxItems || nResults - courtStart >= perCourt) break;
+        if (blocked || photoDone || nResults >= maxItems || nResults - courtStart >= perCourt) break;
 
         // 실제 사이트(WebSquare) 검색 포맷 — dma_ 맵 본문 + submissionid 헤더. srchInfo는 상세 조회와 공용.
         const body = {
@@ -804,10 +851,15 @@ export class CourtAuctionAdapter implements Adapter {
         for (const row of rows) {
           const scraped = rowToScraped(row, court.code);
           if (!scraped) continue;
-          const key = `${scraped.listing.caseNo}|${scraped.listing.itemNo}`;
+          const key = `${scraped.listing.court}|${scraped.listing.caseNo}|${scraped.listing.itemNo}`;
           if (seen.has(key)) continue;
           seen.add(key);
           newOnPage++;
+          if (filter.photosOnly) {
+            const action = photoScanAction(filter, key, nPhotoDetail);
+            if (action === 'stop') { photoDone = true; break; }
+            if (action === 'skip') { nKnownSkip++; continue; }
+          }
 
           // 물건 종류 필터 (클라이언트 사이드). allTypesCourts에 속한 법원은 전종류 수집(집 근처 완전 수집용).
           const typeExempt = filter.allTypesCourts?.includes(court.code) ?? false;
@@ -818,6 +870,7 @@ export class CourtAuctionAdapter implements Adapter {
           // 상세 보강 판정. 증분: 신규=풀파싱(예산 내), 임박 기존=명세서 변경감지 위해 재수집(예산 내), 그 외=메타만.
           // 비증분: 전량 상세(기존 동작).
           const known = isKnownForIncremental(filter, key);
+          const priority = known && filter.refreshKeys?.has(key) === true;
           const decision: 'new' | 'refresh' | 'skip' = !fetchDetail_
             ? 'skip'
             : filter.photosOnly
@@ -826,7 +879,8 @@ export class CourtAuctionAdapter implements Adapter {
                 ? 'new'
                 : detailDecision(known, scraped.listing.saleDate ?? null, todayStr, thresholdStr,
                     { nNew: nNewDetail, nRefresh: nRefreshDetail },
-                    { maxNew: filter.maxNewDetails, maxRefresh, refreshDays });
+                    { maxNew: filter.maxNewDetails, maxRefresh, refreshDays, reservedRefresh: filter.refreshKeys?.size },
+                    priority);
           if (decision !== 'skip') {
             try {
               const detail = await fetchDetail(scraped.listing.caseNo, court.code, scraped.listing.itemNo ?? '1', srchInfo, cookies);
@@ -838,6 +892,8 @@ export class CourtAuctionAdapter implements Adapter {
                 if (filter.maxNewDetails != null && nNewDetail === filter.maxNewDetails) {
                   console.log(`[courtauction] 신규 상세 예산 ${filter.maxNewDetails}건 소진 — 이후 신규는 메타만(다음 실행에서 이어감)`);
                 }
+              } else if (priority) {
+                nPriorityRefresh++;
               } else {
                 nRefreshDetail++;
               }
@@ -861,7 +917,7 @@ export class CourtAuctionAdapter implements Adapter {
 
         // 중간 휴식 (사람처럼) — 부하가 큰 상세(fetchDetail) 총 수집량(신규+임박재수집) 기준. 증분 스윕에서 대부분 메타만
         // 갱신(상세 skip)이면 잘 안 늘어 큰 휴식이 거의 안 뜸(불필요한 대기 방지). 비증분(전량 상세)에선 사실상 종전과 동일.
-        const nDetail = nNewDetail + nRefreshDetail;
+        const nDetail = nNewDetail + nRefreshDetail + nPriorityRefresh;
         if (nDetail >= nextBreakAt && nResults < maxItems) {
           const br = rnd(BREAK_DWELL_MIN_MS, BREAK_DWELL_MAX_MS);
           console.log(`[courtauction] ☕ 휴식 ${Math.round(br / 1000)}s...`);
@@ -875,8 +931,9 @@ export class CourtAuctionAdapter implements Adapter {
 
     if (blocked) {
       console.error('[courtauction] IP 차단 — 수집 중단. 로컬 PC/RPi에서 재시도 필요.');
+      sink?.onBlocked?.();
     }
-    console.log(`[courtauction] 완료: ${nResults}건${filter.incremental ? ` (증분: 신규 상세 ${nNewDetail} · 임박 재수집 ${nRefreshDetail} · 기존 메타갱신 ${nKnownSkip}${nDeferred ? ` · 상세 이월 ${nDeferred}` : ''})` : ''}`);
+    console.log(`[courtauction] 완료: ${nResults}건${filter.photosOnly ? ` (사진 상세 ${nPhotoDetail}/${filter.maxPhotoDetails ?? '∞'} · 사진 보유 스킵 ${nKnownSkip})` : filter.incremental ? ` (증분: 신규 상세 ${nNewDetail} · 명세서 공개 후 재수집 ${nPriorityRefresh}/${filter.refreshKeys?.size ?? 0} · 임박 재수집 ${nRefreshDetail} · 기존 메타갱신 ${nKnownSkip}${nDeferred ? ` · 상세 이월 ${nDeferred}` : ''})` : ''}`);
     return results;
   }
 }

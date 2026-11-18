@@ -77,19 +77,20 @@ class EnsembleMathTest(unittest.TestCase):
 
     def test_time_splits_are_date_ordered_and_case_item_purged(self):
         frame = pd.DataFrame([
-            {"case_no": "A", "item_no": "1", "sale_date": "2026-01-01", "sale_ratio": 0.8},
-            {"case_no": "A", "item_no": "1", "sale_date": "2026-01-02", "sale_ratio": 0.9},
-            {"case_no": "B", "item_no": "1", "sale_date": "2026-01-03", "sale_ratio": 0.7},
-            {"case_no": "C", "item_no": "1", "sale_date": "2026-01-04", "sale_ratio": 0.6},
-            {"case_no": "D", "item_no": "1", "sale_date": "2026-01-05", "sale_ratio": 0.5},
+            {"court": "서울중앙지방법원", "case_no": "A", "item_no": "1", "sale_date": "2026-01-01", "sale_ratio": 0.8},
+            {"court": "인천지방법원", "case_no": "C", "item_no": "1", "sale_date": "2026-01-02", "sale_ratio": 0.9},
+            {"court": "서울중앙지방법원", "case_no": "B", "item_no": "1", "sale_date": "2026-01-03", "sale_ratio": 0.7},
+            {"court": "서울중앙지방법원", "case_no": "C", "item_no": "1", "sale_date": "2026-01-04", "sale_ratio": 0.6},
+            {"court": "서울중앙지방법원", "case_no": "D", "item_no": "1", "sale_date": "2026-01-05", "sale_ratio": 0.5},
         ])
         frame["sale_date"] = pd.to_datetime(frame["sale_date"])
 
         train, test = time_split(frame, test_ratio=0.4)
-        train_keys = set(zip(train["case_no"], train["item_no"]))
-        test_keys = set(zip(test["case_no"], test["item_no"]))
+        train_keys = set(zip(train["court"], train["case_no"], train["item_no"]))
+        test_keys = set(zip(test["court"], test["case_no"], test["item_no"]))
         self.assertLess(train["sale_date"].max(), test["sale_date"].min())
         self.assertTrue(train_keys.isdisjoint(test_keys))
+        self.assertIn(("인천지방법원", "C", "1"), train_keys)
         self.assertGreaterEqual(len(rolling_time_splits(frame, n_splits=2, test_ratio=0.25, min_train_rows=1)), 1)
 
 

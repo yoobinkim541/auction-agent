@@ -30,6 +30,7 @@ export interface ListingTrustBackfillRow {
   warnings: unknown;
   location_analyzed: boolean;
   market_price: string | number | null;
+  market_confidence: 'high' | 'medium' | 'low' | null;
   expected_bid_price: string | number | null;
   comps: unknown;
   site_comps: unknown;
@@ -39,6 +40,7 @@ export interface ListingTrustBackfillRow {
 }
 
 export interface OutcomeTrustBackfillRow {
+  court: string;
   case_no: string;
   item_no: string | null;
   sale_date: string | Date | null;
@@ -121,6 +123,7 @@ export function mapListingTrustInput(row: ListingTrustBackfillRow): ListingTrust
     documentItemMismatch: documentItemMismatch(row.documents, itemNo),
     locationAnalyzed: row.location_analyzed,
     marketPrice: numberOrNull(row.market_price),
+    marketConfidence: row.market_confidence,
     expectedBidPrice: numberOrNull(row.expected_bid_price),
     comparableCount: arrayLength(row.comps) + arrayLength(row.site_comps),
     rightsAnalyzedAt: timestamp(row.rights_analyzed_at),
@@ -159,8 +162,8 @@ export function mapOutcomeTrustInput(
 export const LISTING_TRUST_SQL = `
   select l.id, l.case_no, l.item_no, l.appraisal_value, l.min_bid_price, l.crawled_at,
          (r.id is not null) as rights_analyzed, r.classified, r.tenants, r.warnings,
-         (loc.id is not null) as location_analyzed, loc.market_price, loc.expected_bid_price,
-         loc.comps, loc.site_comps, r.analyzed_at as rights_analyzed_at,
+         (loc.id is not null) as location_analyzed, loc.market_price, loc.market_confidence,
+         loc.expected_bid_price, loc.comps, loc.site_comps, r.analyzed_at as rights_analyzed_at,
          loc.analyzed_at as location_analyzed_at,
          docs.documents
     from gm_listings l
@@ -189,29 +192,33 @@ export const LISTING_TRUST_SQL = `
    limit $1`;
 
 export const OUTCOME_TRUST_SQL = `
-  select e.case_no, e.item_no, e.sale_date, e.appraisal_value, e.sold_amount,
+  select e.court, e.case_no, e.item_no, e.sale_date, e.appraisal_value, e.sold_amount,
          e.sold, e.matched as result_known,
          (select count(*) from gm_auction_results duplicate_result
-           where duplicate_result.case_no = e.case_no
+           where duplicate_result.court = e.court
+             and duplicate_result.case_no = e.case_no
              and coalesce(nullif(duplicate_result.item_no, ''), '1') = coalesce(nullif(e.item_no, ''), '1')
              and duplicate_result.dxdy_date = e.sale_date) as duplicate_result_count,
          e.matched as sale_date_matches,
          (select count(distinct coalesce(nullif(case_result.item_no, ''), '1')) from gm_auction_results case_result
-           where case_result.case_no = e.case_no and case_result.dxdy_date = e.sale_date) as case_date_item_count
+           where case_result.court = e.court and case_result.case_no = e.case_no and case_result.dxdy_date = e.sale_date) as case_date_item_count
    from gm_outcome_eval e
    join gm_prediction_snapshots s
-     on s.case_no = e.case_no
+     on s.court = e.court
+    and s.case_no = e.case_no
     and s.item_no = coalesce(nullif(e.item_no, ''), '1')
     and s.sale_date = e.sale_date
    left join lateral (
      select max(observed.captured_at) as captured_at
        from gm_auction_results observed
-      where observed.case_no = e.case_no
+      where observed.court = e.court
+        and observed.case_no = e.case_no
         and coalesce(nullif(observed.item_no, ''), '1') = coalesce(nullif(e.item_no, ''), '1')
         and observed.dxdy_date = e.sale_date
    ) observed_result on true
    left join gm_outcome_trust current_trust
-     on current_trust.case_no = e.case_no
+     on current_trust.court = e.court
+    and current_trust.case_no = e.case_no
     and current_trust.item_no = coalesce(nullif(e.item_no, ''), '1')
     and current_trust.sale_date = e.sale_date
    where e.sale_date is not null
@@ -250,7 +257,7 @@ async function backfillOutcomes(options: TrustBackfillOptions, statuses: Map<str
   for (const row of rows.filter(isOutcomeTrustCandidate)) {
     const input = mapOutcomeTrustInput(row);
     const result = evaluateOutcomeTrust(input);
-    await saveOutcomeTrust(input.caseNo!, input.itemNo!, input.saleDate!, input, result);
+    await saveOutcomeTrust(row.court, input.caseNo!, input.itemNo!, input.saleDate!, input, result);
     record(statuses, result.status);
     result.reasonCodes.forEach((reason) => record(reasons, reason));
   }

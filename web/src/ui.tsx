@@ -29,12 +29,12 @@ export function Section({ title, children }: { title: string; children: ReactNod
 }
 
 /** 정렬 가능한 테이블 헤더 셀. */
-export function ThSort({ col, cur, dir, onSort, children }: {
-  col: SortKey; cur: SortKey; dir: 'asc' | 'desc'; onSort: (c: SortKey) => void; children: ReactNode;
+export function ThSort({ col, cur, dir, onSort, children, className }: {
+  col: SortKey; cur: SortKey; dir: 'asc' | 'desc'; onSort: (c: SortKey) => void; children: ReactNode; className?: string;
 }) {
   const active = col === cur;
   return (
-    <th className={`sortable${active ? ' sorted' : ''}`} onClick={() => onSort(col)}>
+    <th className={`sortable${active ? ' sorted' : ''}${className ? ` ${className}` : ''}`} onClick={() => onSort(col)}>
       {children}{active ? <span className="sort-ind">{dir === 'asc' ? ' ↑' : ' ↓'}</span> : null}
     </th>
   );
@@ -59,7 +59,7 @@ export function FieldProgress({ r }: { r: ListingItem }) {
   return (
     <span className={`fv-chip${complete ? ' fv-chip-done' : ''}`}
       title={`현장 확인 ${done}/${total}${notes ? ` · 메모 ${notes}건` : ''}${complete ? ' · 임장 완료' : ''}`}>
-      🚶{done}/{total}{notes > 0 ? ' 📝' : ''}
+      임장 {done}/{total}{notes > 0 ? ' · 메모' : ''}
     </span>
   );
 }

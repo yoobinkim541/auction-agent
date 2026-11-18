@@ -79,7 +79,7 @@ describe('trust backfill mappings', () => {
 
   it('filters outcomes without a sale date before trust-key mapping', () => {
     const candidates = [{
-      case_no: '2026타경0', item_no: '1', sale_date: null,
+      court: '서울중앙지방법원', case_no: '2026타경0', item_no: '1', sale_date: null,
       appraisal_value: '100000000', sold_amount: null,
       sold: false, duplicate_result_count: 0, result_known: false, sale_date_matches: false, case_date_item_count: 0,
     }].filter(isOutcomeTrustCandidate);
@@ -101,6 +101,7 @@ describe('trust backfill mappings', () => {
       warnings: ['금액 단위 확인 필요', '일반 경고'],
       location_analyzed: true,
       market_price: '120000000',
+      market_confidence: 'medium',
       expected_bid_price: '90000000',
       comps: [{ price: 1 }],
       site_comps: [{ price: 2 }, { price: 3 }],
@@ -113,7 +114,7 @@ describe('trust backfill mappings', () => {
       caseNo: '2026타경1', itemNo: '2', appraisalValue: 100000000, minBidPrice: 70000000,
       crawledAt: '2026-08-20T00:00:00.000Z', rightsAnalyzed: true, registryCount: 2, tenantCount: 1,
       moneyParseWarnings: 1, documentItemMismatch: true, locationAnalyzed: true,
-      marketPrice: 120000000, expectedBidPrice: 90000000, comparableCount: 3,
+      marketPrice: 120000000, marketConfidence: 'medium', expectedBidPrice: 90000000, comparableCount: 3,
       rightsAnalyzedAt: '2026-08-20T12:00:00.000Z',
       locationAnalyzedAt: '2026-08-21T00:00:00.000Z',
     });
@@ -121,7 +122,7 @@ describe('trust backfill mappings', () => {
 
   it('marks a multi-item over-appraisal sale as batch-suspected', () => {
     const input = mapOutcomeTrustInput({
-      case_no: '2026타경2', item_no: '4', sale_date: '2026-08-21',
+      court: '서울중앙지방법원', case_no: '2026타경2', item_no: '4', sale_date: '2026-08-21',
       appraisal_value: '100000000', sold_amount: '160000000',
       sold: true, duplicate_result_count: 1, result_known: true, sale_date_matches: true, case_date_item_count: 2,
     });

@@ -79,10 +79,10 @@ export async function fetchRegionComps(propertyType: string, regionPrefix: strin
     `select r.case_no, l.address, r.dxdy_date::text as date,
             r.sold_amount::float8 as sold_amount, l.appraisal_value::float8 as appraisal
        from gm_auction_results r
-       join (select distinct on (case_no, coalesce(item_no,'1'))
-                    case_no, coalesce(item_no,'1') item_no, address, property_type, appraisal_value
-               from gm_listings order by case_no, coalesce(item_no,'1'), crawled_at desc nulls last) l
-         on l.case_no = r.case_no and l.item_no = r.item_no
+       join (select distinct on (court, case_no, coalesce(item_no,'1'))
+                    court, case_no, coalesce(item_no,'1') item_no, address, property_type, appraisal_value
+               from gm_listings order by court, case_no, coalesce(item_no,'1'), crawled_at desc nulls last) l
+         on l.court = r.court and l.case_no = r.case_no and l.item_no = r.item_no
       where r.sold and r.sold_amount > 0 and l.appraisal_value > 0
         and l.property_type = $1 and l.address like $2 || '%'
         and r.dxdy_date >= current_date - $3::int

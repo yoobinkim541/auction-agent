@@ -39,7 +39,7 @@ const rights = {
 const location = {
   caseNo: listing.caseNo,
   marketPrice: 320_000_000,
-  marketConfidence: 'high',
+  marketConfidence: 'medium',
   comps: [
     { areaM2: 80, dealAmount: 310_000_000, dealDate: '2026-08-01' },
     { areaM2: 80, dealAmount: 315_000_000, dealDate: '2026-08-02' },
@@ -96,7 +96,7 @@ describe('persistPrecisionStages', () => {
     ]);
     expect(db.saveListingDataTrust).toHaveBeenCalledWith(
       101,
-      expect.objectContaining({ status: 'hold', reasonCodes: ['INSUFFICIENT_COMPS'] }),
+      expect.objectContaining({ status: 'trusted', reasonCodes: [] }),
       expect.any(String),
     );
   });
@@ -128,7 +128,6 @@ describe('persistPrecisionStages', () => {
     const registryOnlyInput = {
       ...persistenceInput(),
       rights: { ...rights, classified: [] } as unknown as RightsAnalysisResult, // registryCount=0 → EMPTY_REGISTRY
-      location: { ...location, comps: [...location.comps, { areaM2: 80, dealAmount: 312_000_000, dealDate: '2026-08-03' }] } as unknown as LocationAnalysis, // comparableCount=3 → INSUFFICIENT_COMPS 회피(EMPTY_REGISTRY 단독화)
     };
 
     await persistPrecisionStages(registryOnlyInput);
@@ -147,7 +146,8 @@ describe('persistPrecisionStages', () => {
   it('EMPTY_REGISTRY 외 다른 사유도 섞이면 AI 소견을 조회하지 않고 정상 hold를 유지한다', async () => {
     const mixedReasonInput = {
       ...persistenceInput(),
-      rights: { ...rights, classified: [] } as unknown as RightsAnalysisResult, // EMPTY_REGISTRY + 기존 comps(2건)로 INSUFFICIENT_COMPS도 겹침
+      rights: { ...rights, classified: [] } as unknown as RightsAnalysisResult, // EMPTY_REGISTRY
+      location: { ...location, marketConfidence: 'low' } as unknown as LocationAnalysis, // 비교사례 2건 + 신뢰도 low → INSUFFICIENT_COMPS도 겹침
     };
 
     await persistPrecisionStages(mixedReasonInput);
@@ -173,7 +173,7 @@ describe('persistPrecisionStages', () => {
       strengths: [],
       risks: [],
       requiredChecks: [],
-      evaluatorVersion: 'precision-v1',
+      evaluatorVersion: 'precision-v3',
     }));
 
     await persistPrecisionStages(persistenceInput());

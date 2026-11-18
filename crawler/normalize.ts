@@ -65,6 +65,9 @@ export function extractLabeledKoreanMoney(input: string | null | undefined, labe
     const stopIdx = segment.search(stopRe);
     if (stopIdx >= 0) segment = segment.slice(0, stopIdx);
   }
+  // '368,000,000원(409,000,000원 중 반환받지 못한 임차보증금)' — 금액 뒤 괄호 설명은 버린다
+  const paren = segment.search(/[(（]/);
+  if (paren > 0) segment = segment.slice(0, paren);
   return parseKoreanMoney(segment);
 }
 
@@ -149,6 +152,14 @@ export function mapRightKind(label: string | null | undefined): RightKind {
 /** "2024타경12345" 형태 정규화(공백 제거) */
 export function normalizeCaseNo(s: string | null | undefined): string {
   return (s ?? '').replace(/\s/g, '');
+}
+
+/** 건물 표시 '철근콘크리트구조 59.88㎡' → 59.88. 복층처럼 층별로 나뉜 면적은 더한다. */
+export function parseExclusiveArea(text: string | null | undefined): number | null {
+  if (!text) return null;
+  let total = 0;
+  for (const match of text.matchAll(/([0-9][0-9,]*(?:\.[0-9]+)?)\s*㎡/g)) total += parseFloat(match[1]!.replace(/,/g, ''));
+  return total > 0 ? Math.round(total * 10000) / 10000 : null;
 }
 
 /** 면적 "84.95㎡" / "84.95m2" / "25평" → ㎡(평이면 ×3.305785) */
