@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   csvCell,
+  decisionProbabilityPayload,
   parseCsv,
   pythonPath,
   readPredictionCsv,
@@ -51,5 +52,51 @@ describe('ML scripts entrypoint guards', () => {
   it('scripts/export-ml-dataset.ts는 import 시 main()이 자동 실행되지 않도록 진입점 가드를 갖춘다', () => {
     const source = readFileSync(new URL('./export-ml-dataset.ts', import.meta.url), 'utf8');
     expect(source).toContain('if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)');
+  });
+});
+
+describe('frozen decision scoring', () => {
+  const frozen = {
+    court: '서울중앙지방법원',
+    case_no: '2024타경1',
+    item_no: '1',
+    sale_date: '2026-11-20',
+    horizon_days: 1,
+    observed_on: '2026-11-18',
+    snapshot_version: 'feature-v2',
+    snapped_at: '2026-11-18T21:00:00.000Z',
+    price_floor: 100,
+    recommended_bid: 120,
+    target_margin_pct: 0.15,
+    target_margin_source: 'evaluator-default',
+  };
+
+  it('keeps identity and hash from the frozen row, not the model', () => {
+    const [row] = decisionProbabilityPayload([frozen], [{
+      court: '다른법원',
+      case_no: '2024타경1',
+      item_no: '1',
+      sale_date: '2026-11-20',
+      horizon_days: '1',
+      probability: '0.4',
+      feature_snapshot_hash: 'model-hash',
+    }]);
+    expect(row).toBeUndefined();
+  });
+
+  it('drops out-of-range probabilities and keeps an in-range score', () => {
+    const rows = decisionProbabilityPayload(
+      [frozen, { ...frozen, case_no: '2024타경2', horizon_days: 7 }],
+      [
+        { court: frozen.court, case_no: frozen.case_no, item_no: '1.0', sale_date: frozen.sale_date, horizon_days: '1', probability: '1.2' },
+        { court: frozen.court, case_no: frozen.case_no, item_no: '1', sale_date: frozen.sale_date, horizon_days: '1', probability: ' ' },
+        { court: frozen.court, case_no: '2024타경2', item_no: '1', sale_date: frozen.sale_date, horizon_days: '7', probability: '0.25' },
+      ],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.case_no).toBe('2024타경2');
+    expect(rows[0]?.probability).toBe(0.25);
+    expect(rows[0]?.feature_snapshot_hash).not.toBe('model-hash');
+    expect(rows[0]?.snapshot_version).toBe('feature-v2');
   });
 });

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Train the report-only ensemble and emit predictions for active listings."""
+"""Train the report-only ensemble and emit predictions for active listings.
+
+Price shadows stay on gm_shadow_scores. The good-listing decision model is a separate call
+(`--good-only`) and is never written into the price-shadow feature JSON.
+"""
 from __future__ import annotations
 
 import argparse
@@ -12,6 +16,7 @@ import pandas as pd
 
 try:
     from .ensemble import blend_predictions, ensemble_confidence
+    from .good_listing import MODEL_VERSION as DECISION_MODEL_VERSION
     from .offline_eval import (
         CATEGORICAL_FEATURES,
         NUMERIC_FEATURES,
@@ -23,6 +28,7 @@ try:
     )
 except ImportError:
     from ensemble import blend_predictions, ensemble_confidence
+    from good_listing import MODEL_VERSION as DECISION_MODEL_VERSION
     from offline_eval import (
         CATEGORICAL_FEATURES,
         NUMERIC_FEATURES,
@@ -95,7 +101,7 @@ def train_and_predict(
             "blend_weights": weights,
             "downside_buffer": downside_buffer,
         }
-        # No market value, no probability: the label cannot be checked for that listing later either.
+        # Exploratory net-margin attachment only. Decision probabilities go to gm_decision_probabilities.
         if good_probability is not None and np.isfinite(good_probability[row_index]):
             features["good_listing"] = {
                 "probability": float(good_probability[row_index]),
@@ -118,13 +124,73 @@ def train_and_predict(
     return pd.DataFrame(output_rows), weights, downside_buffer
 
 
+GOOD_LISTING_DECISION_COLUMNS = ["court", "case_no", "item_no", "sale_date", "horizon_days", "probability"]
+
+
+def load_frozen_frame(path: Path) -> pd.DataFrame:
+    if not path.exists() or path.stat().st_size == 0:
+        return pd.DataFrame(columns=GOOD_LISTING_DECISION_COLUMNS)
+    return pd.read_csv(path)
+
+
+def empty_good_listing_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=GOOD_LISTING_DECISION_COLUMNS)
+
+
+def _import_score_frozen_decisions():
+    try:
+        from .good_listing import score_frozen_decisions
+    except ImportError:
+        from good_listing import score_frozen_decisions
+    return score_frozen_decisions
+
+
+def score_good_listing_decisions(
+    train_frame: pd.DataFrame,
+    predict_frame: pd.DataFrame,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    """Call Label's scorer. An empty predict frame or an abstain (None) returns an empty frame.
+
+    A missing function or any other error propagates. This does not recompute labels
+    and does not fall back to the latest listing.
+    """
+    if predict_frame.empty:
+        return empty_good_listing_frame()
+    scored = _import_score_frozen_decisions()(train_frame, predict_frame, random_state)
+    if scored is None or getattr(scored, "empty", True):
+        print(f"[ml:shadow] {DECISION_MODEL_VERSION} 기권")
+        return empty_good_listing_frame()
+    return scored
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train", type=Path, required=True)
-    parser.add_argument("--predict", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--train", type=Path)
+    parser.add_argument("--predict", type=Path)
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--random-state", type=int, default=42)
+    parser.add_argument("--good-only", action="store_true")
+    parser.add_argument("--frozen-train", type=Path)
+    parser.add_argument("--frozen-predict", type=Path)
+    parser.add_argument("--good-output", type=Path)
     args = parser.parse_args()
+
+    if args.good_only:
+        if not args.frozen_train or not args.frozen_predict or not args.good_output:
+            parser.error("good-only requires --frozen-train --frozen-predict --good-output")
+        scored = score_good_listing_decisions(
+            load_frozen_frame(args.frozen_train),
+            load_frozen_frame(args.frozen_predict),
+            args.random_state,
+        )
+        args.good_output.parent.mkdir(parents=True, exist_ok=True)
+        scored.to_csv(args.good_output, index=False)
+        print(f"[ml:shadow] {DECISION_MODEL_VERSION} {len(scored)} rows -> {args.good_output}")
+        return
+
+    if not args.train or not args.predict or not args.output:
+        parser.error("price shadow requires --train --predict --output")
 
     train_frame = load_dataset(args.train)
     predict_frame = load_dataset(args.predict)

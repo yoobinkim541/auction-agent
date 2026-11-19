@@ -113,6 +113,10 @@ cd web && npm run preview                           # :5174 → Spring API 소�
 → `gm_rights_analysis`/`gm_location_analysis`/`gm_scores` → Spring API → 대시보드/다이제스트.
 법령 RAG(`gm_legal_chunks`)는 Claude 검증의 인용 grounding.
 
+### 추천 순위 검증 (운영 추천과 분리)
+
+`npm run ml:weekly`는 D-1·D-7에 동결한 비교 후보군(추천·조건부 중 신뢰·권리·입찰 범위 게이트 통과)으로 [주간 순위 복기](docs/phase2/ml-plan.md)를 만든다. 결과는 `artifacts/ml/weekly-shortlist.md`. 현행 정밀은 그중 숏리스트 매물만, 권장 입찰가 기준 예상 순마진율과 섀도 모델은 후보군 전체에서 주 7건 한도로 고른다. 목표 충족은 매각 후 180일 같은 건물·같은 평형 실거래 시세(`gm_post_sale_values`, `ml:avm`이 기록)로 판정하므로 약 7개월 뒤 확정되며, 그 전에는 낙찰 가능·사후 확인 대기로 표시한다. 후보 사건이 7건 이하인 주는 '순서 비교 불가'로 표시한다. 결과가 없거나 모델이 기권하면 그 사실을 그대로 표시한다. 입찰가·권리 게이트·텔레그램 추천은 변경하지 않는다.
+
 ## 외부 시세·공시 (k-skill)
 
 분석에 빈 칸만 채운다. 이미 있는 법원 크롤·더낙찰 공시가격·자체 MOLIT 키는 그대로 1순위다.

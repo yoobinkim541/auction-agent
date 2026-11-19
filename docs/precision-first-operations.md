@@ -102,3 +102,19 @@ npm run precision:audit
 ## 7. 학습 데이터 안전 규칙
 
 `gm_outcome_eval`은 원시 커버리지와 누락률 감사에만 사용한다. 모델 학습, 가격 보정, 오차 지표, 섀도우 모델 평가는 반드시 `gm_trusted_outcome_eval`을 사용한다. `gm_outcome_eval`에서 직접 학습 파일이나 피처를 만들지 않는다.
+
+### 기일 전 판단 원장 배포
+
+법원 식별 키 마이그레이션까지 적용된 기존 DB에서 아래 순서로 진행한다. 신규 DB는 `db/schema.sql`에 포함되어 있다.
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrate_frozen_decisions.sql
+.venv-ml/bin/python -m pip install -r requirements-ml.txt
+npm run ml:avm -- --rebuild
+```
+
+첫 재학습은 과거 **시세 추정값**을 다시 만들지만 과거 판단·확률은 소급 생성하지 않는다. 마이그레이션은 `gm_feature_snapshots.comparison_eligible`과 `gm_post_sale_values`를 추가한다. 이전 동결 행은 `comparison_eligible`이 비어 있어 학습·비교에서 빠진다. 이후 `daily-parse.sh`가 정밀 감사 성공 뒤 입력을 동결하고, `daily-learn.sh`의 `ml:avm`이 창이 닫힌 기일의 매각 후 시세를 한 번씩 기록하며, 가격 모델과 D-7/D-1 섀도 모델을 실행한다. 좋은 매물 라벨(`post-sale-margin-v3`)은 매각 후 210일이 지나야 확정되므로 첫 학습 가능 시점도 그만큼 늦다. `npm run ml:weekly`는 운영 추천을 쓰지 않고 `artifacts/ml/weekly-shortlist.md`만 갱신한다. 처음에 ML 선택이 0건이면 실패로 단정하지 말고, 해당 시점에 확정된 학습 라벨의 수와 클래스 분포를 먼저 확인한다.
+
+시세 하한 사후 검증(`npm run ml:eval`이 만드는 `docs/phase2/ml-offline-report.md`의 시세 모델 절)의 이탈률은 매물별로 후속 같은 평형 거래 중 하한 아래 비율을 구해 평균한 값이다. 후속 거래의 중앙값과 비교하던 이전 방식보다 높게 나올 수 있다.
+
+채택 검토 시 같은 시점의 현행 정밀 순위와 비교한다. 합성 테스트·과거 최신 행·결과 없는 주는 수익 개선 증거가 아니다. 순위를 바꾸더라도 별도 승인 전에는 기존 추천이나 입찰 상한을 변경하지 않는다.

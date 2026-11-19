@@ -461,7 +461,7 @@ create table if not exists gm_prediction_snapshots (
 );
 
 -- 시점 고정 입력 스냅샷 — 매각 D-7·D-1(KST)에 한 번만 기록하고 덮어쓰지 않는다.
--- 학습 데이터가 권리·입지·매물 값을 '최신 행'이 아니라 판단 시점 값으로 읽기 위한 원장.
+-- feature-v2 행만 입찰·비용·숏리스트·AVM 출처를 함께 얼린다. snapshot_version 이 비어 있는 과거 행은 승격하지 않고, 나중 모델로 메우지 않는다.
 create table if not exists gm_feature_snapshots (
   court          text not null,
   case_no        text not null,
@@ -505,9 +505,86 @@ create table if not exists gm_feature_snapshots (
   hard_cap_bid   bigint,
   reason_codes   jsonb,
   trust_status   text,
+  address        text,
+  source         text,
+  snapshot_version text,                  -- feature-v2. null 이면 과거 동결(승격 불가, 소급 채움 금지)
+  observed_on    date,                    -- 동결 실행의 KST 날짜
+  target_margin_pct numeric,              -- 평가기가 실제로 쓴 목표 마진. 설정값이 없으면 평가기 기본 0.15
+  target_margin_source text,              -- configured | evaluator-default
+  price_floor    bigint,                  -- 관측 시점 최저가. 이후 결과 최저가와 섞지 않는다
+  shortlist_eligible boolean,             -- 동결 순간 listing_id 가 gm_precision_shortlist 에 있었는지(신선도 포함)
+  comparison_eligible boolean,            -- 동결 순간 신뢰·권리·입찰 범위 게이트 통과(recommended·conditional). 순위 비교·섀도 학습 후보군
+  precision_evaluator_version text,
+  trust_score    int,
+  trust_evaluator_version text,
+  fixed_costs    bigint,                  -- 취득세+명도+채권+기타. 입찰가·인수금액은 제외. 비용 객체가 없으면 null
+  acq_tax        bigint,
+  acq_tax_rate_pct numeric,
+  move_out_cost  bigint,
+  bond_cost      bigint,
+  etc_cost       bigint,
+  cost_bid_price bigint,                  -- 얼린 취득세를 계산한 가정 낙찰가
+  cost_bid_basis text,
+  costs_captured boolean,                 -- v2 가 비용을 조회했으면 true. null 은 과거 행
+  avm_value      bigint,
+  avm_low        bigint,
+  avm_high       bigint,
+  avm_basis      text,
+  avm_kind       text,
+  avm_model_version text,                 -- 동결 순간 gm_avm_estimates.model_version. 나중 버전으로 다시 쓰지 않는다
+  avm_as_of      date,
+  avm_available  boolean,                 -- 추정 행이 있었으면 true. null 은 과거 행
+  avm_building_comps int,
+  avm_dong_comps int,
   snapped_at     timestamptz not null default now(),
   primary key (court, case_no, item_no, sale_date, horizon_days)
 );
+create index if not exists gm_feature_snapshots_observed_idx
+  on gm_feature_snapshots (observed_on)
+  where snapshot_version is not null;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conname = 'gm_feature_snapshots_target_margin_pct'
+       and conrelid = 'gm_feature_snapshots'::regclass
+  ) then
+    alter table gm_feature_snapshots
+      add constraint gm_feature_snapshots_target_margin_pct
+      check (target_margin_pct is null or (target_margin_pct >= 0 and target_margin_pct < 1));
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+     where conname = 'gm_feature_snapshots_target_margin_source'
+       and conrelid = 'gm_feature_snapshots'::regclass
+  ) then
+    alter table gm_feature_snapshots
+      add constraint gm_feature_snapshots_target_margin_source
+      check (target_margin_source is null or target_margin_source in ('configured', 'evaluator-default'));
+  end if;
+end
+$$;
+
+
+-- 매각 전 D-7/D-1 판단 확률. 같은 키는 한 번만 쓰고 나중 모델이 덮지 않는다.
+-- 채점은 그날 동결된 feature-v2 입력만 쓴다. 매각 후 스냅샷이나 최신 목록으로 다시 채점하지 않는다.
+create table if not exists gm_decision_probabilities (
+  court          text not null,
+  case_no        text not null,
+  item_no        text not null default '1',
+  sale_date      date not null,
+  horizon_days   int not null check (horizon_days in (1, 7)),
+  model_name     text not null,
+  model_version  text not null,
+  label_version  text not null,
+  probability    double precision not null check (probability >= 0 and probability <= 1),
+  feature_snapshot_hash text not null,
+  feature_snapped_at timestamptz not null,
+  scored_at      timestamptz not null default now(),
+  primary key (court, case_no, item_no, sale_date, horizon_days, model_name, model_version)
+);
+create index if not exists gm_decision_probabilities_model_idx
+  on gm_decision_probabilities (model_name, model_version, horizon_days, sale_date);
 
 -- 시세 모델(AVM) 추정값 — 국토부 매매 실거래로 학습한 report-only 시세. 운영 시세(gm_location_analysis.market_price)와 별개.
 -- as_of = 평가 기준일(매각 7일 전, 아직 멀었으면 실행일). 그날로부터 신고 지연 30일 이전 거래만 썼다.
@@ -527,6 +604,21 @@ create table if not exists gm_avm_estimates (
   dong_comps     int not null default 0,
   model_version  text not null,
   created_at     timestamptz not null default now(),
+  primary key (court, case_no, item_no, sale_date)
+);
+
+-- 매각 후 실거래 시세 — 라벨(post-sale-margin-v3) 전용. 매각일 다음 날부터 180일 안의 같은 건물·같은 평형(±5%)
+-- 매매를 대상 면적으로 환산한 중앙값. 창이 닫히고 신고 지연(30일)이 지난 뒤 한 번만 쓰고 덮지 않는다.
+create table if not exists gm_post_sale_values (
+  court          text not null,
+  case_no        text not null,
+  item_no        text not null default '1',
+  sale_date      date not null,
+  value          bigint,                           -- null = 창 안에 같은 건물·같은 평형 거래 없음
+  confirms       int not null,                     -- 사용한 후속 거래 수(value 가 null 이면 0)
+  window_days    int not null,
+  method_version text not null,
+  computed_at    timestamptz not null default now(),
   primary key (court, case_no, item_no, sale_date)
 );
 

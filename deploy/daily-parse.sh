@@ -31,7 +31,7 @@ echo "[$(date '+%F %T')] === parse done (analyze rc=$rc) ==="
 
 # 학습 데이터 적재(결과 피드백 루프) — 실패해도 본 분석 rc는 보존.
 #  Phase 0: 매각 임박 예측 동결(analyze 직후라 최신). Phase 1: 최근 매각결과(낙찰가/유찰) 수집.
-npm run snapshot 2>&1 || echo "[snapshot] 실패(무시)"
+npm run snapshot -- --predictions-only 2>&1 || echo "[snapshot] 예측 동결 실패(무시)"
 npm run collect:results 2>&1 || echo "[collect:results] 실패(무시)"
 
 # 미매칭 스냅샷 재수집(retry:outcomes)은 deploy/daily-learn.sh 첫 단계로 이동 — 건당 약 11초라 20분 예산으로는
@@ -47,6 +47,12 @@ if [ "$rc" = "0" ]; then
   fi
 else
   echo "[precision] analyze 실패(rc=$rc) — 정밀 갱신·다이제스트 생략"
+fi
+
+# 정밀 목록과 같은 갱신·감사를 통과한 시점만 순위 비교에 사용한다.
+# 실패한 날의 입력을 다음날 값으로 소급 복원하지 않는다.
+if [ "$PRECISION_DIGEST_ALLOWED" = "1" ]; then
+  npm run snapshot -- --features-only 2>&1 || echo "[snapshot] 판단 입력 동결 실패(무시)"
 fi
 
 # 학습 부가 배치(AI 소견·복기·ML)는 deploy/daily-learn.sh로 분리 — gyeongmae-learn.timer가 파싱 창 이후 실행.

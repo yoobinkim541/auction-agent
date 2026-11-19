@@ -37,9 +37,18 @@ if echo "$CHANGED" | grep -q '^web/package-lock.json'; then
   DONE="$DONE web-deps"
 fi
 
+# 기존 원장에 새 컬럼을 먼저 추가한다. schema.sql의 CREATE TABLE IF NOT EXISTS는
+# 기존 표를 확장하지 않으므로 새 컬럼을 쓰는 인덱스보다 마이그레이션이 앞서야 한다.
+if echo "$CHANGED" | grep -qx 'db/migrate_frozen_decisions.sql'; then
+  has_ledger=$(psql -XAt -d gyeongmae -c "select to_regclass('gm_feature_snapshots') is not null") || fail "원장 확인 실패"
+  if [ "$has_ledger" = t ]; then
+    psql -X -v ON_ERROR_STOP=1 -d gyeongmae -f db/migrate_frozen_decisions.sql >>"$LOG" 2>&1 || fail "판단 원장 마이그레이션 실패"
+  fi
+fi
+
 # 스키마 — idempotent(create table if not exists)라 변경 시 재적용만으로 안전
 if echo "$CHANGED" | grep -q '^db/schema.sql'; then
-  psql -d gyeongmae -f db/schema.sql >>"$LOG" 2>&1 || fail "schema 적용 실패"
+  psql -X -v ON_ERROR_STOP=1 -d gyeongmae -f db/schema.sql >>"$LOG" 2>&1 || fail "schema 적용 실패"
   DONE="$DONE schema"
 fi
 

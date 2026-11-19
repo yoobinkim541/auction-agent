@@ -46,6 +46,9 @@ export interface PrecisionEvaluation {
   evaluatorVersion: 'precision-v3';
 }
 
+/** Live evaluation uses this when the caller does not pass a margin. There is no env override. */
+export const EVALUATOR_DEFAULT_TARGET_MARGIN_PCT = 0.15;
+
 const isPositive = (value: number | null): value is number => (
   value !== null && Number.isFinite(value) && value > 0
 );
@@ -81,7 +84,7 @@ const result = (
 });
 
 export const evaluatePrecision = (input: PrecisionInput): PrecisionEvaluation => {
-  const targetMarginPct = input.targetMarginPct ?? 0.15;
+  const targetMarginPct = input.targetMarginPct ?? EVALUATOR_DEFAULT_TARGET_MARGIN_PCT;
   const validAppraisalValue = isPositive(input.appraisalValue);
   const validMinBidPrice = isPositive(input.minBidPrice);
   const validMarketPrice = isPositive(input.marketPrice);

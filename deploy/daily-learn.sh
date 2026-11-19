@@ -29,5 +29,6 @@ POSTMORTEM_LIMIT="${POSTMORTEM_LIMIT:-5}" npm run eval:postmortem 2>&1 || echo "
 npm run ml:avm 2>&1 || echo "[ml:avm] 실패(무시)"
 npm run ml:eval 2>&1 || echo "[ml:eval] 실패(무시)"
 ML_SHADOW_LEAD_DAYS="${ML_SHADOW_LEAD_DAYS:-30}" npm run ml:shadow 2>&1 || echo "[ml:shadow] 실패(무시)"
+npm run ml:weekly 2>&1 || echo "[ml:weekly] 실패(무시)"
 
 echo "[$(date '+%F %T')] === learn done ==="

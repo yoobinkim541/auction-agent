@@ -20,8 +20,10 @@ from scripts.ml.offline_eval import (
     time_split,
 )
 from scripts.ml.shadow_ensemble import (
+    empty_good_listing_frame,
     feature_snapshot,
     json_value,
+    score_good_listing_decisions,
     snapshot_hash,
 )
 
@@ -166,6 +168,12 @@ class EnsembleMathTest(unittest.TestCase):
         snap2 = {"property_type": "apartment", "appraisal_value": 200000000}
         self.assertEqual(snapshot_hash(snap1), snapshot_hash(snap2))
         self.assertEqual(len(snapshot_hash(snap1)), 64)
+
+    def test_good_listing_decisions_empty_predict_does_not_call_a_model(self):
+        scored = score_good_listing_decisions(pd.DataFrame(), pd.DataFrame(), 42)
+        self.assertTrue(scored.empty)
+        self.assertEqual(list(scored.columns), list(empty_good_listing_frame().columns))
+
 
 if __name__ == "__main__":
     unittest.main()

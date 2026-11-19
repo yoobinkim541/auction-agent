@@ -2,10 +2,13 @@
  * 시세 모델(AVM) — 국토부 매매 실거래로 학습하고 경매 매물의 시세를 추정해 gm_avm_estimates 에 남긴다.
  * report-only: 운영 시세(gm_location_analysis.market_price)·점수·추천·입찰가를 바꾸지 않는다.
  *
- * 시점 고정: 매물의 평가 기준일(as_of)은 매각 7일 전(아직 멀었으면 오늘)이고, 모델은 그날로부터
- * 신고 지연(30일) 이전에 체결된 거래만 본다. as_of 가 매각 7일 전에 닿은 행은 다시 쓰지 않는다.
+ * 시점 고정: 매물의 평가 기준일(as_of)이 속한 달의 1일까지 알려진 거래만으로 그 달 모델을 학습한다.
+ * 물건별 신고·조회 시각이 없으면 계약일+30일을 알게 된 날로 본다. gm_molit_cache.fetched_at 은
+ * 그 달 자료를 마지막으로 받은 시각이라 물건별 신고일이 아니다. as_of 가 매각 7일 전에 닿은 행은 다시 쓰지 않는다.
+ * 매각 후 시세(gm_post_sale_values)는 판단 라벨 전용이다. 매각일 뒤 180일 창이 닫히고 신고 지연 30일이 지난 기일만
+ * 한 번 쓰고 덮지 않는다(on conflict do nothing).
  *
- * 사용: npm run ml:avm [-- --dry-run] [-- --rebuild]   (--rebuild: 굳은 행도 현재 모델로 다시 계산)
+ * 사용: npm run ml:avm [-- --dry-run] [-- --rebuild]   (--rebuild: 굳은 추정 행도 현재 모델로 다시 계산. 매각 후 시세는 다시 쓰지 않는다)
  */
 import 'dotenv/config';
 import { mkdirSync, unlinkSync } from 'node:fs';
@@ -20,8 +23,10 @@ import { addressToLawdCd } from '../pipeline/location/lawd-codes.ts';
 import { extractDong, extractLotNumber } from '../pipeline/location/comps.ts';
 import { pythonPath, readPredictionCsv, writeCsv } from './ml-shadow-ensemble.ts';
 
-/** v2: 오피스텔 학습 자료를 공식 API(지번·해제 여부 포함)로 바꿨다. */
-export const AVM_MODEL_VERSION = 'avm-v2';
+/** v3: 월별 as-of 모델. 달 시작 이전에 알려진 거래만 학습하고, 하한은 종류×근거별 한쪽 보정이다. */
+export const AVM_MODEL_VERSION = 'avm-v3';
+/** 매각 후 시세 산출 규칙. avm.py POST_SALE_METHOD 와 같다. */
+export const POST_SALE_METHOD = 'post-sale-v1';
 const METRICS_PATH = 'artifacts/ml/avm_metrics.json';
 const dryRun = process.argv.includes('--dry-run');
 const rebuild = process.argv.includes('--rebuild');
@@ -181,6 +186,7 @@ async function main(): Promise<void> {
   const tradesPath = `${prefix}-trades.csv`;
   const targetsPath = `${prefix}-targets.csv`;
   const outputPath = `${prefix}-output.csv`;
+  const postSalePath = `${prefix}-post-sale.csv`;
   writeCsv(tradesPath, trades);
   writeCsv(targetsPath, targets);
   mkdirSync('artifacts/ml', { recursive: true });
@@ -189,10 +195,13 @@ async function main(): Promise<void> {
     const scriptPath = fileURLToPath(new URL('./ml/avm.py', import.meta.url));
     const result = spawnSync(pythonPath(), [
       scriptPath, '--trades', tradesPath, '--targets', targetsPath, '--output', outputPath, '--metrics', METRICS_PATH,
+      '--post-sale-output', postSalePath, '--as-of', today, '--model-version', AVM_MODEL_VERSION,
     ], { env: process.env, stdio: 'inherit' });
     if (result.status !== 0) throw new Error(`시세 모델 실행 실패: exit=${result.status}`);
     const estimates = readPredictionCsv(outputPath);
+    const postSale = readPredictionCsv(postSalePath);
     console.log(`[ml:avm] 실거래 ${trades.length}건 학습, 매물 ${targets.length}건 중 ${estimates.filter((row) => row.value).length}건 추정`);
+    console.log(`[ml:avm] 매각 후 시세: 창이 닫힌 기일 ${postSale.length}건 중 ${postSale.filter((row) => row.value).length}건 확인 거래 있음`);
     if (dryRun) {
       console.log('[ml:avm] dry-run: DB에 저장하지 않았습니다');
       return;
@@ -240,8 +249,28 @@ async function main(): Promise<void> {
        returning 1 as n`,
     );
     if (dropped.length) console.log(`[ml:avm] 종류가 바뀐 매물의 추정 ${dropped.length}건 삭제`);
+    const postSalePayload = postSale.map((row) => ({
+      court: row.court,
+      case_no: row.case_no,
+      item_no: row.item_no,
+      sale_date: row.sale_date,
+      value: row.value ? Math.round(Number(row.value)) : null,
+      confirms: Number(row.confirms),
+      window_days: Number(row.window_days),
+    }));
+    const postSaleStored = await query<{ n: number }>(
+      `insert into gm_post_sale_values (court, case_no, item_no, sale_date, value, confirms, window_days, method_version)
+       select p.court, p.case_no, p.item_no, p.sale_date::date, p.value, p.confirms, p.window_days, $2
+         from jsonb_to_recordset($1::jsonb) as p(
+           court text, case_no text, item_no text, sale_date text, value bigint, confirms int, window_days int
+         )
+       on conflict (court, case_no, item_no, sale_date) do nothing
+       returning 1 as n`,
+      [JSON.stringify(postSalePayload), POST_SALE_METHOD],
+    );
+    console.log(`[ml:avm] 매각 후 시세 ${postSaleStored.length}건 신규 저장, 나머지 ${postSalePayload.length - postSaleStored.length}건은 이미 기록됨`);
   } finally {
-    for (const path of [tradesPath, targetsPath, outputPath]) {
+    for (const path of [tradesPath, targetsPath, outputPath, postSalePath]) {
       try { unlinkSync(path); } catch {}
     }
   }

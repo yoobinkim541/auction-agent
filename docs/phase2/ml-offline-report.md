@@ -2,6 +2,8 @@
 
 이 리포트는 DB를 수정하지 않는 오프라인 복기입니다. 모델 결과는 운영 추천/입찰가에 자동 반영하지 않습니다.
 
+> 아래 수치는 `net-margin-v1` 당시 저장된 결과다. D-7/D-1 권장 입찰가 기준의 새 모델 성적이 아니다. 새 데이터가 있는 DB에서 `npm run ml:eval`과 `npm run ml:weekly`로 다시 생성한다.
+
 ## Dataset
 - Past snapshots: 37153
 - Matched outcomes: 37153

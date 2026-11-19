@@ -558,7 +558,7 @@ def table(rows: Iterable[dict], headers: list[str], formatters: dict[str, callab
     return out
 
 
-AVM_KIND_LABEL = {"all": "전체", "apt": "아파트", "rh": "연립다세대", "offi": "오피스텔"}
+
 AVM_BASIS_LABEL = {
     "building_area": "같은 건물·같은 면적",
     "building": "같은 건물",
@@ -585,59 +585,25 @@ def ratio(value: float | None) -> str:
 
 
 def avm_lines() -> list[str]:
-    """Holdout accuracy written by ``npm run ml:avm``."""
+    """Holdout accuracy written by ``npm run ml:avm``.
+
+    Formatting lives in ``avm.avm_report_lines`` so this report cannot keep a
+    second description of what the model was allowed to see.
+    """
     path = Path("artifacts/ml/avm_metrics.json")
-    lines = ["## Market Value Model (AVM)"]
     if not path.exists():
-        return lines + ["_`npm run ml:avm` 결과(`artifacts/ml/avm_metrics.json`)가 없어 건너뛰었습니다._", ""]
-    metrics = json.loads(path.read_text(encoding="utf-8"))
-    kinds = ", ".join(f"{AVM_KIND_LABEL.get(kind, kind)} {count}" for kind, count in metrics.get("trades_by_kind", {}).items())
-    lines += [
-        f"- 매매 실거래 {metrics.get('trades', 0)}건({kinds})으로 학습한 report-only 시세. 운영 시세(`market_price`)는 바꾸지 않는다.",
-        f"- 평가일에서 {metrics.get('gap_days')}일(신고 지연) 이전, 그로부터 {metrics.get('window_days')}일 안에 체결된 거래만 본다.",
-    ]
-    if metrics.get("status") != "ok":
-        return lines + ["- 시간 분할 검증을 하기에 거래가 부족했습니다.", ""]
-    rows = []
-    for kind, model in metrics["model"].items():
-        rule = metrics["current_rule"].get(kind, {})
-        rows.append({
-            "구분": AVM_KIND_LABEL.get(kind, kind), "건수": model["rows"],
-            "모델 MdAPE": model["mdape"], "모델 ±10%": model["within_10"], "모델 편향": model["bias"],
-            "현행 규칙 MdAPE": rule.get("mdape"), "현행 규칙 ±10%": rule.get("within_10"),
-        })
-    basis_rows = [
-        {"근거": AVM_BASIS_LABEL.get(basis, basis), "건수": row["rows"], "MdAPE": row["mdape"], "±10%": row["within_10"]}
-        for basis, row in metrics.get("model_by_basis", {}).items()
-    ]
-    lines += [
-        f"- 검증: {metrics['test_from']}~{metrics['test_to']} 중개거래 {metrics['test_rows']}건(학습 {metrics['train_rows']}건은 그 이전 거래). "
-        "현행 규칙은 `pipeline/location/comps.ts`의 단계별 중앙값을 같은 정보로 다시 계산한 값.",
-        *table(rows, ["구분", "건수", "모델 MdAPE", "모델 ±10%", "모델 편향", "현행 규칙 MdAPE", "현행 규칙 ±10%"], {
-            name: ratio for name in ["모델 MdAPE", "모델 ±10%", "모델 편향", "현행 규칙 MdAPE", "현행 규칙 ±10%"]
-        }),
-        "",
-        "근거별 모델 오차(근거 = 가장 가까운 비교 거래 묶음):",
-        *table(basis_rows, ["근거", "건수", "MdAPE", "±10%"], {"MdAPE": ratio, "±10%": ratio}),
-        "",
-        f"- 80% 구간 적중률 {pct(metrics['band_coverage'])}, 구간 폭 중앙값 {pct(metrics['band_median_width'])}(시세 대비).",
-        f"- 경매 매물 {metrics.get('targets', 0)}건(기일) 중 {metrics.get('targets_valued', 0)}건 추정: "
-        + ", ".join(f"{AVM_BASIS_LABEL.get(basis, basis)} {count}" for basis, count in metrics.get("targets_by_basis", {}).items()),
-    ]
-    forward = metrics.get("forward_check", {})
-    forward_rows = [
-        {"대상": label, "구분": AVM_KIND_LABEL.get(kind, kind), "건수": row["rows"], "MdAPE": row["mdape"], "±10%": row["within_10"], "편향": row["bias"]}
-        for label, key in [("전체", "all"), ("학습 이후 평가분", "after_training")]
-        for kind, row in forward.get(key, {}).items()
-    ]
-    if forward_rows:
-        lines += [
+        return [
+            "## Market Value Model (AVM)",
+            "_`npm run ml:avm` 결과(`artifacts/ml/avm_metrics.json`)가 없어 건너뛰었습니다._",
             "",
-            f"경매 매물 추정값 vs 평가일 이후 {forward.get('days')}일 안에 같은 건물·같은 면적으로 체결된 실거래 중앙값. "
-            "'전체'는 모델 가중치가 이후 거래로 학습됐을 수 있고, '학습 이후 평가분'은 그렇지 않다:",
-            *table(forward_rows, ["대상", "구분", "건수", "MdAPE", "±10%", "편향"], {"MdAPE": ratio, "±10%": ratio, "편향": ratio}),
         ]
-    return lines + [""]
+    metrics = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        from .avm import avm_report_lines
+    except ImportError:
+        from avm import avm_report_lines
+    return avm_report_lines(metrics)
+
 
 
 def good_listing_lines(result: dict, tracking: dict) -> list[str]:
@@ -649,6 +615,7 @@ def good_listing_lines(result: dict, tracking: dict) -> list[str]:
         "## Good Listing Classification",
         f"- 라벨(`{LABEL_VERSION}`): 낙찰됐고, 보수 시세(AVM 80% 구간 하한과 감정가 중 낮은 값) 기준으로 "
         f"낙찰가·인수금액·취득세·명도비·채권비용을 뺀 순마진이 {GOOD_MARGIN:.0%} 이상.",
+        "- 이 절은 탐색용 순마진 라벨이다. 주간 판정은 Bid Margin Decision 절이며, 여기 점수로 입찰·추천·상태를 바꾸지 않는다.",
         "- 입력: 감정가, 그 기일의 최저가, 면적, AVM 시세·구간·근거, 인수금액·대항력·권리등급, 법원·지역·종류.",
         "- 제외: 현재 점수·추천·예상낙찰가·`true_margin`(과거 스냅샷이 매각 뒤 다시 쓰였다), `fail_count`(최신 행이 이후 유찰을 센다), 조회·관심 수(스냅샷 없는 행은 매각 뒤 값), 낙찰가와 그 파생값.",
         "- 시간순 holdout만 기록한다. 운영 추천·입찰가·필터에는 반영하지 않는다.",
@@ -700,6 +667,22 @@ def good_listing_lines(result: dict, tracking: dict) -> list[str]:
     else:
         lines.append("- 좋은 매물과 아닌 매물이 모두 쌓이기 전이라 순위 지표는 아직 없습니다.")
     return lines + [""]
+
+
+def frozen_decision_lines(random_state: int) -> list[str]:
+    """Post-sale margin decision report. Missing frozen export is a skip, not a latest-row fallback."""
+    path = Path("artifacts/ml/frozen_decisions.csv")
+    try:
+        from .good_listing import decision_lines, eval_bid_decision
+    except ImportError:
+        from good_listing import decision_lines, eval_bid_decision
+    if not path.exists() or path.stat().st_size == 0:
+        return [
+            "## Post-sale Margin Decision",
+            "- 동결 수출(`artifacts/ml/frozen_decisions.csv`)이 없어 건너뛰었습니다. 최신 매물 행으로 대체하지 않습니다.",
+            "",
+        ]
+    return decision_lines(eval_bid_decision(pd.read_csv(path, dtype={"case_no": str, "item_no": str, "result_cd": str}), random_state))
 
 
 def write_report(df: pd.DataFrame, output: Path, random_state: int) -> None:
@@ -795,6 +778,8 @@ def write_report(df: pd.DataFrame, output: Path, random_state: int) -> None:
             "",
         ]
     lines += avm_lines()
+    lines += frozen_decision_lines(random_state)
+
     lines += [
         "## Reference Price Performance",
         *table([ref_perf], ["rows", "reference_mae", "current_mae", "reference_win_rate"], {

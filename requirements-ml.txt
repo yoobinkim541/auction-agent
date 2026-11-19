@@ -1,5 +1,6 @@
 pandas>=2.0
 numpy>=1.24
 scikit-learn>=1.4
-# Optional challenger, install separately if needed:
-# xgboost>=2.0
+# Required by ml:avm (quantile regression). CPU wheels avoid CUDA dependencies on the Linux batch host.
+xgboost-cpu>=3.0,<4; platform_system == "Linux" and platform_machine == "x86_64"
+xgboost>=2.0,<4; platform_system != "Linux" or platform_machine != "x86_64"
