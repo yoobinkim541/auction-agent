@@ -263,7 +263,7 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar" aria-label="내비게이션">
-        <div className="brand"><i className="brand-mark" aria-hidden="true" />경매<span>매물 검토</span></div>
+        <div className="brand"><img className="brand-mark" src="/logo-64.png" alt="" width={22} height={22} />경매렌즈</div>
         <nav className="nav" ref={navRef}>
           <span className="ind" aria-hidden="true" />
           <button className={activeTab === 'today' ? 'on' : ''} onClick={openToday}>오늘</button>

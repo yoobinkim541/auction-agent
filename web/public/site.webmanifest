@@ -1,0 +1,15 @@
+{
+  "name": "경매렌즈",
+  "short_name": "경매렌즈",
+  "description": "법원경매 매물을 권리·시세·낙찰 근거로 걸러 보는 검토 도구",
+  "lang": "ko",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
