@@ -29,6 +29,7 @@ import { useJobRunner } from './useJobRunner.ts';
 import { usePrecisionInbox } from './usePrecisionInbox.ts';
 import { useDetailSelection } from './useDetailSelection.ts';
 import { useListingFilters } from './useListingFilters.ts';
+import { CountUp, useSlidingIndicator, usePresence, useSpotlight } from './motion.tsx';
 
 const TODAY = localDateISO(); // KST 기준 로컬 날짜(UTC slice는 00:00~09:00 KST 구간에서 어제 날짜)
 
@@ -183,6 +184,13 @@ export default function App() {
   const decidedCount = rows.filter((r) => r.current_decision != null).length;
   const listTab: ListTab = onlyDecided ? 'journal' : onlyFavorite ? 'fav' : onlyPassed ? 'recommend' : sort === 'fieldwork' ? 'fieldwork' : 'all';
   const activeTab = page === 'list' ? listTab : page;
+  // 미끄러지는 표시자 — 페이지 전환으로 컨테이너가 다시 붙을 때도 재배치되도록 화면 상태 전체를 키로 쓴다.
+  const indicatorKey = `${page}|${listTab}|${viewMode}|${isMobile}`;
+  const navRef = useSlidingIndicator<HTMLElement>(indicatorKey);
+  const segRef = useSlidingIndicator<HTMLDivElement>(indicatorKey);
+  const tabsRef = useSlidingIndicator<HTMLDivElement>(indicatorKey);
+  const drawer = usePresence(selected, 280); // 닫힘 모션 동안 마지막 매물을 유지
+  useSpotlight();
   // 배지 카운트 — 결과를 좁히는 '숨은' 필터(오늘기일·달력일·갭·발품회피 등)까지 포함해야
   // 목록이 비었을 때 원인을 알 수 있다(과거: 절반 누락 → 0건인데 배지 0).
   // 설정(ConfigPanel)의 지역·가격 조건도 목록을 항상 자르므로 포함 — "전체 3200인데 목록 800" 미스터리 방지.
@@ -255,8 +263,9 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar" aria-label="내비게이션">
-        <div className="brand">경매<span>매물 검토</span></div>
-        <nav className="nav">
+        <div className="brand"><i className="brand-mark" aria-hidden="true" />경매<span>매물 검토</span></div>
+        <nav className="nav" ref={navRef}>
+          <span className="ind" aria-hidden="true" />
           <button className={activeTab === 'today' ? 'on' : ''} onClick={openToday}>오늘</button>
           <div className="nav-gap" />
           <button className={activeTab === 'all' ? 'on' : ''} onClick={() => openList('all')}>전체 매물{!loading && <em>{num(stats.total)}</em>}</button>
@@ -290,7 +299,7 @@ export default function App() {
         {err && <Notice>API 연결 오류: {err} <br />백엔드(<code>{apiBase}</code>) 실행 확인 (<code>server/run.sh</code>).</Notice>}
 
         {page === 'today' && (
-          <>
+          <div key="today" className="page-anim">
             <header className="page-head">
               <div>
                 <h1>오늘</h1>
@@ -299,10 +308,10 @@ export default function App() {
             </header>
 
             <section className="summary" aria-label="요약">
-              <button type="button" onClick={() => openList('all')}><span>전체 매물</span><b>{loading ? '–' : num(stats.total)}</b></button>
-              <button type="button" onClick={() => openList('recommend')}><span>통과</span><b>{loading ? '–' : num(stats.passed)}</b></button>
-              <button type="button" onClick={() => { openList('recommend'); setOnlyToday(true); setFilterDate(null); }}><span>오늘 기일</span><b>{loading ? '–' : num(stats.todayUrgent)}</b></button>
-              <button type="button" onClick={() => { openList('recommend'); setOnlyUrgent(true); }}><span>7일 이내</span><b>{loading ? '–' : num(stats.week)}</b></button>
+              <button type="button" onClick={() => openList('all')}><span>전체 매물</span><b>{loading ? '–' : <CountUp value={stats.total} />}</b></button>
+              <button type="button" onClick={() => openList('recommend')}><span>통과</span><b>{loading ? '–' : <CountUp value={stats.passed} />}</b></button>
+              <button type="button" onClick={() => { openList('recommend'); setOnlyToday(true); setFilterDate(null); }}><span>오늘 기일</span><b>{loading ? '–' : <CountUp value={stats.todayUrgent} />}</b></button>
+              <button type="button" onClick={() => { openList('recommend'); setOnlyUrgent(true); }}><span>7일 이내</span><b>{loading ? '–' : <CountUp value={stats.week} />}</b></button>
             </section>
 
             {weekDays.length > 0 && (
@@ -319,7 +328,7 @@ export default function App() {
                         title={`${date} ${dayLabel}요일 — 통과 ${passed}건 / 전체 ${total}건`}
                       >
                         <span className="week-label">{date === TODAY ? '오늘' : `${dayLabel}요일${d != null ? ` · D-${d}` : ''}`}</span>
-                        <b>{num(passed)}<small>/ {num(total)}</small></b>
+                        <b><CountUp value={passed} /><small>/ {num(total)}</small></b>
                       </button>
                     );
                   })}
@@ -367,11 +376,11 @@ export default function App() {
               본 분석은 참고용 정보이며 법률자문이 아닙니다. 정확성을 보장하지 않으며 최종 판단과 책임은 이용자에게 있습니다.
               입찰 전 등기부등본·매각물건명세서·현장을 직접 확인하고 변호사나 법무사와 상담하세요.
             </p>
-          </>
+          </div>
         )}
 
         {page === 'list' && (
-          <>
+          <div key={`list-${listTab}`} className="page-anim">
             <header className="page-head">
               <div>
                 <h1>{LIST_TITLE[listTab]}</h1>
@@ -383,7 +392,8 @@ export default function App() {
                 </p>
               </div>
               <div className="page-actions">
-                <div className="seg" role="group" aria-label="보기 방식">
+                <div className="seg" role="group" aria-label="보기 방식" ref={segRef}>
+                  <span className="ind" aria-hidden="true" />
                   <button type="button" className={viewMode === 'list' ? 'on' : ''} aria-pressed={viewMode === 'list'} onClick={() => setViewMode('list')}>목록</button>
                   <button type="button" className={viewMode === 'map' ? 'on' : ''} aria-pressed={viewMode === 'map'} onClick={() => setViewMode('map')}>지도</button>
                 </div>
@@ -403,7 +413,8 @@ export default function App() {
               </div>
             </header>
 
-            <div className="tabs">
+            <div className="tabs" ref={tabsRef}>
+              <span className="ind" aria-hidden="true" />
               {LIST_TABS.map((tab) => (
                 <button key={tab} type="button" className={listTab === tab ? 'on' : ''} onClick={() => openList(tab)}>{LIST_TAB_SHORT[tab]}</button>
               ))}
@@ -539,16 +550,16 @@ export default function App() {
             {viewMode === 'list' && !listDone && (
               <div ref={sentinelRef} className="list-more">{num(visible.length)} / {num(listTotal)}건 — 아래로 스크롤하면 이어서 표시합니다</div>
             )}
-          </>
+          </div>
         )}
 
-        {page === 'review' && !err && <ReviewPanel onOpenCase={openCaseFromReview} />}
+        {page === 'review' && !err && <div key="review" className="page-anim"><ReviewPanel onOpenCase={openCaseFromReview} /></div>}
       </main>
 
-      {selected && <Suspense fallback={null}><Detail
-        row={selected} onClose={closeDetail} onFav={() => toggleFav(selected)}
-        loading={isDetailLoading(selected)}
-        onPrev={selNavPrev} onNext={selNavNext} position={selNavPos}
+      {drawer.value && <Suspense fallback={null}><Detail
+        row={drawer.value} onClose={closeDetail} onFav={() => toggleFav(drawer.value!)}
+        loading={isDetailLoading(drawer.value)} closing={drawer.closing}
+        onPrev={drawer.closing ? undefined : selNavPrev} onNext={drawer.closing ? undefined : selNavNext} position={selNavPos}
         onDecisionSaved={updateCurrentDecision}
       /></Suspense>}
 

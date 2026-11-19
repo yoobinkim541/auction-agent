@@ -11,6 +11,7 @@ import { shouldShowLegacyBid } from './precision.ts';
 import { shouldIgnoreDrawerShortcut } from './detail-keyboard.ts';
 import { drawerFocusTrapDecision } from './drawer-focus.ts';
 import { buildNavigationLinks } from './navigation.ts';
+import { prefersReducedMotion } from './motion.tsx';
 const CONF: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' };
 const DRAWER_FOCUSABLE_SELECTOR = 'a[href], button, input, select, textarea, [contenteditable], [tabindex]:not([tabindex="-1"])';
 
@@ -23,9 +24,9 @@ function visibleFocusableControls(drawer: HTMLElement): HTMLElement[] {
 }
 
 /** 매물 상세 드로어 — 권리/입지/취득비용·현장모드·키보드 내비게이션(←/→/o/c/f/Esc). */
-export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position, onDecisionSaved }: {
+export function Detail({ row, onClose, onFav, loading, closing, onPrev, onNext, position, onDecisionSaved }: {
   row: ListingItem; onClose: () => void; onFav: () => void;
-  loading?: boolean; onPrev?: () => void; onNext?: () => void; position?: string;
+  loading?: boolean; closing?: boolean; onPrev?: () => void; onNext?: () => void; position?: string;
   onDecisionSaved: (event: DecisionEvent) => void;
 }) {
   const rights: RightsObj | null = row.rights;
@@ -45,9 +46,21 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
     priorFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     return () => { priorFocusRef.current?.focus(); };
   }, []);
+  const shownIdRef = useRef(row.id);
   useEffect(() => {
     const drawer = drawerRef.current;
     if (drawer && !drawer.contains(document.activeElement)) drawer.focus();
+    // 이전·다음 매물로 넘어갈 때 본문만 살짝 올라오며 바뀐다(첫 열림은 드로어 슬라이드가 담당).
+    if (!drawer || shownIdRef.current === row.id) return;
+    shownIdRef.current = row.id;
+    if (prefersReducedMotion()) return;
+    for (const el of Array.from(drawer.children)) {
+      if (el.classList.contains('drawer-topbar')) continue;
+      el.animate(
+        [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }],
+        { duration: 260, easing: 'cubic-bezier(.2, .8, .2, 1)' },
+      );
+    }
   }, [row.id]);
   const copyCase = () => {
     navigator.clipboard.writeText(row.case_no).then(() => {
@@ -105,7 +118,7 @@ export function Detail({ row, onClose, onFav, loading, onPrev, onNext, position,
   const showLegacyBid = !loading && shouldShowLegacyBid(row.precision);
 
   return (
-    <div className="drawer-bg" onClick={onClose}>
+    <div className={`drawer-bg${closing ? ' is-closing' : ''}`} onClick={onClose}>
       <aside ref={drawerRef} className={`drawer${fieldMode ? ' drawer-fieldmode' : ''}`} role="dialog" aria-modal="true" aria-labelledby="detail-dialog-title" tabIndex={-1} onClick={(e) => e.stopPropagation()}>
         <div className="drawer-topbar">
           <div className="drawer-nav">
