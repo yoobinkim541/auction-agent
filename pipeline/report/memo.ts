@@ -5,6 +5,7 @@
  * → SELECT_BODY의 to_jsonb(loc)로 자동 노출(Java 무수정).
  */
 import { spawn } from 'node:child_process';
+import { CLAUDE_PRINT_ARGS } from '../../shared/claude-cli.ts';
 import { createHash } from 'node:crypto';
 import { query } from '../../shared/db.ts';
 import { eok } from '../../shared/format.ts';
@@ -51,7 +52,7 @@ export function buildMemoPrompt(c: MemoCandidate): string {
 /** claude 구독 CLI 1회 호출 → 모델 최종 텍스트. (claude-verify-cli.ts와 동일 패턴) */
 async function runClaude(prompt: string, timeoutMs = 120_000): Promise<string> {
   const out = await new Promise<string>((resolve, reject) => {
-    const cp = spawn('claude', ['-p', '--output-format', 'json', '--max-turns', '1'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const cp = spawn('claude', [...CLAUDE_PRINT_ARGS], { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     const timer = setTimeout(() => { cp.kill('SIGKILL'); reject(new Error('claude CLI 타임아웃')); }, timeoutMs);
     cp.stdout.on('data', (d) => (stdout += d));

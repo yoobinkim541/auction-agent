@@ -7,6 +7,7 @@
  * claude-verify.ts(API 버전)와 동일한 입력/출력. run.ts가 키 유무에 따라 선택.
  */
 import { spawn } from 'node:child_process';
+import { CLAUDE_PRINT_ARGS } from '../../shared/claude-cli.ts';
 import type { VerifyArgs, VerifyOutput } from './claude-verify.ts';
 import { parseVerifyOutput } from './claude-verify.ts';
 
@@ -49,7 +50,7 @@ export function extractJson(text: string): VerifyOutput {
 
 export async function verifyRightsCli(args: VerifyArgs, model?: string): Promise<VerifyOutput> {
   const prompt = buildPrompt(args);
-  const cliArgs = ['-p', '--output-format', 'json', '--max-turns', '1'];
+  const cliArgs = [...CLAUDE_PRINT_ARGS];
   if (model) cliArgs.push('--model', model);
 
   const out = await new Promise<string>((resolve, reject) => {

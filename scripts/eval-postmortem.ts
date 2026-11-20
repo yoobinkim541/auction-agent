@@ -7,6 +7,7 @@
  */
 import 'dotenv/config';
 import { spawn } from 'node:child_process';
+import { CLAUDE_PRINT_ARGS } from '../shared/claude-cli.ts';
 import { query, pool } from '../shared/db.ts';
 
 interface SurpriseRow {
@@ -72,7 +73,7 @@ tags는 위 후보에서만 선택(최대 4개), reason은 한국어 1~2문장.`
 
 async function callClaudeCliOnce(prompt: string): Promise<string> {
   return new Promise<string>((resolve, reject) => {
-    const cp = spawn('claude', ['-p', '--output-format', 'json', '--max-turns', '1'], {
+    const cp = spawn('claude', [...CLAUDE_PRINT_ARGS], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
