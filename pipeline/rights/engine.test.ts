@@ -191,6 +191,13 @@ describe('인수금액 / 위험등급', () => {
 });
 
 describe('레드플래그', () => {
+  it("지상권 개요란이 '해당사항없음'이면 법정지상권 표시를 붙이지 않는다 — 다른 칸의 언급은 그대로 잡는다", () => {
+    const kinds = (notes: string[]) => analyzeRights(makeInput({ registry: [reg('geunjeodang', '2020-01-01')], notes })).redFlags.map((f) => f.kind);
+    expect(kinds(['인수권리: 해당사항없음', '법정지상권: 해당사항없음'])).not.toContain('beopjeong_jisangwon');
+    expect(kinds(['건물에 대한 관습법상 법정지상권이 부존재하여 철거 주문 있음', '법정지상권: 해당사항없음'])).toContain('beopjeong_jisangwon');
+    expect(kinds(['법정지상권: 건물에 대한 법정지상권 성립여부 불분명'])).toContain('beopjeong_jisangwon');
+  });
+
   it('비고에 유치권 → danger + 사람 검토', () => {
     const res = analyzeRights(makeInput({ registry: [reg('geunjeodang', '2020-01-01')], notes: ['유치권 신고 있음(공사대금)'] }));
     const f = res.redFlags.find((x) => x.kind === 'yuchigwon');

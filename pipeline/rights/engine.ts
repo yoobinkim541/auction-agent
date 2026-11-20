@@ -276,7 +276,9 @@ function scanRedFlags(
     flags.push({ kind, severity, message, needsHumanReview });
 
   if (/유치권/.test(text)) add('yuchigwon', 'danger', '유치권 신고/주장 존재 — 인수 위험, 별도 검토 필수', true);
-  if (/법정지상권|지상권.*여지|관습.*지상권/.test(text)) add('beopjeong_jisangwon', 'danger', '법정지상권 성립 여지 — 토지/건물 별도 검토 필요', true);
+  // 명세서의 지상권 개요란(민사집행법 제105조 제1항 제4호)에 법원이 '해당사항없음'으로 적은 것은 위험 기재가 아니다.
+  // 그 문구만 걷어 내고 본다 — 다른 칸에 법정지상권 언급이 있으면 그대로 표시된다.
+  if (/법정지상권|지상권.*여지|관습.*지상권/.test(text.replace(/법정지상권\s*:\s*해당\s*사항\s*없음/g, ''))) add('beopjeong_jisangwon', 'danger', '법정지상권 성립 여지 — 토지/건물 별도 검토 필요', true);
   if (/분묘|묘지/.test(text)) add('bunmyo_gijigwon', 'warn', '분묘기지권 가능성', true);
   if (/대지권\s*미등기|대지권\s*없음|대지권\s*미정리/.test(text)) add('daejigwon_mideungi', 'danger', '대지권 미등기 — 토지 별도 권리 확인 필요', true);
   if (/토지별도등기/.test(text)) add('toji_byeoldo_deungi', 'danger', '토지별도등기 — 토지상 권리 인수 위험', true);
