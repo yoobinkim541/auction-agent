@@ -233,6 +233,11 @@ describe('parseCourtDetail', () => {
     expect(d.siteAssumedAmount).toBeNull(); // 유치권 등 자동 인수 처리 안 함(보수적)
   });
 
+  it("최선순위설정의 '년·월·일' 표기도 인식한다", () => {
+    const d = parseCourtDetail({ dspslGdsDxdyInfo: { tprtyRnkHypthcStngDts: '2016년5월31일 근저당권', gdsSpcfcRmk: '' } });
+    expect(d.registry).toEqual([expect.objectContaining({ kind: 'geunjeodang', receiptDate: '2016-05-31' })]);
+  });
+
   it('최선순위설정 날짜의 구분자 뒤 공백("2022. 7. 5.")도 인식한다', () => {
     const d = parseCourtDetail({
       dspslGdsDxdyInfo: { tprtyRnkHypthcStngDts: '최선순위설정: 2022. 7. 5. 가압류', gdsSpcfcRmk: '' },

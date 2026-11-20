@@ -697,19 +697,13 @@ export interface CourtDetailParsed {
  * 점유자(임차인) 표는 명세서 e-doc(PDF)에만 있어 baseline은 비고 notes로 처리(추후 PDF 파싱 보강 여지).
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function parseCourtDetail(dma: any): CourtDetailParsed {
-  const info = dma?.dspslGdsDxdyInfo ?? {};
-  const notes: string[] = [];
-  for (const ln of String(info.gdsSpcfcRmk ?? '').split(/\n+/)) { const s = ln.trim(); if (s) notes.push(s); }
-  const addNote = (label: string, v: unknown) => { const s = String(v ?? '').trim(); if (s) notes.push(`${label}: ${s}`); };
-  addNote('인수권리', info.ndstrcRghCtt);
-  addNote('법정지상권', info.sprfcExstcDts);
-
-  // 최선순위 설정(말소기준권리) — "… : YYYY.MM.DD. 근저당권" 류에서 날짜+종류 추출.
-  // 구분자 뒤 공백 유무가 사건마다 다름("2022.7.5."/"2022. 7. 5.") — \s*로 둘 다 인식.
+/**
+ * 최선순위 설정(말소기준권리) 문구 → 등기 항목. "… : YYYY.MM.DD. 근저당권" 류에서 날짜+종류 추출.
+ * 표기가 사건마다 다르다: "2022.7.5." / "2022. 7. 5." / "2016년5월31일".
+ */
+export function seniorRegistryEntries(senior: string): RegistryEntry[] {
   const registry: RegistryEntry[] = [];
-  const senior = String(info.tprtyRnkHypthcStngDts ?? '');
-  const dre = /(\d{4})\s*[.\-]\s*(\d{1,2})\s*[.\-]\s*(\d{1,2})/g;
+  const dre = /(\d{4})\s*[년.\-]\s*(\d{1,2})\s*[월.\-]\s*(\d{1,2})/g;
   let dm: RegExpExecArray | null;
   while ((dm = dre.exec(senior))) {
     const iso = parseKoreanDate(`${dm[1]}.${dm[2]}.${dm[3]}`);
@@ -718,6 +712,19 @@ export function parseCourtDetail(dma: any): CourtDetailParsed {
     const kind = mapRightKind(win);
     registry.push({ kind: kind === 'other' ? 'geunjeodang' : kind, receiptDate: iso, section: 'eulgu', raw: win.replace(/\s+/g, ' ').trim() });
   }
+  return registry;
+}
+
+export function parseCourtDetail(dma: any): CourtDetailParsed {
+  const info = dma?.dspslGdsDxdyInfo ?? {};
+  const notes: string[] = [];
+  for (const ln of String(info.gdsSpcfcRmk ?? '').split(/\n+/)) { const s = ln.trim(); if (s) notes.push(s); }
+  const addNote = (label: string, v: unknown) => { const s = String(v ?? '').trim(); if (s) notes.push(`${label}: ${s}`); };
+  addNote('인수권리', info.ndstrcRghCtt);
+  addNote('법정지상권', info.sprfcExstcDts);
+
+  const senior = String(info.tprtyRnkHypthcStngDts ?? '');
+  const registry = seniorRegistryEntries(senior);
   if (senior.trim()) notes.push(`최선순위설정: ${senior.replace(/\s+/g, ' ').trim()}`);
   const statementSeniorDate = registry.length ? [...registry].map((r) => r.receiptDate).sort()[0] : undefined;
 
