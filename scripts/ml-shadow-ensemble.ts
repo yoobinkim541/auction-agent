@@ -100,8 +100,8 @@ export function readPredictionCsv(path: string): Record<string, string>[] {
   ));
 }
 
-export function pythonPath(): string {
-  const localPython = resolve('.venv-ml/bin/python');
+export function pythonPath(cwd = process.cwd()): string {
+  const localPython = resolve(cwd, '.venv-ml/bin/python');
   return existsSync(localPython) ? localPython : 'python3';
 }
 
