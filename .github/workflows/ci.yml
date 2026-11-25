@@ -15,7 +15,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
       - run: npm ci
+      # 루트 vitest 가 web/src 테스트도 돌린다. 그 모듈들이 react 를 import 하므로 web 의존성이 필요하다.
+      - run: npm ci
+        working-directory: web
       - run: npm run typecheck
       - run: npm test
 

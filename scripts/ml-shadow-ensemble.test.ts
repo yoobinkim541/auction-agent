@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   csvCell,
@@ -38,8 +40,23 @@ describe('ml-shadow-ensemble CSV helpers', () => {
 
 describe('pythonPath', () => {
   it('로컬 .venv-ml이 존재하면 해당 python 바이너리 경로를 반환한다', () => {
-    const py = pythonPath();
-    expect(py).toContain('.venv-ml/bin/python');
+    const root = mkdtempSync(join(tmpdir(), 'ml-shadow-'));
+    try {
+      mkdirSync(join(root, '.venv-ml/bin'), { recursive: true });
+      writeFileSync(join(root, '.venv-ml/bin/python'), '');
+      expect(pythonPath(root)).toBe(join(root, '.venv-ml/bin/python'));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('로컬 .venv-ml이 없으면 python3를 반환한다', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ml-shadow-'));
+    try {
+      expect(pythonPath(root)).toBe('python3');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
